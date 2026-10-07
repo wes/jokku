@@ -20,8 +20,8 @@ cat "$key.pub" >>~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
 export GIT_SSH_COMMAND="ssh -i $key -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
 jssh() { $GIT_SSH_COMMAND "jokku@$host" "$@"; }
 
-step "install (traced with timestamps)"
-sudo JOKKU_DOWNLOAD_URL="file://$dist" PS4='+ $(date +%T.%N | cut -c1-12) ' sh -x ./install.sh
+step "install"
+sudo JOKKU_DOWNLOAD_URL="file://$dist" sh ./install.sh
 systemctl is-active jokku
 sudo jokku ssh-keys:list | grep -q 'NAME="admin"' || fail "installer did not import the key"
 

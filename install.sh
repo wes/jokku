@@ -68,11 +68,13 @@ info "$("$BIN" version | head -n 1)"
 # in its authorized_keys is pinned to "jokku ssh-command".
 if ! id jokku >/dev/null 2>&1; then
   say "Creating the jokku user"
-  useradd --system --user-group --create-home --home-dir /home/jokku --shell /bin/sh jokku
+  # No --create-home: the account only runs git and jokku, so skip /etc/skel.
+  useradd --system --user-group --no-create-home --home-dir /home/jokku --shell /bin/sh jokku
 fi
 # No password login, but not "locked" either: sshd refuses key logins for
 # locked accounts on systems without PAM.
 usermod -p '*' jokku
+install -d -m 0750 -o jokku -g jokku /home/jokku
 install -d -m 0700 -o jokku -g jokku /home/jokku/.ssh
 install -d -m 0755 "$DATA_DIR"
 install -d -m 0755 -o jokku -g jokku "$DATA_DIR/git"

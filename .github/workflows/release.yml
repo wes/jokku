@@ -29,3 +29,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
+
+  # Installs the just-published release with the public one-liner.
+  verify:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install with the README command
+        run: curl -fsSL "https://raw.githubusercontent.com/wes/jokku/${GITHUB_REF_NAME}/install.sh" | sudo JOKKU_VERSION="$GITHUB_REF_NAME" sh
+      - name: Check
+        run: |
+          systemctl is-active jokku
+          jokku version | grep -F "jokku version ${GITHUB_REF_NAME} "
+          sudo jokku apps:create smoke-test
+          sudo jokku apps:list | grep -x smoke-test

@@ -10,14 +10,15 @@ of a container, and you can add servers with one command, so apps scale
 across a cluster. The commands are Dokku's, so if you know Dokku, you
 already know Jokku.
 
-> **Status: early development.** Installing, SSH access, managing apps and
-> config, and receiving `git push` work today. Building and running apps
-> comes next, then multi-server clusters. See the
-> [roadmap](docs/architecture.md#milestones).
+> **Status: early development.** On a single server, `git push` builds your
+> Dockerfile and runs it in Firecracker microVMs behind the proxy, with
+> zero-downtime deploys, scaling, logs and updates. Multi-server clusters
+> are next. See the [roadmap](docs/architecture.md#milestones).
 
 ## Install
 
-On a fresh Ubuntu or Debian server:
+On a fresh Ubuntu or Debian server with KVM (bare metal, or a virtual
+machine with nested virtualization turned on) and ports 80 and 443 free:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo sh
@@ -70,7 +71,8 @@ server-2  worker   ready   203.0.113.11   8     16g
 
 ## Deploy an app
 
-Your app needs a `Dockerfile`, and it should listen on the port in `$PORT`.
+Your app needs a `Dockerfile`, and it should listen on the port in `$PORT`
+(the port your Dockerfile `EXPOSE`s, or 5000).
 
 **1. Create the app and set its config**
 
@@ -87,9 +89,12 @@ git remote add jokku jokku@your-server:myapp
 git push jokku main
 ```
 
-Jokku builds the Dockerfile, starts the app and prints its URL, for example
-`https://myapp.203.0.113.10.sslip.io`. Pushing to an app that doesn't exist
-yet creates it, so step 1 is optional.
+Jokku builds the Dockerfile, boots the app, waits for it to accept
+connections and prints its URL, for example `https://myapp.203.0.113.10.sslip.io`
+(plain `http://` when the server's address is private, such as on a home
+network). Pushing to an app that doesn't exist yet creates it, so step 1 is
+optional. If the new version fails to start, the push is rejected and the
+previous version keeps serving.
 
 **3. Add your domain**
 
@@ -99,6 +104,14 @@ jokku domains:add myapp myapp.com
 
 Point `myapp.com` at your server and Jokku gets an HTTPS certificate for it
 automatically.
+
+### Watch it
+
+```sh
+jokku logs myapp -t        # follow output from every instance
+jokku ps:report myapp      # what's running, where, and how big
+jokku ps:restart myapp     # also: ps:stop, ps:start, ps:rebuild
+```
 
 ### Scale it
 
@@ -152,14 +165,24 @@ jobs:
 
 ## Update
 
+On the server:
+
+```sh
+sudo jokku update
+```
+
+It shows the new version and asks before changing anything. It backs up
+Jokku's database first, and if the new version fails to start, it puts the
+previous version and data back automatically. Your apps keep running and
+serving traffic throughout. Use `--yes` to skip the question or
+`--version v0.0.3` to pick a release.
+
+Servers on v0.0.2 or older don't have `jokku update` yet. Update them once
+with:
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/update.sh | sudo sh
 ```
-
-This updates Jokku to the latest release. It backs up Jokku's database first,
-and if the new version fails to start, it puts the previous version and data
-back automatically. If you're already up to date, it does nothing. To pick a
-version, use `sudo JOKKU_VERSION=v0.0.2 sh` at the end instead.
 
 With more than one server, update the first (control) server, then the rest.
 

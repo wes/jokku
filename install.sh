@@ -86,6 +86,4 @@ printf '\n=====> Jokku is installed\n'
 info "Deploy:        git remote add jokku jokku@$ip:myapp && git push jokku main"
 info "Run commands:  ssh jokku@$ip apps:list   (or sudo jokku apps:list on this server)"
 info "Add a key:     cat key.pub | ssh jokku@$ip ssh-keys:add <name>"
-info "Update later:  curl -fsSL https://raw.githubusercontent.com/$REPO/main/update.sh | sudo sh"
-[ -e /dev/kvm ] || warn "/dev/kvm is missing: microVMs need a machine with KVM (bare metal or nested virtualization)."
-warn "Early development: pushes are received and checked, but building and running apps arrives in milestone 1."
+info "Update later:  sudo jokku update"

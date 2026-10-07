@@ -150,6 +150,19 @@ jobs:
           JOKKU_DEPLOY_KEY: ${{ secrets.JOKKU_DEPLOY_KEY }}
 ```
 
+## Update
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/update.sh | sudo sh
+```
+
+This updates Jokku to the latest release. It backs up Jokku's database first,
+and if the new version fails to start, it puts the previous version and data
+back automatically. If you're already up to date, it does nothing. To pick a
+version, use `sudo JOKKU_VERSION=v0.0.2 sh` at the end instead.
+
+With more than one server, update the first (control) server, then the rest.
+
 ## Learn more
 
 - [Commands](docs/commands.md): every command and what works today

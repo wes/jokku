@@ -31,7 +31,7 @@ jobs:
         run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
 
   # Installs the just-published release with the public one-liner.
-  verify:
+  verify-install:
     needs: release
     runs-on: ubuntu-latest
     steps:
@@ -43,3 +43,28 @@ jobs:
           jokku version | grep -F "jokku version ${GITHUB_REF_NAME} "
           sudo jokku apps:create smoke-test
           sudo jokku apps:list | grep -x smoke-test
+
+  # Installs the previous release with its own installer, then updates to this
+  # one with the public update command, the way existing servers will.
+  verify-update:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Install the previous release
+        run: |
+          prev=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --json tagName --jq '.[].tagName' | grep -vx "$GITHUB_REF_NAME" | head -n 1)
+          if [ -z "$prev" ]; then echo "No previous release; nothing to update from."; exit 0; fi
+          echo "PREV=$prev" >> "$GITHUB_ENV"
+          curl -fsSL "https://raw.githubusercontent.com/wes/jokku/$prev/install.sh" | sudo JOKKU_VERSION="$prev" sh
+          sudo jokku apps:create survives-update
+      - name: Update with the README command
+        if: env.PREV != ''
+        run: curl -fsSL "https://raw.githubusercontent.com/wes/jokku/${GITHUB_REF_NAME}/update.sh" | sudo JOKKU_VERSION="$GITHUB_REF_NAME" sh
+      - name: Check
+        if: env.PREV != ''
+        run: |
+          systemctl is-active jokku
+          sudo jokku version | grep -F "server version ${GITHUB_REF_NAME} "
+          sudo jokku apps:list | grep -x survives-update

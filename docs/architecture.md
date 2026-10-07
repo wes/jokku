@@ -223,7 +223,7 @@ one, the app has a single `web` process running the image's
 ## MicroVM runtime
 
 Each instance (`web.1`, `worker.2`, ...) is one Firecracker microVM
-launched through the `jailer` (chroot, cgroup v2 limits, seccomp,
+in its own systemd unit (`jokku-vm@<id>.service`), launched through the `jailer` (chroot, cgroup v2 limits, seccomp,
 unprivileged uid).
 
 | Piece | What it is |
@@ -275,8 +275,11 @@ VMs is masqueraded on each node (nftables).
 
 ### HTTP proxy
 
-Caddy runs **embedded in the jokku daemon** on every ingress node and is
-configured through its JSON API in-process. Embedding gives Jokku:
+Caddy is **embedded in the jokku binary** and runs on every ingress node as
+its own service, `jokku proxy`. The agent configures it through Caddy's JSON
+admin API on a local unix socket. Keeping it a separate process means
+updating or restarting the daemon never interrupts traffic (see
+[Updates](#updates)). Embedding gives Jokku:
 
 - One binary, and no Caddyfile templating or reload scripts.
 - A custom Caddy storage module backed by the control node, so
@@ -410,6 +413,54 @@ SQLite (WAL) at `/var/lib/jokku/jokku.db` on the control node. Main tables:
 
 Schema changes are numbered, append-only migrations applied at startup.
 
+## Updates
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/update.sh | sudo sh
+```
+
+**The scripts stay dumb; the binary knows what it needs.** `install.sh` and
+`update.sh` only download and verify the `jokku` binary, then run `jokku
+setup`. Setup brings the server to the state *that* release needs: packages,
+the `jokku` user, directories, systemd units, and later Firecracker, the guest
+kernel and WireGuard. Each step checks before it changes anything, so install,
+update and repair are the same operation. A release that needs new server
+state ships the step that creates it, and the curl scripts rarely change.
+
+**Database changes** are numbered, append-only migrations applied when the
+daemon starts.
+
+**What `update.sh` does:**
+
+1. Resolve the target: the latest release (via the `/releases/latest`
+   redirect) or `JOKKU_VERSION`. Exit early if already on it.
+2. Download the binary and verify it against the release's `checksums.txt`.
+3. Stop jokku, then copy `jokku.db` (with its WAL) and the current binary to
+   `/var/lib/jokku/backups/<time>-<version>/`. The newest five are kept.
+4. Install the new binary and run `jokku setup`. Setup restarts jokku and waits
+   until the API reports the new version, which proves the new code is
+   running.
+5. If any of that fails, restore the old binary and database and restart.
+
+**Apps don't go down during updates.** The control API is unavailable for a
+few seconds while jokku restarts. Apps and traffic are not affected:
+
+- Each microVM runs in its own systemd unit, not as a child of the daemon.
+  Restarting the daemon leaves VMs running, and the agent re-attaches to them
+  on startup.
+- The proxy is its own unit, `jokku-proxy.service`, running the same binary.
+  Each release records a proxy version, and `jokku setup` restarts the proxy
+  only when that version changed.
+
+**Clusters (milestone 2).** Update the control node first. Control accepts
+agents one release behind, so workers can follow one at a time with the same
+command. Later, `jokku cluster:update` will roll the whole cluster: workers
+fetch the release from the control node, and since VMs survive agent
+restarts, nothing needs draining.
+
+A `sudo jokku update` command can wrap the same steps later. The curl script
+stays the stable entry point, including for versions that predate the command.
+
 ## Filesystem and ports
 
 ```
@@ -423,6 +474,7 @@ Schema changes are numbered, append-only migrations applied at startup.
 /var/lib/jokku/kernel/            vmlinux + initramfs
 /var/lib/jokku/instances/<id>/    per-VM scratch disk, config drive, sockets, logs
 /var/lib/jokku/volumes/           persistent volumes
+/var/lib/jokku/backups/           database backups taken by update.sh
 /home/jokku/.ssh/authorized_keys  generated from ssh-keys:*
 ```
 
@@ -451,8 +503,8 @@ Schema changes are numbered, append-only migrations applied at startup.
 
 - **M0 – control plane skeleton.** API, SQLite, CLI over socket and SSH,
   apps, config, domains, properties, ssh-keys, scale and resource records,
-  `ssh-command`, git receive and hook, `install.sh` and release binaries.
-  *(done)*
+  `ssh-command`, git receive and hook, `install.sh`, `update.sh` with backup
+  and rollback, `jokku setup`, and release binaries. *(done)*
 - **M1 – single-node deploys.** BuildKit build, OCI to ext4, `jokku-init`,
   Firecracker driver, bridge/TAP/NAT, agent reconcile loop, embedded
   Caddy, rollouts, checks, logs, `ps:*`. At this point it is a working

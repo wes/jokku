@@ -18,6 +18,7 @@ import (
 
 	"github.com/wes/jokku/internal/client"
 	"github.com/wes/jokku/internal/daemon"
+	"github.com/wes/jokku/internal/setup"
 	"github.com/wes/jokku/internal/types"
 	"github.com/wes/jokku/internal/version"
 )
@@ -33,6 +34,8 @@ var serverCommands = []*Command{
 		{Name: "cluster-cidr", Value: "CIDR", Help: "Cluster network, an IPv4 /16 (default 10.210.0.0/16)"},
 		{Name: "node-name", Value: "NAME", Help: "This node's name (default the hostname)"},
 	}, Run: runDaemon},
+	{Name: "setup", Help: "Prepare this server for jokku and (re)start it; run by install.sh and update.sh", Local: true, serverOnly: true,
+		Run: func(c *Context) error { return setup.Run(c, c.Stdout) }},
 	{Name: "ssh-command", Hidden: true, Local: true, serverOnly: true,
 		Flags: []Flag{{Name: "key-name", Value: "NAME", Help: "Name of the SSH key that authenticated"}}, Run: runSSHCommand},
 	{Name: "git-hook", Hidden: true, Local: true, serverOnly: true, Args: "<app>", MinArgs: 1, Run: runGitHook},
@@ -48,10 +51,10 @@ func serverSocket() string {
 
 func runDaemon(c *Context) error {
 	cfg := daemon.Config{
-		DataDir:        "/var/lib/jokku",
+		DataDir:        daemon.DefaultDataDir,
 		Socket:         client.DefaultSocket,
-		GitUser:        "jokku",
-		ClusterCIDR:    "10.210.0.0/16",
+		GitUser:        daemon.DefaultUser,
+		ClusterCIDR:    daemon.DefaultClusterCIDR,
 		GitDir:         c.String("git-dir"),
 		AuthorizedKeys: c.String("authorized-keys"),
 		NodeName:       c.String("node-name"),

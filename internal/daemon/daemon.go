@@ -25,6 +25,13 @@ import (
 	"github.com/wes/jokku/internal/version"
 )
 
+// Defaults for a server installed by install.sh / "jokku setup".
+const (
+	DefaultDataDir     = "/var/lib/jokku"
+	DefaultUser        = "jokku"
+	DefaultClusterCIDR = "10.210.0.0/16"
+)
+
 type Config struct {
 	DataDir string // state and builds, e.g. /var/lib/jokku
 	Socket  string // API socket, e.g. /run/jokku/jokku.sock

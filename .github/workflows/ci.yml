@@ -16,17 +16,23 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
 
-  # Runs install.sh on a fresh runner (systemd, sshd) and drives jokku over ssh.
-  install:
+  # Installs, updates and rolls back on a fresh runner (systemd, sshd), driving
+  # jokku over real ssh.
+  server:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Build
+      - name: Build old, new and broken releases
         run: |
-          mkdir -p dist
-          CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/wes/jokku/internal/version.Version=ci-${GITHUB_SHA::7}" -o dist/jokku-linux-amd64 ./cmd/jokku
-          cd dist && sha256sum jokku-linux-amd64 > checksums.txt
-      - run: bash test/install-e2e.sh dist
+          for v in old new; do
+            mkdir -p dist/$v
+            CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/wes/jokku/internal/version.Version=ci-$v" -o dist/$v/jokku-linux-amd64 ./cmd/jokku
+          done
+          mkdir -p dist/broken
+          printf '#!/bin/sh\necho "this release is broken" >&2\nexit 1\n' > dist/broken/jokku-linux-amd64
+          chmod +x dist/broken/jokku-linux-amd64
+          for v in old new broken; do (cd dist/$v && sha256sum jokku-linux-amd64 > checksums.txt); done
+      - run: bash test/server-e2e.sh dist

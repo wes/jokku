@@ -95,6 +95,9 @@ var namespaceHelp = map[string]string{
 	"ssh-keys":           "Manage SSH keys used for git push and remote commands",
 	"nodes":              "Manage the machines in the cluster",
 	"version":            "Print the jokku version",
+	"update":             "Update jokku on this server",
+	"logs":               "Display an app's log output",
+	"releases":           "List an app's releases",
 	"help":               "Print the list of commands",
 }
 
@@ -121,6 +124,7 @@ func init() {
 	register(nodesCommands...)
 	register(serverCommands...)
 	register(propertyCommands()...)
+	register(updateCommand)
 	register(&Command{Name: "version", Help: namespaceHelp["version"], Local: true, Run: runVersion})
 	register(&Command{Name: "help", Help: namespaceHelp["help"], Local: true, MaxArgs: 1, Flags: []Flag{{Name: "all", Help: "List every command"}}, Run: runHelp})
 }

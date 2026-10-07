@@ -51,6 +51,7 @@ var Plugins = []Plugin{
 		Name: "checks", Help: "Manage zero-downtime deploy checks", Settable: true,
 		Keys: []Key{
 			{Name: "wait-to-retire", Default: "60", Help: "Seconds to keep old instances after a deploy", Validate: isNonNegativeInt},
+			{Name: "timeout", Default: "120", Help: "Seconds new instances get to boot and pass checks", Validate: isNonNegativeInt},
 		},
 	},
 	{

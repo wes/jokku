@@ -98,7 +98,7 @@ func configSet(c *Context) error {
 		set[k] = v
 	}
 	c.Step("Setting config vars")
-	res, err := c.API.PatchConfig(c, c.App, types.ConfigPatch{Set: set, NoRestart: c.Bool("no-restart")})
+	res, err := c.API.PatchConfig(c, c.App, types.ConfigPatch{Set: set})
 	if err != nil {
 		return err
 	}
@@ -110,36 +110,36 @@ func configSet(c *Context) error {
 	for _, k := range keys {
 		c.Info("%-*s  %s", width, k+":", set[k])
 	}
-	if res.Restarting {
-		c.Step("Restarting app %s", c.App)
-	}
-	return nil
+	return c.restartAfterConfig(res.Changed)
 }
 
 func configUnset(c *Context) error {
 	for _, k := range c.Args {
 		c.Step("Unsetting %s", k)
 	}
-	res, err := c.API.PatchConfig(c, c.App, types.ConfigPatch{Unset: c.Args, NoRestart: c.Bool("no-restart")})
+	res, err := c.API.PatchConfig(c, c.App, types.ConfigPatch{Unset: c.Args})
 	if err != nil {
 		return err
 	}
-	if res.Restarting {
-		c.Step("Restarting app %s", c.App)
-	}
-	return nil
+	return c.restartAfterConfig(res.Changed)
 }
 
 func configClear(c *Context) error {
 	c.Step("Clearing config vars for %s", c.scopeName())
-	res, err := c.API.PatchConfig(c, c.App, types.ConfigPatch{Clear: true, NoRestart: c.Bool("no-restart")})
+	res, err := c.API.PatchConfig(c, c.App, types.ConfigPatch{Clear: true})
 	if err != nil {
 		return err
 	}
-	if res.Restarting {
-		c.Step("Restarting app %s", c.App)
+	return c.restartAfterConfig(res.Changed)
+}
+
+// restartAfterConfig applies a config change to a deployed app, unless
+// --no-restart. Global changes apply to each app on its next restart.
+func (c *Context) restartAfterConfig(changed bool) error {
+	if !changed || c.App == "" || c.Bool("no-restart") {
+		return nil
 	}
-	return nil
+	return c.restartIfDeployed()
 }
 
 func configKeys(c *Context) error {

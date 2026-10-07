@@ -15,10 +15,20 @@ import (
 	"testing"
 
 	"github.com/wes/jokku/internal/api"
-	"github.com/wes/jokku/internal/deploy"
 	"github.com/wes/jokku/internal/gitrepo"
 	"github.com/wes/jokku/internal/store"
+	"github.com/wes/jokku/internal/types"
 )
+
+// stubDeployer stands in for the microVM runtime, which needs Linux and KVM.
+type stubDeployer struct{}
+
+func (stubDeployer) Deploy(context.Context, *types.Deploy, string, func(string)) error { return nil }
+func (stubDeployer) PS(context.Context, string, string, string, func(string)) error    { return nil }
+func (stubDeployer) Logs(context.Context, string, types.LogOptions, func(string)) error {
+	return nil
+}
+func (stubDeployer) RoutesChanged() {}
 
 // startAPI serves a fresh API on a unix socket and points the CLI at it.
 func startAPI(t *testing.T) {
@@ -39,7 +49,7 @@ func startAPI(t *testing.T) {
 	srv := api.New(api.Config{
 		Store:       st,
 		Git:         &gitrepo.Manager{Dir: filepath.Join(dir, "git"), Exe: "/usr/local/bin/jokku"},
-		Deployer:    &deploy.Pipeline{Store: st, Log: log},
+		Deployer:    stubDeployer{},
 		Log:         log,
 		DataDir:     dir,
 		ClusterCIDR: netip.MustParsePrefix("10.210.0.0/16"),

@@ -13,14 +13,18 @@ import (
 	"github.com/wes/jokku/internal/types"
 )
 
-// Deployer turns sources into running releases.
+// Deployer turns sources into running releases and manages what runs.
 type Deployer interface {
 	// Deploy builds the source tarball at sourcePath and rolls it out,
 	// reporting progress through log as Dokku-style lines.
 	Deploy(ctx context.Context, d *types.Deploy, sourcePath string, log func(string)) error
-	// Restart rolls the app's current release out again after a config,
-	// scale or resource change. It reports false if nothing is deployed yet.
-	Restart(ctx context.Context, app, actor string) (bool, error)
+	// PS runs restart, start, stop or rebuild. Restart applies config,
+	// scale and resource changes.
+	PS(ctx context.Context, app, action, actor string, log func(string)) error
+	// Logs streams an app's log lines.
+	Logs(ctx context.Context, app string, o types.LogOptions, line func(string)) error
+	// RoutesChanged tells the runtime domains or proxy settings changed.
+	RoutesChanged()
 }
 
 // maxSourceSize caps uploaded source tarballs.

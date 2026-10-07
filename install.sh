@@ -20,6 +20,12 @@ info() { printf '       %s\n' "$*"; }
 warn() { printf ' !     %s\n' "$*" >&2; }
 die()  { warn "$*"; exit 1; }
 
+case "${1:-}" in
+  "") ;;
+  --join) die "Joining a cluster is not available yet (milestone 2). Run without --join to install a standalone server." ;;
+  *) die "Unknown option: $1" ;;
+esac
+
 [ "$(id -u)" -eq 0 ] || die "Run as root: curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | sudo sh"
 [ "$(uname -s)" = Linux ] || die "Jokku runs on Linux servers (this is $(uname -s))"
 case "$(uname -m)" in

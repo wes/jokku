@@ -398,7 +398,9 @@ func (a *Agent) logOnce(what string, err error) {
 
 // Logs streams an app's log lines, formatted the way "dokku logs" prints them.
 func Logs(ctx context.Context, app string, o types.LogOptions, line func(string)) error {
-	args := []string{"--no-pager", "--output=json", "--lines=" + strconv.Itoa(o.Tail), "JOKKU_APP=" + app}
+	// _TRANSPORT=stdout keeps only what the VM printed, not systemd's own
+	// messages about the unit.
+	args := []string{"--no-pager", "--output=json", "--lines=" + strconv.Itoa(o.Tail), "JOKKU_APP=" + app, "_TRANSPORT=stdout"}
 	if o.Follow {
 		args = append(args, "--follow")
 	}
@@ -417,7 +419,7 @@ func Logs(ctx context.Context, app string, o types.LogOptions, line func(string)
 		return err
 	}
 	err = forEachEntry(out, func(e journalEntry) {
-		line(e.format(app))
+		line(e.format())
 	})
 	cmd.Wait()
 	if ctx.Err() != nil {
@@ -429,7 +431,7 @@ func Logs(ctx context.Context, app string, o types.LogOptions, line func(string)
 // InstanceLogs returns the last n lines an instance printed, for deploy
 // failure messages.
 func InstanceLogs(ctx context.Context, id string, n int) []string {
-	out, _ := exec.CommandContext(ctx, "journalctl", "--no-pager", "--output=cat", "--lines="+strconv.Itoa(n), "JOKKU_INSTANCE="+id).Output()
+	out, _ := exec.CommandContext(ctx, "journalctl", "--no-pager", "--output=cat", "--lines="+strconv.Itoa(n), "JOKKU_INSTANCE="+id, "_TRANSPORT=stdout").Output()
 	var lines []string
 	for _, l := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		if l = strings.TrimRight(l, "\r"); l != "" {

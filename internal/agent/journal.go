@@ -16,11 +16,12 @@ type journalEntry struct {
 	Timestamp string          `json:"__REALTIME_TIMESTAMP"`
 }
 
-// format renders "2026-10-07T20:00:00.123456Z app[web.1]: message".
-func (e journalEntry) format(app string) string {
+// format renders "2026-10-07T20:00:00.123456Z app[web.1]: message", the
+// format "dokku logs" uses.
+func (e journalEntry) format() string {
 	us, _ := strconv.ParseInt(e.Timestamp, 10, 64)
 	ts := time.UnixMicro(us).UTC().Format("2006-01-02T15:04:05.000000Z")
-	return ts + " " + app + "[" + e.Process + "]: " + strings.TrimRight(e.message(), "\r\n")
+	return ts + " app[" + e.Process + "]: " + strings.TrimRight(e.message(), "\r\n")
 }
 
 // message decodes MESSAGE, which journald emits as a string, or as an array of

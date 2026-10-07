@@ -190,7 +190,9 @@ func (h *Host) Start(ctx context.Context, s Spec) error {
 		deps.Firecracker.Path("firecracker"),
 		"--api-sock", sock,
 		"--config-file", configPath,
-		"--level", "Warning",
+		// Warnings include harmless guest probing noise (PCI ports with
+		// pci=off) that would otherwise show up in app logs.
+		"--level", "Error",
 	}
 	return run(ctx, "systemd-run", args...)
 }

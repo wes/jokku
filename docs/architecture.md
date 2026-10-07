@@ -29,23 +29,25 @@ disagree, fix one of them.
 ## The 60-second tour
 
 ```sh
-# on a fresh Ubuntu/Debian server with KVM
+# on a fresh Ubuntu/Debian server with KVM: installs jokku, the jokku user and
+# the service, and lets the SSH keys you logged in with use Jokku
 curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo sh
-cat ~/.ssh/id_ed25519.pub | ssh root@server jokku ssh-keys:add admin
 
-# on your laptop, in your app's repo (it has a Dockerfile)
-go install github.com/wes/jokku/cmd/jokku@latest
+# on your laptop (only git and ssh needed), in your app's repo with a Dockerfile
 git remote add jokku jokku@server:myapp
 git push jokku main
 # => https://myapp.203.0.113.10.sslip.io
 
-jokku config:set myapp DATABASE_URL=postgres://...
-jokku domains:add myapp myapp.com
-jokku ps:scale myapp web=4 worker=2
-jokku resource:limit myapp --cpu 2 --memory 1g --process-type web
+# commands run on the server, or from anywhere as "ssh jokku@server <command>"
+ssh jokku@server config:set myapp DATABASE_URL=postgres://...
+ssh jokku@server domains:add myapp myapp.com
+ssh jokku@server ps:scale myapp web=4 worker=2
+ssh jokku@server resource:limit myapp --cpu 2 --memory 1g --process-type web
 
-# grow the cluster: run from your laptop, uses your SSH access to the box
-jokku nodes:add root@203.0.113.11
+# grow the cluster: on the control node, print a join command...
+jokku cluster:join-command
+# ...and run what it prints on the new server
+curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo sh -s -- --join 203.0.113.10 --token jk1_...
 ```
 
 ## Topology
@@ -93,31 +95,27 @@ proxies keep serving their last known state.
 ## How clients reach the API
 
 ```
- laptop CLI ---ssh jokku@control "jokku api:dial-stdio"--+
- server CLI (root) ----------------------------------------+--> /run/jokku/jokku.sock --> API
- git push --> sshd --> jokku ssh-command --> git hook ------+
+ jokku on the server ----------------------------------------+
+ ssh jokku@server <command> --> sshd --> jokku ssh-command ---+--> /run/jokku/jokku.sock --> API
+ git push --> sshd --> jokku ssh-command --> git hook --------+
  GUI / CI / curl ----- https://control:7443 + bearer token --> API
  agents -------------- WireGuard + node token -------------> API (/v1/agent/*)
 ```
 
 - **Unix socket** `/run/jokku/jokku.sock`, mode `0660`, group `jokku`.
   Anyone who can open the socket is an admin, the same model as Docker.
-- **SSH.** The laptop CLI runs `ssh jokku@host jokku api:dial-stdio` and
-  speaks HTTP over the SSH session's stdio, the way `docker -H ssh://` does.
-  SSH is only a transport and authenticator; the CLI is still an API
-  client. The connection is reused for 60s via `ControlPersist`, so
-  repeated commands are fast.
-- **Plain `ssh jokku@host apps:list`** also works with no local install,
-  exactly like Dokku: the forced command runs the CLI on the server, which
+- **SSH**, exactly like Dokku: `ssh jokku@server apps:list` needs nothing
+  installed locally. The forced command runs the CLI on the server, which
   calls the API over the socket.
 - **HTTPS + token** (milestone 3) for CI systems and a future GUI:
   `jokku tokens:create ci` issues a bearer token. The control node
   generates a self-signed CA at init; clients pin it by fingerprint.
 
-The laptop CLI finds its server the same way the Dokku client does: from a
-git remote named `jokku` (`jokku@host:app`), which also supplies the default
-`--app`. `JOKKU_HOST=jokku@host` overrides it, `JOKKU_SOCKET` forces a
-local socket.
+The `jokku` binary also runs as a client away from the server, though nothing
+requires it. It reaches the API by running `ssh jokku@server jokku
+api:dial-stdio` and speaking HTTP over the session, like `docker -H ssh://`.
+It finds the server and default app from a git remote named `jokku`, or from
+`JOKKU_HOST`.
 
 ## Authentication
 
@@ -127,7 +125,7 @@ local socket.
 | Jokku pulling a private repo (`git:sync`) | A deploy key Jokku generates; you add its public half to the GitHub repo | `git:generate-deploy-key`, `git:public-key`, `git:allow-host github.com` |
 | Jokku pulling over HTTPS | Stored credentials per host | `git:auth github.com <user> <token>` |
 | HTTPS API clients | Bearer tokens (hashed at rest) | `tokens:create <name>` |
-| Nodes | Join token once, then a per-node token over WireGuard | `cluster:join-command`, `nodes:add` |
+| Nodes | Join token once, then a per-node token over WireGuard | `cluster:join-command` |
 
 Each `authorized_keys` line looks like:
 
@@ -141,7 +139,7 @@ restrict,pty,command="/usr/local/bin/jokku ssh-command --key-name admin" ssh-ed2
 | --- | --- |
 | `git-receive-pack 'app'` | Ensure the app and its bare repo exist, then run `git-receive-pack` |
 | `git-upload-pack 'app'` | Let people clone what was deployed |
-| `jokku api:dial-stdio` | Pipe stdio to the API socket (remote CLI) |
+| `jokku api:dial-stdio` | Pipe stdio to the API socket (optional local client) |
 | anything else | Run it as a CLI command on the server |
 
 In v1 every key is an admin, as in Dokku without the ACL plugin. The key
@@ -368,14 +366,21 @@ release keeps serving, and the failing instance's logs are printed.
 
 ## Cluster join
 
+New nodes join with the same installer, so there is one install path:
+
 ```
-laptop$ jokku nodes:add root@203.0.113.11 [--name worker-1]
+control$ jokku cluster:join-command
+curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo sh -s -- --join 203.0.113.10 --token jk1_...
+
+new-node$ <paste it>
 ```
 
-1. The CLI asks the API for a short-lived join token. The token embeds the
-   control CA fingerprint, which the joining node uses to pin TLS.
-2. Using **your** SSH access to the new machine, the CLI uploads and runs
-   the installer: `jokku cluster:join 203.0.113.10 --token jk1_...`.
+1. `cluster:join-command` asks the API for a short-lived join token. The
+   token embeds the control CA fingerprint, which the joining node uses to
+   pin TLS.
+2. On the new machine, the installer sets up jokku as usual, then runs
+   `jokku cluster:join 203.0.113.10 --token jk1_...` instead of initializing
+   a control node.
 3. The new node generates a WireGuard key and calls
    `POST https://control:7443/v1/cluster/join` with the token, its public
    key, endpoint, CPUs, memory and architecture.
@@ -384,9 +389,8 @@ laptop$ jokku nodes:add root@203.0.113.11 [--name worker-1]
 5. The node brings up `wg0` and its agent starts long-polling over the mesh.
    Done.
 
-If you cannot SSH to the machine from where you are, `jokku
-cluster:join-command` prints the one-liner to paste there (for example in
-cloud-init user-data for autoscaling groups).
+The same one-liner works unattended, for example in cloud-init user-data for
+autoscaling groups.
 
 ## State
 
@@ -447,15 +451,16 @@ Schema changes are numbered, append-only migrations applied at startup.
 
 - **M0 – control plane skeleton.** API, SQLite, CLI over socket and SSH,
   apps, config, domains, properties, ssh-keys, scale and resource records,
-  `ssh-command`, git receive and hook. *(this commit)*
+  `ssh-command`, git receive and hook, `install.sh` and release binaries.
+  *(done)*
 - **M1 – single-node deploys.** BuildKit build, OCI to ext4, `jokku-init`,
   Firecracker driver, bridge/TAP/NAT, agent reconcile loop, embedded
   Caddy, rollouts, checks, logs, `ps:*`. At this point it is a working
   Dokku replacement on one box.
-- **M2 – cluster.** WireGuard mesh, join, `nodes:*`, scheduler, artifact
-  distribution, cluster cert storage, failover.
+- **M2 – cluster.** WireGuard mesh, `cluster:join-command` and
+  `install.sh --join`, `nodes:*`, scheduler, artifact distribution, cluster
+  cert storage, failover.
 - **M3 – remote API.** HTTPS listener, tokens, `git:sync`, deploy keys,
-  `git:from-image`, `git:from-archive`, and the installer (`install.sh` in
-  this repo, fetching binaries from GitHub releases).
+  `git:from-image`, `git:from-archive`.
 - **M4 – depth.** `run` and `enter` via vsock, volumes, `releases:rollback`,
   app.json health checks, log drains, services.

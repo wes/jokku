@@ -57,7 +57,8 @@ tracks what exists today. Milestones are described in
 | --- | --- |
 | `ssh-keys:add <name> [file]` (or stdin), `ssh-keys:remove [--fingerprint]`, `ssh-keys:list [--format json]` | ✅ |
 | `ssh jokku@host <command>` with no local install | ✅ |
-| Laptop CLI via the `jokku` git remote or `JOKKU_HOST` | ✅ |
+| `jokku` on the server, installed by `install.sh` | ✅ |
+| Optional local client via the `jokku` git remote or `JOKKU_HOST` (not required) | ✅ |
 | `tokens:create`, `tokens:list`, `tokens:remove` (HTTPS API) | ➕ 🔜 M3 |
 
 ## Cluster
@@ -65,7 +66,7 @@ tracks what exists today. Milestones are described in
 | Command | Status |
 | --- | --- |
 | `nodes:list`, `nodes:report`, `nodes:set` (`schedulable`, `ingress`), `nodes:drain`, `nodes:undrain` | ➕ ✅ (control node only until M2) |
-| `nodes:add <ssh-target>`, `nodes:remove`, `cluster:join`, `cluster:join-command` | ➕ 🔜 M2 |
+| `cluster:join-command` (prints an `install.sh --join` one-liner), `nodes:remove` | ➕ 🔜 M2 |
 
 ## Storage and services
 

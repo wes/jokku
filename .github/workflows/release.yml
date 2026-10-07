@@ -1,0 +1,31 @@
+name: release
+
+# Push a tag like v0.0.2 to publish Linux binaries for install.sh.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go vet ./... && go test ./...
+      - name: Build
+        run: |
+          mkdir -p dist
+          ldflags="-s -w -X github.com/wes/jokku/internal/version.Version=${GITHUB_REF_NAME} -X github.com/wes/jokku/internal/version.Commit=${GITHUB_SHA::7}"
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags "$ldflags" -o dist/jokku-linux-$arch ./cmd/jokku
+          done
+          cd dist && sha256sum jokku-linux-* > checksums.txt
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes

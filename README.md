@@ -3,10 +3,13 @@
 Dokku's workflow on Firecracker microVMs, across a cluster.
 
 ```sh
-git push jokku main            # builds your Dockerfile, boots microVMs, routes HTTPS
-jokku ps:scale myapp web=4     # spread across every node in the cluster
-jokku resource:limit myapp --cpu 2 --memory 1g
-jokku nodes:add root@203.0.113.11   # one command to grow the cluster
+# on the server, or from anywhere as: ssh jokku@server <command>
+jokku apps:create myapp
+jokku ps:scale myapp web=4                       # spread across the cluster
+jokku resource:limit myapp --cpu 2 --memory 1g   # size each microVM
+
+# from your app's repo
+git push jokku main            # builds the Dockerfile, boots microVMs, routes HTTPS
 ```
 
 - **Dokku's commands, unchanged.** `apps:create`, `config:set`,
@@ -29,41 +32,42 @@ jokku nodes:add root@203.0.113.11   # one command to grow the cluster
 ## How it fits together
 
 ```
-laptop ──ssh──▶ control node ──▶ API (/v1) ──▶ SQLite
-  git push        sshd forced command           scheduler ──▶ agents on every node
-  jokku CLI       (jokku ssh-command)           builder         └─ Firecracker VMs
-                                                                └─ Caddy (HTTPS)
+you ──ssh──▶ server (control node) ──▶ API (/v1) ──▶ SQLite
+  git push      sshd forced command              scheduler ──▶ agents on every node
+  commands      (jokku ssh-command)              builder         └─ Firecracker VMs
+                                                                 └─ Caddy (HTTPS)
                        nodes connected by a WireGuard mesh
 ```
 
-Every way in ends at the same API: the CLI on the server uses a unix socket,
-the CLI on your laptop tunnels HTTP over SSH (`ssh jokku@host jokku
-api:dial-stdio`), `git push` goes through a pre-receive hook, and CI or a GUI
-can use HTTPS with a token (milestone 3).
+The `jokku` binary lives on the server. Every way in ends at the same API:
+`jokku` commands on the server use a unix socket, `ssh jokku@server
+<command>` runs them through an SSH forced command, `git push` goes through a
+pre-receive hook, and CI or a GUI can use HTTPS with a token (milestone 3).
 
 ## Install
 
-The laptop CLI works today (Go required):
+On an Ubuntu or Debian server (KVM is needed once microVMs land in
+milestone 1):
 
 ```sh
-go install github.com/wes/jokku/cmd/jokku@latest
+curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo sh
 ```
 
-The server installer arrives in milestone 3. The target experience:
+This installs `/usr/local/bin/jokku`, creates the `jokku` user, starts the
+`jokku` systemd service and gives the SSH keys you used to log in access to
+Jokku. Run it again to upgrade. Set `JOKKU_VERSION=v0.0.1` to pin a release,
+or `JOKKU_IMPORT_KEYS=0` to skip importing keys.
+
+Then deploy from your laptop. There is nothing to install there besides git
+and ssh:
 
 ```sh
-# server: Ubuntu/Debian with KVM
-curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo sh
-cat ~/.ssh/id_ed25519.pub | ssh root@server jokku ssh-keys:add admin
-
-# laptop, in a repo with a Dockerfile
 git remote add jokku jokku@server:myapp
 git push jokku main
-```
 
-The `jokku` CLI on your laptop finds the server and the app from the `jokku`
-git remote, like the Dokku client. Without a local install, `ssh
-jokku@server config:set myapp KEY=value` works too.
+ssh jokku@server config:set myapp KEY=value      # any jokku command works this way
+cat key.pub | ssh jokku@server ssh-keys:add bob  # let someone else push
+```
 
 ### Deploying from GitHub Actions
 
@@ -95,6 +99,11 @@ bin/jokku config:set myapp KEY=value
 make linux                                 # static binaries for servers
 ```
 
+Releases: pushing a tag like `v0.0.2` runs `.github/workflows/release.yml`,
+which publishes the Linux binaries that `install.sh` downloads. CI runs
+`install.sh` on a fresh Ubuntu runner and drives Jokku over real SSH
+(`test/install-e2e.sh`).
+
 Layout:
 
 | Path | What |
@@ -108,3 +117,4 @@ Layout:
 | `internal/deploy` | source inspection now; build and rollout in M1 |
 | `internal/daemon` | wires a node together |
 | `internal/sshkeys`, `internal/gitrepo` | `authorized_keys` and push repos |
+| `install.sh` | the server installer |

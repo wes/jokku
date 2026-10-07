@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
+  # Runs install.sh on a fresh runner (systemd, sshd) and drives jokku over ssh.
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/wes/jokku/internal/version.Version=ci-${GITHUB_SHA::7}" -o dist/jokku-linux-amd64 ./cmd/jokku
+          cd dist && sha256sum jokku-linux-amd64 > checksums.txt
+      - run: bash test/install-e2e.sh dist

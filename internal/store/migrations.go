@@ -105,4 +105,30 @@ CREATE TABLE nodes (
 	created_at   INTEGER NOT NULL
 );
 `,
+
+	// 2: running instances (microVMs) and stopped apps
+	`
+CREATE TABLE instances (
+	id           TEXT    PRIMARY KEY,
+	app_id       INTEGER NOT NULL REFERENCES apps (id) ON DELETE CASCADE,
+	release_id   INTEGER NOT NULL REFERENCES releases (id) ON DELETE CASCADE,
+	process_type TEXT    NOT NULL,
+	idx          INTEGER NOT NULL,
+	node         TEXT    NOT NULL,
+	ip           TEXT    NOT NULL UNIQUE,
+	port         INTEGER NOT NULL,
+	cpus         INTEGER NOT NULL,
+	memory_mb    INTEGER NOT NULL,
+	desired      TEXT    NOT NULL,
+	state        TEXT    NOT NULL DEFAULT 'pending',
+	healthy_once INTEGER NOT NULL DEFAULT 0,
+	restarts     INTEGER NOT NULL DEFAULT 0,
+	retire_at    INTEGER,
+	started_at   INTEGER,
+	created_at   INTEGER NOT NULL
+);
+CREATE INDEX instances_app ON instances (app_id);
+
+ALTER TABLE apps ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0;
+`,
 }

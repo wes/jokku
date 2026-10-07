@@ -7,3 +7,6 @@ var (
 	Version = "0.0.0-dev"
 	Commit  = "unknown"
 )
+
+// Repo is the GitHub repository releases and install scripts come from.
+const Repo = "wes/jokku"

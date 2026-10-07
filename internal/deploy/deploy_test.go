@@ -63,3 +63,22 @@ func TestInspect(t *testing.T) {
 		t.Fatalf("missing dockerfile: %v", err)
 	}
 }
+
+func TestProcesses(t *testing.T) {
+	got, err := Processes(nil, []string{"/entry.sh"}, []string{"serve", "--port", "80"})
+	if err != nil || !reflect.DeepEqual(got, map[string][]string{"web": {"/entry.sh", "serve", "--port", "80"}}) {
+		t.Fatalf("image command: %v, %v", got, err)
+	}
+	got, _ = Processes(map[string]string{"web": "bin/web -p $PORT", "worker": "bin/jobs"}, nil, []string{"ignored"})
+	want := map[string][]string{"web": {"/bin/sh", "-c", "bin/web -p $PORT"}, "worker": {"/bin/sh", "-c", "bin/jobs"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("procfile: %v", got)
+	}
+	got, _ = Processes(map[string]string{"web": "rails s"}, []string{"docker-entrypoint.sh"}, nil)
+	if !reflect.DeepEqual(got["web"], []string{"docker-entrypoint.sh", "/bin/sh", "-c", "rails s"}) {
+		t.Fatalf("procfile with entrypoint: %v", got)
+	}
+	if _, err := Processes(nil, nil, nil); err == nil {
+		t.Fatal("expected an error with nothing to run")
+	}
+}

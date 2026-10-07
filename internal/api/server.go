@@ -90,6 +90,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /v1/apps/{app}/deploys", s.listDeploys)
 	m.HandleFunc("POST /v1/apps/{app}/deploys", s.createDeploy)
 	m.HandleFunc("POST /v1/apps/{app}/git", s.ensureGitRepo)
+	m.HandleFunc("POST /v1/apps/{app}/ps/{action}", s.psAction)
+	m.HandleFunc("GET /v1/apps/{app}/instances", s.listInstances)
+	m.HandleFunc("GET /v1/apps/{app}/releases", s.listReleases)
+	m.HandleFunc("GET /v1/apps/{app}/logs", s.logs)
 
 	m.HandleFunc("GET /v1/ssh-keys", s.listSSHKeys)
 	m.HandleFunc("POST /v1/ssh-keys", s.addSSHKey)

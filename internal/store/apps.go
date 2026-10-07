@@ -48,7 +48,7 @@ func (s *Store) Apps(ctx context.Context) ([]types.App, error) {
 }
 
 const appSelect = `
-SELECT a.name, a.locked, a.created_at, COALESCE(r.version, 0),
+SELECT a.name, a.locked, a.stopped, a.created_at, COALESCE(r.version, 0),
 	COALESCE((SELECT source FROM deploys d WHERE d.app_id = a.id AND d.status = 'succeeded' ORDER BY d.id DESC LIMIT 1), '')
 FROM apps a LEFT JOIN releases r ON r.id = a.current_release_id`
 
@@ -57,7 +57,7 @@ type scanner interface{ Scan(...any) error }
 func scanApp(row scanner) (*types.App, error) {
 	var app types.App
 	var created int64
-	if err := row.Scan(&app.Name, &app.Locked, &created, &app.CurrentRelease, &app.DeploySource); err != nil {
+	if err := row.Scan(&app.Name, &app.Locked, &app.Stopped, &created, &app.CurrentRelease, &app.DeploySource); err != nil {
 		return nil, err
 	}
 	app.CreatedAt = fromUnix(created)

@@ -17,12 +17,15 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/wes/jokku/internal/agent"
 	"github.com/wes/jokku/internal/api"
+	"github.com/wes/jokku/internal/build"
 	"github.com/wes/jokku/internal/deploy"
 	"github.com/wes/jokku/internal/gitrepo"
 	"github.com/wes/jokku/internal/sshkeys"
 	"github.com/wes/jokku/internal/store"
 	"github.com/wes/jokku/internal/version"
+	"github.com/wes/jokku/internal/vm"
 )
 
 // Defaults for a server installed by install.sh / "jokku setup".
@@ -106,10 +109,24 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		return fmt.Errorf("registering node: %w", err)
 	}
 
+	// Node 1's slice of the cluster network: its VMs and the bridge gateway.
+	subnet, gateway := api.NodeSubnet(cidr, 1)
+	host := &vm.Host{DataDir: cfg.DataDir, Bridge: "jokku0", Gateway: netip.PrefixFrom(gateway, subnet.Bits()), Cluster: cidr}
+	ag := agent.New(agent.Config{Store: st, Host: host, Node: nodeName, DataDir: cfg.DataDir, DNS: vm.HostDNS(), Log: log})
+	pipeline := &deploy.Pipeline{
+		Store: st, Builder: &build.Builder{DataDir: cfg.DataDir, Exe: exe}, Agent: ag,
+		Node: nodeName, Subnet: subnet, DataDir: cfg.DataDir, Log: log,
+	}
+	if err := host.Available(); err != nil {
+		log.Warn("this node cannot run microVMs; deploys will fail until this is fixed", "reason", err)
+	} else {
+		go ag.Run(ctx)
+	}
+
 	srv := api.New(api.Config{
 		Store:          st,
 		Git:            &gitrepo.Manager{Dir: cfg.GitDir, Exe: exe, Owner: owner},
-		Deployer:       &deploy.Pipeline{Store: st, Log: log},
+		Deployer:       pipeline,
 		Log:            log,
 		DataDir:        cfg.DataDir,
 		Exe:            exe,

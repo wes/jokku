@@ -14,9 +14,10 @@ disagree, fix one of them.
    `config:set`, `ps:scale`, `domains:add`. A Dokku user should be at home
    on day one.
 2. **One binary.** `jokku` is the CLI, the API server, the node agent, the
-   SSH forced-command, the git hook and the HTTP proxy (Caddy is embedded as
-   a library). The only other binaries on a node are `firecracker`,
-   `jailer`, `buildkitd` (control node) and the tiny in-VM `jokku-init`.
+   SSH forced-command, the git hook, the HTTP proxy (Caddy is embedded as a
+   library) and even the init process inside every microVM. The only other
+   binaries on a node are `firecracker` and `buildkitd`, pinned and installed
+   by `jokku setup`.
 3. **The API is the product, the CLI is a client.** Every CLI command is
    an HTTP call to `/v1/...`. Nothing in the CLI touches the database or
    the filesystem directly, so a GUI can come later without rework.
@@ -222,29 +223,37 @@ one, the app has a single `web` process running the image's
 
 ## MicroVM runtime
 
-Each instance (`web.1`, `worker.2`, ...) is one Firecracker microVM
-in its own systemd unit (`jokku-vm@<id>.service`), launched through the `jailer` (chroot, cgroup v2 limits, seccomp,
-unprivileged uid).
+Each instance (`web.1`, `worker.2`, ...) is one Firecracker microVM in its
+own transient systemd unit (`jokku-vm-<id>`), not a child of the daemon, so
+restarting or updating jokku leaves apps running.
 
 | Piece | What it is |
 | --- | --- |
-| Kernel | One `vmlinux` per Jokku release, built with virtio, ext4, overlayfs, vsock and kernel IP autoconfig. |
-| initramfs | Contains `jokku-init`, a small static Go binary. Shipping it outside the app image means a Jokku upgrade never requires rebuilding apps. |
-| `vda` | The release's `rootfs.ext4`, attached read-only and shared by every instance of the release on that node. |
-| `vdb` | A tiny config drive: JSON with the command, env, user, workdir, hostname and volume mounts. |
-| `vdc` | A per-instance sparse scratch ext4 used as the overlay upper layer. Writable root, gone when the instance stops (12-factor, like Dokku's containers). |
-| `vdd`+ | Persistent volumes from `storage:mount`. |
+| Kernel | Firecracker's CI guest kernel (6.1), pinned by SHA-256: virtio, ext4, overlayfs, vsock and kernel IP autoconfig built in. |
+| `vda` | The release's root filesystem: the image's flattened layers as a read-only ext4, shared by every instance of the release on that node. Built once per image digest. |
+| `/.jokku/init` | The jokku binary itself, copied into every rootfs and started by the kernel as PID 1. |
+| `vdb` | A tiny config drive: JSON with the command, env, user, workdir, hostname and DNS. |
+| `vdc` | A per-instance sparse scratch ext4 used as the overlay upper layer: a writable root that is kept across restarts of the instance and discarded when it is replaced (like Dokku's containers). |
+| `vdd`+ | Persistent volumes from `storage:mount` (milestone 4). |
 | `eth0` | A TAP device on the node's `jokku0` bridge, addressed via the kernel `ip=` boot argument. |
 
-`jokku-init` boot sequence: mount `/proc`, `/sys` and `/dev`, read the
-config drive, mount `vda` read-only and `vdc` as an overlay, mount volumes,
-write `/etc/hosts` and `/etc/resolv.conf`, `switch_root`, then start the
-process as the image's `USER`. It stays as PID 1 to reap zombies, forward
-signals and run a small vsock guest agent that provides:
+Boot sequence inside the VM: the kernel mounts `vda` read-only and runs
+`/.jokku/init`, which reads the config drive, stages an overlay of `vda` and
+`vdc` in a tmpfs, `pivot_root`s into it, mounts `/proc`, `/sys`, `/dev`,
+`/run` and cgroups, brings up loopback, writes `/etc/hosts` and
+`/etc/resolv.conf`, then starts the process as the image's `USER`. It stays
+PID 1 to reap zombies. A stop request (Firecracker's Ctrl-Alt-Del on x86)
+becomes `SIGTERM` to the app's process group, then `SIGKILL` after 10
+seconds, then power off.
 
-- the log stream (stdout/stderr, read by the node agent),
-- `exec`, for `jokku enter app web.1` and `jokku run app <cmd>`,
-- graceful stop: `SIGTERM`, then a grace period, then power off.
+The app's stdout and stderr go to the VM's serial console, which is the
+unit's output, so they land in the journal tagged with `JOKKU_APP` and
+`JOKKU_PROCESS`; `jokku logs` reads them from there.
+
+Not yet: running Firecracker under its `jailer` (chroot, unprivileged uid,
+cgroup limits), and a vsock guest agent for `jokku run` and `jokku enter`.
+Both are planned; until the jailer lands, treat apps on one server as
+trusting each other, as with Dokku.
 
 Sizing is per process type: `resource:limit app --cpu 2 --memory 1g
 --process-type web`. Firecracker cannot hot-add vCPUs, so a size change is a
@@ -505,7 +514,7 @@ stays the stable entry point, including for versions that predate the command.
   apps, config, domains, properties, ssh-keys, scale and resource records,
   `ssh-command`, git receive and hook, `install.sh`, `update.sh` with backup
   and rollback, `jokku setup`, and release binaries. *(done)*
-- **M1 – single-node deploys.** BuildKit build, OCI to ext4, `jokku-init`,
+- **M1 – single-node deploys.** *(done)* BuildKit build, OCI to ext4, guest init,
   Firecracker driver, bridge/TAP/NAT, agent reconcile loop, embedded
   Caddy, rollouts, checks, logs, `ps:*`. At this point it is a working
   Dokku replacement on one box.
@@ -514,5 +523,5 @@ stays the stable entry point, including for versions that predate the command.
   cert storage, failover.
 - **M3 – remote API.** HTTPS listener, tokens, `git:sync`, deploy keys,
   `git:from-image`, `git:from-archive`.
-- **M4 – depth.** `run` and `enter` via vsock, volumes, `releases:rollback`,
+- **M4 – depth.** The Firecracker `jailer`, `run` and `enter` via vsock, volumes, `releases:rollback`,
   app.json health checks, log drains, services.

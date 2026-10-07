@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/wes/jokku/internal/types"
 )
@@ -179,4 +180,46 @@ func (c *Client) Node(ctx context.Context, name string) (*types.Node, error) {
 func (c *Client) SetNodeFlag(ctx context.Context, name, flag string, value bool) (*types.Node, error) {
 	var n types.Node
 	return &n, c.call(ctx, http.MethodPatch, "/v1/nodes/"+url.PathEscape(name), map[string]bool{flag: value}, &n)
+}
+
+// Processes and logs
+
+// PS runs restart, start, stop or rebuild and streams its progress.
+func (c *Client) PS(ctx context.Context, app, action string, onEvent func(types.Event)) error {
+	return c.streamCall(ctx, http.MethodPost, appPath(app, "ps/"+url.PathEscape(action)), onEvent)
+}
+
+func (c *Client) Instances(ctx context.Context, app string) ([]types.Instance, error) {
+	var out []types.Instance
+	return out, c.call(ctx, http.MethodGet, appPath(app, "instances"), nil, &out)
+}
+
+func (c *Client) Releases(ctx context.Context, app string) ([]types.Release, error) {
+	var out []types.Release
+	return out, c.call(ctx, http.MethodGet, appPath(app, "releases"), nil, &out)
+}
+
+// Logs streams log lines; with Follow it runs until ctx is done.
+func (c *Client) Logs(ctx context.Context, app string, o types.LogOptions, onEvent func(types.Event)) error {
+	q := url.Values{"tail": {strconv.Itoa(o.Tail)}}
+	if o.Follow {
+		q.Set("follow", "true")
+	}
+	if o.Process != "" {
+		q.Set("process", o.Process)
+	}
+	return c.streamCall(ctx, http.MethodGet, appPath(app, "logs")+"?"+q.Encode(), onEvent)
+}
+
+func (c *Client) streamCall(ctx context.Context, method, path string, onEvent func(types.Event)) error {
+	req, err := c.newRequest(ctx, method, path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return stream(resp.Body, onEvent)
 }

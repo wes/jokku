@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"strconv"
 
 	"github.com/wes/jokku/internal/types"
 )
@@ -40,12 +42,6 @@ func (s *Server) scale(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if !req.SkipDeploy {
-		if _, err := s.Deployer.Restart(r.Context(), app, actor(r)); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-	}
 	s.getFormation(w, r)
 }
 
@@ -83,9 +79,78 @@ func (s *Server) patchResources(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if _, err := s.Deployer.Restart(r.Context(), app, actor(r)); err != nil {
+	s.getResources(w, r)
+}
+
+// psAction streams restart, start, stop or rebuild.
+func (s *Server) psAction(w http.ResponseWriter, r *http.Request) {
+	app, action := r.PathValue("app"), r.PathValue("action")
+	switch action {
+	case "restart", "start", "stop", "rebuild":
+	default:
+		s.fail(w, r, httpErrorf(http.StatusNotFound, "Unknown ps action %q", action))
+		return
+	}
+	if _, err := s.Store.App(r.Context(), app); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.getResources(w, r)
+	st := newStream(w)
+	// Like deploys, an action outlives a dropped connection.
+	st.Done(s.Deployer.PS(context.WithoutCancel(r.Context()), app, action, actor(r), st.Log))
+}
+
+func (s *Server) listInstances(w http.ResponseWriter, r *http.Request) {
+	insts, err := s.Store.Instances(r.Context(), r.PathValue("app"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := []types.Instance{}
+	for _, in := range insts {
+		out = append(out, types.Instance{
+			ID: in.ID, Name: in.Name(), Release: in.Release, Node: in.Node, IP: in.IP, Port: in.Port,
+			CPUs: in.CPUs, MemoryMB: in.MemoryMB, State: in.State, Desired: in.Desired,
+			Restarts: in.Restarts, StartedAt: in.StartedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) listReleases(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	cur, err := s.Store.CurrentRelease(r.Context(), app)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	rels, err := s.Store.Releases(r.Context(), app, 50)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := []types.Release{}
+	for _, rel := range rels {
+		out = append(out, types.Release{
+			Version: rel.Version, Description: rel.Description, CreatedAt: rel.CreatedAt,
+			Current: cur != nil && cur.ID == rel.ID,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// logs streams app log lines. Query: tail (default 100), follow, process.
+func (s *Server) logs(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	if _, err := s.Store.App(r.Context(), app); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	q := r.URL.Query()
+	o := types.LogOptions{Tail: 100, Follow: q.Get("follow") == "true", Process: q.Get("process")}
+	if n, err := strconv.Atoi(q.Get("tail")); err == nil && n >= 0 {
+		o.Tail = n
+	}
+	st := newStream(w)
+	st.Done(s.Deployer.Logs(r.Context(), app, o, st.Log))
 }

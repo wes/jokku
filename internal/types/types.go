@@ -17,6 +17,7 @@ type Error struct {
 type App struct {
 	Name           string    `json:"name"`
 	Locked         bool      `json:"locked"`
+	Stopped        bool      `json:"stopped"` // ps:stop
 	CreatedAt      time.Time `json:"created_at"`
 	CurrentRelease int       `json:"current_release,omitempty"`
 	DeploySource   string    `json:"deploy_source,omitempty"`
@@ -35,18 +36,17 @@ type CloneAppRequest struct {
 }
 
 // ConfigPatch changes config vars. Unset runs before Set; Clear removes
-// everything first.
+// everything first. Changes apply to running instances on the next restart
+// (POST /v1/apps/{app}/ps/restart).
 type ConfigPatch struct {
-	Set       map[string]string `json:"set,omitempty"`
-	Unset     []string          `json:"unset,omitempty"`
-	Clear     bool              `json:"clear,omitempty"`
-	NoRestart bool              `json:"no_restart,omitempty"`
+	Set   map[string]string `json:"set,omitempty"`
+	Unset []string          `json:"unset,omitempty"`
+	Clear bool              `json:"clear,omitempty"`
 }
 
 type ConfigVars struct {
-	Vars map[string]string `json:"vars"`
-	// Restarting is true when the change triggered a rollout.
-	Restarting bool `json:"restarting,omitempty"`
+	Vars    map[string]string `json:"vars"`
+	Changed bool              `json:"changed,omitempty"` // on PATCH: whether anything changed
 }
 
 // DomainsPatch changes an app's (or the global) domains. Exactly one field
@@ -91,7 +91,6 @@ type Formation struct {
 
 type ScaleRequest struct {
 	Quantities map[string]int `json:"quantities"`
-	SkipDeploy bool           `json:"skip_deploy,omitempty"`
 }
 
 // ResourceLimits sets vCPUs and memory for one process type, or for every
@@ -139,6 +138,36 @@ type Node struct {
 	Ingress     bool      `json:"ingress"`
 	LastSeen    time.Time `json:"last_seen"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+// Instance is one running (or starting, or retiring) microVM.
+type Instance struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"` // web.1
+	Release   int       `json:"release"`
+	Node      string    `json:"node"`
+	IP        string    `json:"ip"`
+	Port      int       `json:"port"`
+	CPUs      int       `json:"cpus"`
+	MemoryMB  int       `json:"memory_mb"`
+	State     string    `json:"state"`   // pending | starting | healthy | crashed | failed
+	Desired   string    `json:"desired"` // running | stopped
+	Restarts  int       `json:"restarts"`
+	StartedAt time.Time `json:"started_at"`
+}
+
+type Release struct {
+	Version     int       `json:"version"`
+	Description string    `json:"description"`
+	Current     bool      `json:"current"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// LogOptions select app log lines.
+type LogOptions struct {
+	Tail    int    `json:"tail"`
+	Follow  bool   `json:"follow"`
+	Process string `json:"process,omitempty"` // "web" or "web.1"
 }
 
 type Deploy struct {

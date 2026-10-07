@@ -18,6 +18,7 @@ import (
 
 	"github.com/wes/jokku/internal/client"
 	"github.com/wes/jokku/internal/daemon"
+	"github.com/wes/jokku/internal/proxy"
 	"github.com/wes/jokku/internal/setup"
 	"github.com/wes/jokku/internal/types"
 	"github.com/wes/jokku/internal/version"
@@ -34,6 +35,9 @@ var serverCommands = []*Command{
 		{Name: "cluster-cidr", Value: "CIDR", Help: "Cluster network, an IPv4 /16 (default 10.210.0.0/16)"},
 		{Name: "node-name", Value: "NAME", Help: "This node's name (default the hostname)"},
 	}, Run: runDaemon},
+	{Name: "proxy", Help: "Run the HTTP proxy (started by systemd as jokku-proxy)", Local: true, serverOnly: true,
+		Flags: []Flag{{Name: "data-dir", Value: "DIR", Help: "State directory (default /var/lib/jokku)"}},
+		Run:   runProxy},
 	{Name: "setup", Help: "Prepare this server for jokku and (re)start it; run by install.sh and update.sh", Local: true, serverOnly: true,
 		Run: func(c *Context) error { return setup.Run(c, c.Stdout) }},
 	{Name: "ssh-command", Hidden: true, Local: true, serverOnly: true,
@@ -71,6 +75,16 @@ func runDaemon(c *Context) error {
 	defer stop()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	return daemon.Run(ctx, cfg, log)
+}
+
+func runProxy(c *Context) error {
+	dataDir := daemon.DefaultDataDir
+	if c.Bool("data-dir") {
+		dataDir = c.String("data-dir")
+	}
+	ctx, stop := signal.NotifyContext(c, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return proxy.Run(ctx, dataDir)
 }
 
 // runSSHCommand is the forced command for every key in the jokku user's

@@ -36,15 +36,7 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	res := types.ConfigVars{Vars: vars}
-	if changed && !p.NoRestart && app != "" {
-		res.Restarting, err = s.Deployer.Restart(r.Context(), app, actor(r))
-		if err != nil {
-			s.fail(w, r, err)
-			return
-		}
-	}
-	writeJSON(w, http.StatusOK, res)
+	writeJSON(w, http.StatusOK, types.ConfigVars{Vars: vars, Changed: changed})
 }
 
 func (s *Server) getDomains(w http.ResponseWriter, r *http.Request) {
@@ -95,5 +87,6 @@ func (s *Server) patchDomains(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.Deployer.RoutesChanged()
 	s.getDomains(w, r)
 }

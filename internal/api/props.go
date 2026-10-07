@@ -47,6 +47,7 @@ func (s *Server) setProperty(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.Deployer.RoutesChanged()
 	s.getProperties(w, r)
 }
 

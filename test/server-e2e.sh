@@ -75,7 +75,8 @@ watch_start() {
 watch_stop() {
   kill "$watcher"
   wait "$watcher" 2>/dev/null || true
-  failures=$(wc -l </tmp/failures 2>/dev/null || echo 0)
+  failures=0
+  [ ! -f /tmp/failures ] || failures=$(wc -l </tmp/failures)
   [ "$failures" -eq 0 ] || fail "$failures requests failed during $1"
 }
 
@@ -138,7 +139,10 @@ watch_stop "the update"
 sudo ls -d /var/lib/jokku/backups/*-ci-old >/dev/null || fail "no backup taken"
 
 step "jokku update asks first"
-if echo n | sudo jokku update --version ci-newer 2>&1 | grep -q "needs confirmation"; then :; else fail "jokku update without a terminal should require --yes"; fi
+out=$(echo n | sudo jokku update --version ci-newer 2>&1 || true)
+printf '%s\n' "$out"
+grep -q "Jokku ci-newer is available" <<<"$out" || fail "jokku update did not report the new version"
+grep -q "needs confirmation" <<<"$out" || fail "jokku update without a terminal should require --yes"
 
 step "update to the same version is a no-op"
 out=$(sudo JOKKU_VERSION=ci-new JOKKU_DOWNLOAD_URL="file://$dist/new" sh ./update.sh)

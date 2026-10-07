@@ -20,14 +20,16 @@ cat "$key.pub" >>~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
 export GIT_SSH_COMMAND="ssh -i $key -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
 jssh() { $GIT_SSH_COMMAND "jokku@$host" "$@"; }
 
-step "install"
-sudo JOKKU_DOWNLOAD_URL="file://$dist" sh ./install.sh
+step "install (traced with timestamps)"
+sudo JOKKU_DOWNLOAD_URL="file://$dist" PS4='+ $(date +%T.%N | cut -c1-12) ' sh -x ./install.sh
 systemctl is-active jokku
 sudo jokku ssh-keys:list | grep -q 'NAME="admin"' || fail "installer did not import the key"
 
 step "commands over ssh"
 jssh apps:create hello
-jssh config:set hello "GREETING=hello world" PORT=8080
+# ssh joins arguments with spaces, so values with spaces are quoted for the
+# server side, as with Dokku.
+jssh config:set hello "'GREETING=hello world'" PORT=8080
 [ "$(jssh config:get hello GREETING)" = "hello world" ] || fail "config round trip"
 jssh apps:list | grep -qx hello || fail "apps:list"
 if jssh daemon 2>/dev/null; then fail "server-only command allowed over ssh"; fi

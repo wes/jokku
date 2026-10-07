@@ -1,0 +1,182 @@
+package client
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/url"
+
+	"github.com/wes/jokku/internal/types"
+)
+
+func (c *Client) Version(ctx context.Context) (*types.Version, error) {
+	var v types.Version
+	return &v, c.call(ctx, http.MethodGet, "/v1/version", nil, &v)
+}
+
+// Apps
+
+func (c *Client) Apps(ctx context.Context) ([]types.App, error) {
+	var apps []types.App
+	return apps, c.call(ctx, http.MethodGet, "/v1/apps", nil, &apps)
+}
+
+func (c *Client) App(ctx context.Context, app string) (*types.App, error) {
+	var a types.App
+	return &a, c.call(ctx, http.MethodGet, appPath(app, ""), nil, &a)
+}
+
+func (c *Client) CreateApp(ctx context.Context, app string) (*types.App, error) {
+	var a types.App
+	return &a, c.call(ctx, http.MethodPost, "/v1/apps", types.CreateAppRequest{Name: app}, &a)
+}
+
+func (c *Client) DestroyApp(ctx context.Context, app string) error {
+	return c.call(ctx, http.MethodDelete, appPath(app, ""), nil, nil)
+}
+
+func (c *Client) RenameApp(ctx context.Context, app, newName string) error {
+	return c.call(ctx, http.MethodPost, appPath(app, "rename"), types.RenameAppRequest{NewName: newName}, nil)
+}
+
+func (c *Client) CloneApp(ctx context.Context, app, newName string) error {
+	return c.call(ctx, http.MethodPost, appPath(app, "clone"), types.CloneAppRequest{NewName: newName}, nil)
+}
+
+func (c *Client) SetAppLocked(ctx context.Context, app string, locked bool) error {
+	method := http.MethodPut
+	if !locked {
+		method = http.MethodDelete
+	}
+	return c.call(ctx, method, appPath(app, "lock"), nil, nil)
+}
+
+// Config vars; app "" is the global scope.
+
+func (c *Client) Config(ctx context.Context, app string) (map[string]string, error) {
+	var res types.ConfigVars
+	return res.Vars, c.call(ctx, http.MethodGet, appPath(app, "config"), nil, &res)
+}
+
+func (c *Client) PatchConfig(ctx context.Context, app string, p types.ConfigPatch) (*types.ConfigVars, error) {
+	var res types.ConfigVars
+	return &res, c.call(ctx, http.MethodPatch, appPath(app, "config"), p, &res)
+}
+
+// Domains; app "" is the global scope.
+
+func (c *Client) Domains(ctx context.Context, app string) (*types.Domains, error) {
+	var d types.Domains
+	return &d, c.call(ctx, http.MethodGet, appPath(app, "domains"), nil, &d)
+}
+
+func (c *Client) PatchDomains(ctx context.Context, app string, p types.DomainsPatch) (*types.Domains, error) {
+	var d types.Domains
+	return &d, c.call(ctx, http.MethodPatch, appPath(app, "domains"), p, &d)
+}
+
+// Properties; app "" is the global scope.
+
+func (c *Client) Properties(ctx context.Context, app, plugin string) (*types.Properties, error) {
+	var p types.Properties
+	return &p, c.call(ctx, http.MethodGet, appPath(app, "properties/"+url.PathEscape(plugin)), nil, &p)
+}
+
+func (c *Client) SetProperty(ctx context.Context, app, plugin, key, value string) error {
+	path := appPath(app, "properties/"+url.PathEscape(plugin)+"/"+url.PathEscape(key))
+	return c.call(ctx, http.MethodPut, path, types.SetPropertyRequest{Value: value}, nil)
+}
+
+// Processes and resources
+
+func (c *Client) Formation(ctx context.Context, app string) ([]types.Process, error) {
+	var f types.Formation
+	return f.Processes, c.call(ctx, http.MethodGet, appPath(app, "formation"), nil, &f)
+}
+
+func (c *Client) Scale(ctx context.Context, app string, req types.ScaleRequest) ([]types.Process, error) {
+	var f types.Formation
+	return f.Processes, c.call(ctx, http.MethodPost, appPath(app, "scale"), req, &f)
+}
+
+func (c *Client) Resources(ctx context.Context, app string) (*types.Resources, error) {
+	var r types.Resources
+	return &r, c.call(ctx, http.MethodGet, appPath(app, "resources"), nil, &r)
+}
+
+func (c *Client) SetResources(ctx context.Context, app string, l types.ResourceLimits) (*types.Resources, error) {
+	var r types.Resources
+	return &r, c.call(ctx, http.MethodPatch, appPath(app, "resources"), l, &r)
+}
+
+// Deploys
+
+func (c *Client) Deploys(ctx context.Context, app string) ([]types.Deploy, error) {
+	var ds []types.Deploy
+	return ds, c.call(ctx, http.MethodGet, appPath(app, "deploys"), nil, &ds)
+}
+
+// Deploy uploads a source tarball and streams the build and rollout. It
+// returns the deploy's failure, if any.
+func (c *Client) Deploy(ctx context.Context, app, source, ref string, tarball io.Reader, onEvent func(types.Event)) error {
+	q := url.Values{"source": {source}}
+	if ref != "" {
+		q.Set("ref", ref)
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, appPath(app, "deploys")+"?"+q.Encode(), tarball)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-tar")
+	resp, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return stream(resp.Body, onEvent)
+}
+
+// EnsureGitRepo creates the app's bare repo (with its deploy hook) if needed
+// and returns its path on the server.
+func (c *Client) EnsureGitRepo(ctx context.Context, app string) (string, error) {
+	var r types.GitRepo
+	return r.Path, c.call(ctx, http.MethodPost, appPath(app, "git"), nil, &r)
+}
+
+// SSH keys
+
+func (c *Client) SSHKeys(ctx context.Context) ([]types.SSHKey, error) {
+	var keys []types.SSHKey
+	return keys, c.call(ctx, http.MethodGet, "/v1/ssh-keys", nil, &keys)
+}
+
+func (c *Client) AddSSHKey(ctx context.Context, name, publicKey string) (*types.SSHKey, error) {
+	var k types.SSHKey
+	return &k, c.call(ctx, http.MethodPost, "/v1/ssh-keys", types.AddSSHKeyRequest{Name: name, PublicKey: publicKey}, &k)
+}
+
+func (c *Client) RemoveSSHKey(ctx context.Context, nameOrFingerprint string, byFingerprint bool) error {
+	path := "/v1/ssh-keys/" + url.PathEscape(nameOrFingerprint)
+	if byFingerprint {
+		path += "?fingerprint=true"
+	}
+	return c.call(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// Nodes
+
+func (c *Client) Nodes(ctx context.Context) ([]types.Node, error) {
+	var nodes []types.Node
+	return nodes, c.call(ctx, http.MethodGet, "/v1/nodes", nil, &nodes)
+}
+
+func (c *Client) Node(ctx context.Context, name string) (*types.Node, error) {
+	var n types.Node
+	return &n, c.call(ctx, http.MethodGet, "/v1/nodes/"+url.PathEscape(name), nil, &n)
+}
+
+// SetNodeFlag sets schedulable, ingress or draining on a node.
+func (c *Client) SetNodeFlag(ctx context.Context, name, flag string, value bool) (*types.Node, error) {
+	var n types.Node
+	return &n, c.call(ctx, http.MethodPatch, "/v1/nodes/"+url.PathEscape(name), map[string]bool{flag: value}, &n)
+}

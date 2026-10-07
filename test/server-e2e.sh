@@ -28,6 +28,7 @@ mkdir -p ~/.ssh && chmod 700 ~/.ssh
 ssh-keygen -q -t ed25519 -N "" -C e2e -f "$key"
 cat "$key.pub" >>~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
 export GIT_SSH_COMMAND="ssh -i $key -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
+export GIT_AUTHOR_NAME=e2e GIT_AUTHOR_EMAIL=e2e@example.com GIT_COMMITTER_NAME=e2e GIT_COMMITTER_EMAIL=e2e@example.com
 jssh() { $GIT_SSH_COMMAND "jokku@$host" "$@"; }
 
 step "install"
@@ -55,7 +56,7 @@ web: echo "hello ${GREETING:-nobody} from $(hostname)" > /www/index.html && echo
 worker: while true; do echo "worker tick"; sleep 2; done
 EOF
 git add -A
-git -c user.email=e2e@example.com -c user.name=e2e commit -qm init
+git commit -qm init
 out=$(git push "jokku@$host:hello" main 2>&1) || fail "git push failed: $out"
 printf '%s\n' "$out"
 grep -q "Application deployed" <<<"$out" || fail "no deploy summary"

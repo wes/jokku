@@ -30,6 +30,7 @@ import (
 	"github.com/wes/jokku/internal/proxy"
 	"github.com/wes/jokku/internal/types"
 	"github.com/wes/jokku/internal/version"
+	"github.com/wes/jokku/internal/vm"
 )
 
 const home = "/home/" + daemon.DefaultUser
@@ -62,8 +63,8 @@ func Run(ctx context.Context, out io.Writer) error {
 			return err
 		}
 	}
-	if _, err := os.Stat("/dev/kvm"); err != nil {
-		fmt.Fprintln(out, " !     /dev/kvm is missing, so apps cannot run here. On a virtual machine, enable nested virtualization.")
+	if err := (&vm.Host{}).Available(); err != nil {
+		fmt.Fprintln(out, " !     Apps cannot run on this server yet: "+err.Error())
 	}
 	return nil
 }

@@ -17,8 +17,10 @@ already know Jokku.
 
 ## Install
 
-On a fresh Ubuntu or Debian server with KVM (bare metal, or a virtual
-machine with nested virtualization turned on) and ports 80 and 443 free:
+On a fresh Ubuntu or Debian server with ports 80 and 443 free and KVM: bare
+metal, or a virtual machine with nested virtualization turned on (Proxmox: CPU
+type `host`). Firecracker needs a CPU from 2011 or newer (Intel Sandy Bridge
+or AMD Bulldozer; it is tested on Intel Skylake and newer).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo sh

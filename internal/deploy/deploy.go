@@ -391,7 +391,10 @@ func (p *Pipeline) failed(ctx context.Context, in store.Instance, why string, lo
 			log("       " + l)
 		}
 	}
-	return fmt.Errorf("%s %s; the previous release is still serving", in.Name(), why)
+	if cur, err := p.Store.CurrentRelease(ctx, in.App); err == nil && cur != nil {
+		return fmt.Errorf("%s %s; v%d is still serving", in.Name(), why, cur.Version)
+	}
+	return fmt.Errorf("%s %s; nothing was deployed", in.Name(), why)
 }
 
 func (p *Pipeline) printURLs(ctx context.Context, app string, log func(string)) error {

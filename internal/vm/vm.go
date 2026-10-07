@@ -67,10 +67,49 @@ func (h *Host) Available() error {
 			"On a virtual machine, enable nested virtualization (Proxmox: CPU type \"host\"; libvirt: host-passthrough); " +
 			"otherwise use bare metal")
 	}
+	if err := cpuProblem(); err != nil {
+		return err
+	}
 	for _, d := range []deps.Dep{deps.Firecracker, deps.Kernel} {
 		if !d.Installed() {
 			return fmt.Errorf("%s %s is not installed; run: sudo jokku setup", d.Name, d.Version)
 		}
+	}
+	return nil
+}
+
+// cpuProblem catches CPUs that have KVM but lack what Firecracker needs, so
+// the problem shows up before a build instead of when the first VM boots.
+func cpuProblem() error {
+	if runtime.GOARCH != "amd64" {
+		return nil
+	}
+	b, err := os.ReadFile("/proc/cpuinfo")
+	if err != nil {
+		return nil
+	}
+	model, flags := "", map[string]bool{}
+	for _, line := range strings.Split(string(b), "\n") {
+		key, val, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "model name":
+			if model == "" {
+				model = strings.Join(strings.Fields(val), " ")
+			}
+		case "flags":
+			if len(flags) == 0 {
+				for _, f := range strings.Fields(val) {
+					flags[f] = true
+				}
+			}
+		}
+	}
+	if !flags["xsave"] {
+		return fmt.Errorf("this CPU (%s) is too old for Firecracker, which needs XSAVE support: "+
+			"Intel Sandy Bridge or AMD Bulldozer (2011) or newer, and Firecracker is tested on Intel Skylake (2015) and newer", model)
 	}
 	return nil
 }

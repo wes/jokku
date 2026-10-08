@@ -15,9 +15,11 @@ import (
 
 // Settings are the build-related properties resolved for one app.
 type Settings struct {
+	Builder        string // "" or dockerfile, or compose
 	BuildDir       string
 	DockerfilePath string
 	ProcfilePath   string
+	ComposeFile    string
 }
 
 func (p *Pipeline) settings(ctx context.Context, app string) (Settings, error) {
@@ -41,14 +43,20 @@ func (p *Pipeline) settings(ctx context.Context, app string) (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
+	composeProps, err := get("builder-compose")
+	if err != nil {
+		return Settings{}, err
+	}
 	ps, err := get("ps")
 	if err != nil {
 		return Settings{}, err
 	}
 	return Settings{
+		Builder:        builder["selected"],
 		BuildDir:       builder["build-dir"],
 		DockerfilePath: dockerfile["dockerfile-path"],
 		ProcfilePath:   ps["procfile-path"],
+		ComposeFile:    composeProps["compose-file"],
 	}, nil
 }
 

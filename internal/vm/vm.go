@@ -162,8 +162,11 @@ func (h *Host) EnsureNetwork(ctx context.Context) error {
 		{"filter", "FORWARD", true, []string{"-o", h.Bridge, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"}},
 		// Traffic from other nodes (over the WireGuard mesh) to local VMs.
 		{"filter", "FORWARD", true, []string{"-i", "jokku-wg", "-j", "ACCEPT"}},
-		// VMs may not reach jokku's own APIs on their host.
+		// VMs may not reach jokku's own APIs on their host, but may ask its
+		// DNS service (jokku-dns) for names.
 		{"filter", "INPUT", true, []string{"-i", h.Bridge, "-p", "tcp", "-m", "multiport", "--dports", "7443,7444", "-j", "DROP"}},
+		{"filter", "INPUT", true, []string{"-i", h.Bridge, "-p", "udp", "--dport", "53", "-j", "ACCEPT"}},
+		{"filter", "INPUT", true, []string{"-i", h.Bridge, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"}},
 	}
 	for _, r := range rules {
 		check := append([]string{"-w", "-t", r.table, "-C", r.chain}, r.rule...)

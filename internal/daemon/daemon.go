@@ -27,6 +27,7 @@ import (
 	"github.com/wes/jokku/internal/build"
 	"github.com/wes/jokku/internal/cluster"
 	"github.com/wes/jokku/internal/deploy"
+	"github.com/wes/jokku/internal/dns"
 	"github.com/wes/jokku/internal/gitrepo"
 	"github.com/wes/jokku/internal/mesh"
 	"github.com/wes/jokku/internal/proxy"
@@ -168,7 +169,8 @@ func runControl(ctx context.Context, cfg Config, log *slog.Logger) error {
 		Proxy: &proxy.Applier{DataDir: cfg.DataDir, AdminSocket: proxy.AdminSocket, Storage: &proxy.ClusterStorage{
 			URL: fmt.Sprintf("https://127.0.0.1:%d", cluster.APIPort), Token: selfToken, Pin: pin,
 		}},
-		DataDir: cfg.DataDir, DNS: vm.HostDNS(), Version: version.Version, Log: log,
+		Resolver: &dns.Applier{DataDir: cfg.DataDir},
+		DataDir:  cfg.DataDir, DNS: vm.HostDNS(), Version: version.Version, Log: log,
 	})
 	pipeline := &deploy.Pipeline{
 		Store: st, Builder: &build.Builder{DataDir: cfg.DataDir, Exe: exe}, Cluster: ctl, DataDir: cfg.DataDir, Log: log,
@@ -236,7 +238,8 @@ func runWorker(ctx context.Context, cfg Config, nf *NodeFile, log *slog.Logger) 
 		Proxy: &proxy.Applier{DataDir: cfg.DataDir, AdminSocket: proxy.AdminSocket, Storage: &proxy.ClusterStorage{
 			URL: controlURL, Token: nf.NodeToken, Pin: nf.Pin,
 		}},
-		DataDir: cfg.DataDir, DNS: vm.HostDNS(), Version: version.Version, Log: log, GCArtifacts: true,
+		Resolver: &dns.Applier{DataDir: cfg.DataDir},
+		DataDir:  cfg.DataDir, DNS: vm.HostDNS(), Version: version.Version, Log: log, GCArtifacts: true,
 	})
 	go ag.Serve(ctx, net.JoinHostPort(nf.Node.MeshIP, strconv.Itoa(cluster.AgentPort)), nf.AgentToken)
 

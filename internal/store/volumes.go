@@ -39,6 +39,10 @@ type Volume struct {
 	CreatedAt time.Time
 }
 
+// DefaultVolumeMB is a new volume's size unless one is given: a limit, not
+// an allocation, since disks are sparse.
+const DefaultVolumeMB = 10 * 1024
+
 const (
 	VolumeNew        = "new"        // no disk yet: it is made, empty, where it is first used
 	VolumeReady      = "ready"      // its disk exists on Node

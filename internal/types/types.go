@@ -65,6 +65,19 @@ type Domains struct {
 	Enabled bool     `json:"enabled"`
 }
 
+// RegistryLogin lets builds pull from a private registry. The password is
+// never sent back.
+type RegistryLogin struct {
+	Server    string    `json:"server"`
+	Username  string    `json:"username"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type RegistryLoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 type SSHKey struct {
 	Name        string    `json:"name"`
 	Fingerprint string    `json:"fingerprint"`

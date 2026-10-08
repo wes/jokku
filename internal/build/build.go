@@ -9,7 +9,9 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -17,6 +19,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -43,6 +46,13 @@ type Options struct {
 	Source         string // source tarball
 	BuildDir       string // subdirectory to build from
 	DockerfilePath string // relative to BuildDir
+	// Logins let BuildKit pull from private registries.
+	Logins []RegistryLogin
+}
+
+// RegistryLogin is a credential for one registry server, such as ghcr.io.
+type RegistryLogin struct {
+	Server, Username, Password string
 }
 
 // Result describes a built artifact.
@@ -57,35 +67,118 @@ type Result struct {
 	User       string
 	Port       int    // $PORT, see Port
 	PortFrom   string // where Port came from, for the deploy log
+	StopSignal string // the image's STOPSIGNAL
 }
 
 // Build runs the Dockerfile build and converts the image. Progress goes to
 // log, one line at a time.
 func (b *Builder) Build(ctx context.Context, o Options, log func(string)) (*Result, error) {
-	work := filepath.Join(b.DataDir, "builds", strconv.FormatInt(o.DeployID, 10))
-	src := filepath.Join(work, "src")
-	if err := os.MkdirAll(src, 0o700); err != nil {
+	src, err := b.Unpack(ctx, o.DeployID, o.Source)
+	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(src)
-	if err := run(ctx, nil, "tar", "-xf", o.Source, "-C", src, "--no-same-owner"); err != nil {
-		return nil, fmt.Errorf("unpacking source: %w", err)
-	}
-
 	contextDir := filepath.Join(src, filepath.FromSlash(path.Clean("/"+o.BuildDir)))
-	dockerfile := filepath.Join(contextDir, filepath.FromSlash(path.Clean("/"+o.DockerfilePath)))
-	imageTar := filepath.Join(work, "image.tar")
+	return b.BuildTarget(ctx, o.DeployID, Target{
+		Name: o.App, Context: contextDir,
+		Dockerfile: filepath.Join(contextDir, filepath.FromSlash(path.Clean("/"+o.DockerfilePath))),
+	}, o.Logins, log)
+}
+
+// Unpack extracts a deploy's source tarball into a directory the caller
+// removes when done.
+func (b *Builder) Unpack(ctx context.Context, deployID int64, source string) (string, error) {
+	src := filepath.Join(b.DataDir, "builds", strconv.FormatInt(deployID, 10), "src")
+	os.RemoveAll(src)
+	if err := os.MkdirAll(src, 0o700); err != nil {
+		return "", err
+	}
+	if err := run(ctx, nil, "tar", "-xf", source, "-C", src, "--no-same-owner"); err != nil {
+		os.RemoveAll(src)
+		return "", fmt.Errorf("unpacking source: %w", err)
+	}
+	return src, nil
+}
+
+// Target is one image to make: a Dockerfile build in Context, or Image
+// pulled from a registry with Copies (files from Context) added on top.
+type Target struct {
+	Name       string // names the image while it is built: the app, or app-service
+	Context    string
+	Dockerfile string // path of the Dockerfile
+	Inline     string // or its contents
+	Args       map[string]string
+	Stage      string // the stage to build (docker build --target)
+	Image      string
+	Copies     []Copy
+}
+
+// Copy puts a file or directory from the build context into the image.
+type Copy struct {
+	Src string // relative to the context
+	Dst string // absolute path in the image
+}
+
+// BuildTarget builds (or pulls) one image and converts it.
+func (b *Builder) BuildTarget(ctx context.Context, deployID int64, t Target, logins []RegistryLogin, log func(string)) (*Result, error) {
+	work := filepath.Join(b.DataDir, "builds", strconv.FormatInt(deployID, 10))
+	name := strings.ToLower(t.Name)
+	contextDir, dockerfile := t.Context, t.Dockerfile
+	if t.Image != "" || t.Inline != "" {
+		// A generated Dockerfile: FROM the image, plus its copies.
+		text := t.Inline
+		if t.Image != "" {
+			var sb strings.Builder
+			sb.WriteString("FROM " + t.Image + "\n")
+			for _, c := range t.Copies {
+				fmt.Fprintf(&sb, "COPY [%q, %q]\n", c.Src, c.Dst)
+			}
+			text = sb.String()
+			if len(t.Copies) == 0 {
+				contextDir = filepath.Join(work, "empty-context")
+				if err := os.MkdirAll(contextDir, 0o700); err != nil {
+					return nil, err
+				}
+			}
+		}
+		dockerfile = filepath.Join(work, "dockerfiles", name, "Dockerfile")
+		if err := os.MkdirAll(filepath.Dir(dockerfile), 0o700); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(dockerfile, []byte(text), 0o600); err != nil {
+			return nil, err
+		}
+	}
+	imageTar := filepath.Join(work, "image-"+name+".tar")
 	defer os.Remove(imageTar)
-	err := run(ctx, func(line string) { log("       " + line) },
-		deps.BuildKit.Path("buildctl"), "--addr", "unix://"+BuildKitSocket, "build",
+	env, err := dockerConfig(filepath.Join(work, "docker"), logins)
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(filepath.Join(work, "docker"))
+	args := []string{"--addr", "unix://" + BuildKitSocket, "build",
 		"--progress=plain",
 		"--frontend=dockerfile.v0",
-		"--local", "context="+contextDir,
-		"--local", "dockerfile="+filepath.Dir(dockerfile),
-		"--opt", "filename="+filepath.Base(dockerfile),
-		"--output", "type=docker,name=jokku/"+o.App+":build,dest="+imageTar,
-	)
-	if err != nil {
+		"--local", "context=" + contextDir,
+		"--local", "dockerfile=" + filepath.Dir(dockerfile),
+		"--opt", "filename=" + filepath.Base(dockerfile),
+		"--output", "type=docker,name=jokku/" + name + ":build,dest=" + imageTar,
+	}
+	keys := make([]string, 0, len(t.Args))
+	for k := range t.Args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "--opt", "build-arg:"+k+"="+t.Args[k])
+	}
+	if t.Stage != "" {
+		args = append(args, "--opt", "target="+t.Stage)
+	}
+	if err := runEnv(ctx, env, func(line string) { log("       " + line) }, deps.BuildKit.Path("buildctl"), args...); err != nil {
+		if t.Image != "" {
+			return nil, fmt.Errorf("pulling %s failed", t.Image)
+		}
 		return nil, fmt.Errorf("the Dockerfile build failed")
 	}
 
@@ -107,6 +200,7 @@ func (b *Builder) Build(ctx context.Context, o Options, log func(string)) (*Resu
 		Env:        cfg.Config.Env,
 		WorkingDir: cfg.Config.WorkingDir,
 		User:       cfg.Config.User,
+		StopSignal: cfg.Config.StopSignal,
 	}
 	res.Port, res.PortFrom = Port(cfg)
 
@@ -258,10 +352,44 @@ func copyFile(src, dst string, mode fs.FileMode) error {
 	return out.Close()
 }
 
+// dockerConfig writes the logins where buildctl looks for registry
+// credentials (a Docker config.json in DOCKER_CONFIG) and returns the
+// environment that points it there.
+func dockerConfig(dir string, logins []RegistryLogin) ([]string, error) {
+	if len(logins) == 0 {
+		return nil, nil
+	}
+	auths := map[string]any{}
+	for _, l := range logins {
+		server := l.Server
+		if server == "docker.io" || server == "index.docker.io" || server == "registry-1.docker.io" {
+			server = "https://index.docker.io/v1/" // what Docker Hub logins are filed under
+		}
+		auths[server] = map[string]string{"auth": base64.StdEncoding.EncodeToString([]byte(l.Username + ":" + l.Password))}
+	}
+	b, err := json.Marshal(map[string]any{"auths": auths})
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), b, 0o600); err != nil {
+		return nil, err
+	}
+	return append(os.Environ(), "DOCKER_CONFIG="+dir), nil
+}
+
 // run runs a command. With onLine, its combined output is streamed line by
 // line; otherwise it is included in the error.
 func run(ctx context.Context, onLine func(string), name string, args ...string) error {
+	return runEnv(ctx, nil, onLine, name, args...)
+}
+
+// runEnv is run with an environment (nil inherits this process's).
+func runEnv(ctx context.Context, env []string, onLine func(string), name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
 	if onLine == nil {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("%s: %v: %s", name, err, strings.TrimSpace(string(out)))

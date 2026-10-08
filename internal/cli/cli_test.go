@@ -193,6 +193,36 @@ func TestStorageCLI(t *testing.T) {
 	}
 }
 
+func TestImageDeployAndRegistryCLI(t *testing.T) {
+	startAPI(t)
+	// git:from-image creates the app and deploys the image (the stub
+	// deployer stands in for BuildKit).
+	out := mustJokku(t, "git:from-image", "cache", "public.ecr.aws/docker/library/redis:7")
+	if !strings.Contains(out, "Creating cache") || !strings.Contains(out, "Deploying image public.ecr.aws/docker/library/redis:7 to cache") {
+		t.Fatalf("git:from-image = %q", out)
+	}
+	mustJokku(t, "git:from-image", "cache", "redis:7", "Some One", "one@example.com") // Dokku's git author args are accepted
+	if _, errOut, code := jokku(t, "", "git:from-image", "cache", "redis:7\nRUN rm -rf /"); code == 0 || !strings.Contains(errOut, "not an image reference") {
+		t.Fatalf("bad image: exit %d, %q", code, errOut)
+	}
+
+	if out, errOut, code := jokku(t, "ghp_secret\n", "registry:login", "ghcr.io", "me"); code != 0 || !strings.Contains(out, "Logged in to ghcr.io as me") {
+		t.Fatalf("registry:login from stdin: exit %d, %q %q", code, out, errOut)
+	}
+	mustJokku(t, "registry:login", "--global", "https://Index.Docker.IO/", "hub", "pw")
+	out = mustJokku(t, "registry:report")
+	if !strings.Contains(out, "ghcr.io") || !strings.Contains(out, "docker.io") || strings.Contains(out, "secret") {
+		t.Fatalf("registry:report = %q", out)
+	}
+	if _, errOut, code := jokku(t, "", "registry:login", "not a server", "me", "pw"); code == 0 || !strings.Contains(errOut, "not a registry server") {
+		t.Fatalf("bad server: exit %d, %q", code, errOut)
+	}
+	mustJokku(t, "registry:logout", "ghcr.io")
+	if _, _, code := jokku(t, "", "registry:logout", "ghcr.io"); code == 0 {
+		t.Fatal("logging out twice should fail")
+	}
+}
+
 func TestSSHKeysCLI(t *testing.T) {
 	startAPI(t)
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKo6wvodnpAVyBluWuHPcgrJTcSBDE9Ozy8NPmmowyTO me@laptop\n"

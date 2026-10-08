@@ -32,7 +32,9 @@ type Config struct {
 	Hostname    string   `json:"hostname"`
 	IP          string   `json:"ip"`
 	DNS         []string `json:"dns,omitempty"`
-	StopTimeout int      `json:"stop_timeout"` // seconds between SIGTERM and SIGKILL
+	Search      []string `json:"search,omitempty"`      // DNS search domains
+	StopTimeout int      `json:"stop_timeout"`          // seconds between the stop signal and SIGKILL
+	StopSignal  string   `json:"stop_signal,omitempty"` // default SIGTERM; the image's STOPSIGNAL
 	Mounts      []Mount  `json:"mounts,omitempty"`
 }
 

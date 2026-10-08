@@ -326,3 +326,25 @@ func (c *Client) MoveVolume(ctx context.Context, app, name, node string) (*types
 	var v types.Volume
 	return &v, c.call(ctx, http.MethodPost, volumePath(app, name, "move"), types.MoveVolumeRequest{Node: node}, &v)
 }
+
+// DeployImage deploys a registry image (git:from-image) and streams the pull
+// and rollout.
+func (c *Client) DeployImage(ctx context.Context, app, image string, onEvent func(types.Event)) error {
+	return c.Deploy(ctx, app, "image", image, http.NoBody, onEvent)
+}
+
+// Registry logins
+
+func (c *Client) RegistryLogins(ctx context.Context) ([]types.RegistryLogin, error) {
+	var out []types.RegistryLogin
+	return out, c.call(ctx, http.MethodGet, "/v1/registries", nil, &out)
+}
+
+func (c *Client) SetRegistryLogin(ctx context.Context, server, username, password string) error {
+	return c.call(ctx, http.MethodPut, "/v1/registries/"+url.PathEscape(server),
+		types.RegistryLoginRequest{Username: username, Password: password}, nil)
+}
+
+func (c *Client) DeleteRegistryLogin(ctx context.Context, server string) error {
+	return c.call(ctx, http.MethodDelete, "/v1/registries/"+url.PathEscape(server), nil, nil)
+}

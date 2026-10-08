@@ -82,3 +82,29 @@ func TestProcesses(t *testing.T) {
 		t.Fatal("expected an error with nothing to run")
 	}
 }
+
+func TestImageSource(t *testing.T) {
+	b, err := ImageSource("ghcr.io/acme/api:v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "source.tar")
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(strings.NewReader(string(b)))
+	h, err := tr.Next()
+	if err != nil || h.Name != "Dockerfile" {
+		t.Fatalf("first entry: %+v, %v", h, err)
+	}
+	body := make([]byte, h.Size)
+	tr.Read(body)
+	if string(body) != "FROM ghcr.io/acme/api:v2\n" {
+		t.Fatalf("Dockerfile = %q", body)
+	}
+	// It inspects like any source, with the settings image deploys use.
+	src, err := Inspect(path, Settings{DockerfilePath: "Dockerfile", ProcfilePath: "Procfile"})
+	if err != nil || src.Dockerfile != "Dockerfile" || src.Procfile != nil {
+		t.Fatalf("inspect: %+v, %v", src, err)
+	}
+}

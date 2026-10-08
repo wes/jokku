@@ -15,9 +15,8 @@ import (
 
 // Volume sizes, in MiB.
 const (
-	defaultVolumeMB = 10 * 1024
-	minVolumeMB     = 64
-	maxVolumeMB     = 16 * 1024 * 1024
+	minVolumeMB = 64
+	maxVolumeMB = 16 * 1024 * 1024
 )
 
 func (s *Server) listVolumes(w http.ResponseWriter, r *http.Request) {
@@ -56,7 +55,7 @@ func (s *Server) createVolume(w http.ResponseWriter, r *http.Request) {
 		req.Type = types.VolumeLocal
 	}
 	if req.SizeMB == 0 {
-		req.SizeMB = defaultVolumeMB
+		req.SizeMB = store.DefaultVolumeMB
 	}
 	switch {
 	case !appNameRe.MatchString(req.Name):
@@ -163,6 +162,10 @@ func (s *Server) volumeUser(ctx context.Context, app, id string) (string, error)
 func (s *Server) mountVolume(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	app := r.PathValue("app")
+	if err := s.notCompose(ctx, app); err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	var m types.VolumeMount
 	if err := decode(r, &m); err != nil {
 		s.fail(w, r, err)
@@ -219,6 +222,19 @@ func (s *Server) mountVolume(w http.ResponseWriter, r *http.Request) {
 	s.getVolume(w, r)
 }
 
+// notCompose refuses mount changes for a compose app: its compose file says
+// what is mounted where, and the next deploy would undo them.
+func (s *Server) notCompose(ctx context.Context, app string) error {
+	builder, err := s.Store.Properties(ctx, app, "builder")
+	if err != nil {
+		return err
+	}
+	if builder["selected"] == "compose" {
+		return httpErrorf(http.StatusConflict, "%s deploys a compose file, which says what each service mounts: change volumes: there", app)
+	}
+	return nil
+}
+
 // oneInstance refuses a local volume for a process type scaled past one.
 func (s *Server) oneInstance(ctx context.Context, app, proc, volume string) error {
 	procs, err := s.Store.Formation(ctx, app)
@@ -235,6 +251,10 @@ func (s *Server) oneInstance(ctx context.Context, app, proc, volume string) erro
 }
 
 func (s *Server) unmountVolume(w http.ResponseWriter, r *http.Request) {
+	if err := s.notCompose(r.Context(), r.PathValue("app")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	q := r.URL.Query()
 	m := types.VolumeMount{ProcessType: q.Get("process_type"), Path: q.Get("path")}
 	v, err := s.Store.Volume(r.Context(), r.PathValue("app"), r.PathValue("name"))

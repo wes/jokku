@@ -111,6 +111,10 @@ func (s *Server) routes() {
 	m.HandleFunc("DELETE /v1/apps/{app}/volumes/{name}/mounts", s.unmountVolume)
 	m.HandleFunc("POST /v1/apps/{app}/volumes/{name}/move", s.moveVolume)
 
+	m.HandleFunc("GET /v1/registries", s.listRegistryLogins)
+	m.HandleFunc("PUT /v1/registries/{server}", s.setRegistryLogin)
+	m.HandleFunc("DELETE /v1/registries/{server}", s.deleteRegistryLogin)
+
 	m.HandleFunc("GET /v1/ssh-keys", s.listSSHKeys)
 	m.HandleFunc("POST /v1/ssh-keys", s.addSSHKey)
 	m.HandleFunc("DELETE /v1/ssh-keys/{name}", s.removeSSHKey)

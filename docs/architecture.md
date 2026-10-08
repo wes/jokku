@@ -179,7 +179,7 @@ Every deploy, however it starts, becomes the same thing: **a source tarball
 | `git push jokku main` | The `pre-receive` hook runs `git archive <rev>` (it can see the quarantined objects) and streams the tarball to the API. Build output streams back as `remote:` lines. A failed deploy rejects the push. |
 | `git:sync app <repo> [ref] --build` | Control fetches the repo (deploy key / `git:auth`), archives the ref, deploys. |
 | `git:from-archive app <url>` | Control downloads the tarball and deploys it. |
-| `git:from-image app <image>` | Skips the build and converts the registry image. |
+| `git:from-image app <image>` | A one-line Dockerfile, `FROM <image>`, goes through the same build: BuildKit pulls the image and it is converted like any other. `ps:rebuild` pulls the tag again. |
 | HTTPS API | Upload a tarball, as above. |
 | `ps:rebuild app` | Rebuilds the last deployed source. |
 
@@ -207,6 +207,8 @@ source.tar --> BuildKit (Dockerfile) --> OCI image --> flatten layers --> rootfs
 1. **Build.** `buildctl` against a local `buildkitd` builds the Dockerfile
    (`builder-dockerfile:set app dockerfile-path Dockerfile.prod`) to an OCI
    image. Build args come from `docker-options:add app build "--build-arg X"`.
+   Images from private registries are pulled with the logins saved by
+   `registry:login`, handed to BuildKit for that build only.
 2. **Convert.** The image's layers are flattened (whiteouts applied) and
    written as an ext4 image; the image config is kept as JSON. This also
    handles `git:from-image`, so registry images and Dockerfile builds share
@@ -285,6 +287,25 @@ to the node that hosts it, encrypted. The route `10.210.0.0/16 dev wg0 src
 address. A node behind NAT works as long as the control node is reachable,
 because `PersistentKeepalive` keeps its tunnel open. Outbound internet from
 VMs is masqueraded on each node (nftables).
+
+### Internal DNS
+
+Apps reach each other by name. `<process>.<app>.internal` resolves to the
+addresses of an app's wanted instances of that process type, wherever they
+run, and `<app>.internal` to its `web` instances (or its only process type).
+VMs get `search <app>.internal internal`, so `db` finds a process of their own
+app and `mydb` finds another app. Healthy instances are preferred, so a name
+follows a deploy as the new instances pass checks. Answers carry a 5-second
+TTL, since instances come and go with deploys and moves.
+
+Each node runs the server as its own service, `jokku-dns` (`jokku dns`),
+on its bridge address (`10.210.N.1:53`), so restarting or updating the daemon
+never interrupts lookups. The control node puts the cluster's names in every
+node's desired state; the agent writes them to `/var/lib/jokku/dns/zone.json`,
+which the service watches. Every other name is forwarded to the host's own
+resolvers. A VM is pointed at the service only if it answers when the VM
+boots; otherwise it gets the host's resolvers (no internal names, but the
+internet works), and picks the service up on its next restart.
 
 ### HTTP proxy
 
@@ -391,6 +412,16 @@ If checks fail, the deploy fails, the new instances are torn down, the old
 release keeps serving, and the failing instance's logs are printed.
 `releases:rollback app v12` (a Jokku addition) rolls out an earlier release.
 
+Only what changes restarts. A deploy, or a settings change (`config:set`,
+`ps:scale`, `resource:limit`, `storage:*`), keeps the instances of any
+process type the new release would run exactly as before: same image,
+command, environment, port, size and volumes. Those instances carry on into
+the new release, and the deploy says `Unchanged, left running: db`. So
+scaling `worker` leaves `web` alone, and a compose app's database doesn't
+restart because its web service changed. `ps:restart` still restarts
+everything. Process types start in dependency order (a compose file's
+`depends_on`), each group passing its checks before the next starts.
+
 ### Scaling and failure
 
 - **Horizontal:** `ps:scale app web=4` rolls out that many instances of the
@@ -480,6 +511,55 @@ node deletes the disk and reports it gone. An agent never deletes a disk
 just because the control node stopped listing it. Leftovers of moves
 (`.incoming`, `.received`, `.moved`) are cleaned up that way.
 
+## Compose apps
+
+`builder:set app selected compose` deploys the app from a compose file
+instead of a Dockerfile. Pushing to the app then deploys every service in the
+file as one Jokku app, and each service becomes a process type with its own
+image. The file is `compose.yaml` (or `compose.yml`, `docker-compose.yaml`,
+`docker-compose.yml`) in the build dir, or `builder-compose:set app
+compose-file <path>`.
+
+The file is read with compose-go, the loader docker compose itself uses, so
+interpolation, `extends` within the file, profiles (`COMPOSE_PROFILES`) and
+the short and long syntaxes behave as they do in Docker. The mapping:
+
+| Compose | Jokku |
+| --- | --- |
+| `build:` (context, dockerfile, dockerfile_inline, args, target) | built with BuildKit; services with the same build share one image |
+| `image:` | pulled, with `registry:login` credentials |
+| `command`, `entrypoint`, `user`, `working_dir` | the process's command and settings, as `docker run` applies them |
+| `environment`, `env_file`, `${VAR}` | the service's environment. Config vars fill in `${VAR}` (they win over the repo's `.env`), but only reach a service through the file, as with docker compose |
+| `ports:` | the published service gets the app's domains and HTTPS: the one named `web`, or the only one publishing ports. Its target port is the service's port |
+| `expose:` or the image's `EXPOSE` | the service's port: `$PORT`, the TCP health check, and what others connect to |
+| service names | DNS: `db` resolves from the app's other services, and `db.<app>.internal` from anywhere |
+| named `volumes:` | local volumes, created on deploy and mounted per service (one service and one replica each) |
+| `deploy.replicas`, `scale` | the instance count, unless `ps:scale` sets one |
+| `deploy.resources.limits`, `cpus`, `mem_limit` | the VM's size, unless `resource:limit --process-type` sets one |
+| `restart`, `deploy.restart_policy` | the restart policy |
+| `stop_grace_period`, `stop_signal` (and the image's `STOPSIGNAL`) | how the app is stopped |
+| `depends_on` | start order |
+| bind mounts of repo files, on `image:` services | copied into the image (read-only in effect) |
+
+Refused with a message, rather than half emulated:
+- **Host access:** `privileged`, `cap_add`, `devices`, `network_mode`, `pid`, `ipc`, `sysctls`, `security_opt`.
+- **Host paths:** bind mounts from outside the repo, such as `/var/run/docker.sock`.
+- **Not supported yet:** `secrets`, `configs`, `include`, `extends` from another file, one-off services (`service_completed_successfully`), UDP ports, and two services publishing ports (name one `web`).
+- **Volume limits:** a volume shared by two services, or replicas above one with a volume.
+
+Ignored with a note in the deploy log:
+- A `healthcheck:` command, which can't run inside the VM yet. Jokku checks the service's port instead.
+- Anonymous volumes and `tmpfs`, which become the instance's own disk.
+
+Every path the file names must resolve inside the pushed source, symlinks
+included. A deploy runs as root on the control node and must not read
+anything else.
+
+A config change re-reads the last deploy's compose file with the new config
+vars and reuses every image. Only the services whose environment or settings
+change restart. A change that would alter how an image is built (a `${VAR}`
+in a build arg, say) asks for `ps:rebuild`.
+
 ## Cluster join
 
 New nodes join with the same installer, so there is one install path:
@@ -564,7 +644,8 @@ few seconds while jokku restarts. Apps and traffic are not affected:
   on startup.
 - The proxy is its own unit, `jokku-proxy.service`, running the same binary.
   Each release records a proxy version, and `jokku setup` restarts the proxy
-  only when that version changed.
+  only when that version changed. The microVMs' DNS service,
+  `jokku-dns.service`, works the same way.
 
 **Clusters (milestone 2).** Update the control node first. Control accepts
 agents one release behind, so workers can follow one at a time with the same
@@ -588,6 +669,7 @@ stays the stable entry point, including for versions that predate the command.
 /var/lib/jokku/kernel/            vmlinux + initramfs
 /var/lib/jokku/instances/<id>/    per-VM scratch disk, config drive, sockets, logs
 /var/lib/jokku/volumes/           volume disks: <id>.ext4 (plus copies while one moves)
+/var/lib/jokku/dns/zone.json      internal names the agent hands jokku-dns
 /var/lib/jokku/backups/           database backups taken by update.sh
 /home/jokku/.ssh/authorized_keys  generated from ssh-keys:*
 ```
@@ -598,6 +680,7 @@ stays the stable entry point, including for versions that predate the command.
 | 80, 443/tcp | ingress nodes | Caddy |
 | 7443/tcp | control | HTTPS API (join, tokens) |
 | 51820/udp | all nodes | WireGuard |
+| 53/udp, 53/tcp | VM bridge only | `jokku-dns`: internal names for microVMs |
 | 7444/tcp | mesh only | agent API: log streams, volume copies between nodes |
 
 ## Differences from Dokku
@@ -606,7 +689,7 @@ stays the stable entry point, including for versions that predate the command.
 | --- | --- | --- |
 | Isolation | containers | Firecracker microVMs |
 | Machines | one server | cluster, same commands |
-| Builders | herokuish, CNB, Dockerfile, nixpacks, ... | Dockerfile and images first; buildpacks later |
+| Builders | herokuish, CNB, Dockerfile, nixpacks, ... | Dockerfile, registry images and compose files; buildpacks later |
 | Proxy | nginx (pluggable) | embedded Caddy, automatic TLS |
 | `storage:mount` | host directory, shared by all containers | named ext4 volume attached to one instance; it runs where the disk is, and the disk moves with it |
 | Plugins | bash plugin ecosystem | none in v1; services (postgres, redis) later as apps plus volumes plus `*:link` |
@@ -627,7 +710,7 @@ stays the stable entry point, including for versions that predate the command.
   `install.sh --join`, `nodes:*`, scheduler, artifact distribution, cluster
   cert storage, failover, `jokku top`, events.
 - **M3 – remote API.** HTTPS listener, tokens, `git:sync`, deploy keys,
-  `git:from-image`, `git:from-archive`.
+  `git:from-image` and `registry:login` (*done*), `git:from-archive`.
 - **M4 – depth.** The Firecracker `jailer`, `run` and `enter` via vsock, volumes (local
   disks that move with their instance: *done*; object storage next), `releases:rollback`,
   app.json health checks, log drains, services.

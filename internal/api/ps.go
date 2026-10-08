@@ -86,11 +86,13 @@ func (s *Server) patchResources(w http.ResponseWriter, r *http.Request) {
 	s.getResources(w, r)
 }
 
-// psAction streams restart, start, stop or rebuild.
+// psAction streams restart, start, stop or rebuild, or apply: roll out
+// config, scale, resource and volume changes, restarting only the process
+// types they change.
 func (s *Server) psAction(w http.ResponseWriter, r *http.Request) {
 	app, action := r.PathValue("app"), r.PathValue("action")
 	switch action {
-	case "restart", "start", "stop", "rebuild":
+	case "restart", "start", "stop", "rebuild", "apply":
 	default:
 		s.fail(w, r, httpErrorf(http.StatusNotFound, "Unknown ps action %q", action))
 		return

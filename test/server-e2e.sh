@@ -34,7 +34,7 @@ jssh() { $GIT_SSH_COMMAND "jokku@$host" "$@"; }
 step "install"
 sudo JOKKU_DOWNLOAD_URL="file://$dist/old" sh ./install.sh
 [ "$(server_version)" = ci-old ] || fail "expected ci-old to be running"
-for svc in jokku jokku-proxy jokku-buildkitd; do systemctl is-active "$svc" || fail "$svc is not running"; done
+for svc in jokku jokku-proxy jokku-buildkitd jokku-dns; do systemctl is-active "$svc" || fail "$svc is not running"; done
 sudo jokku ssh-keys:list | grep -q 'NAME="admin"' || fail "installer did not import the key"
 
 step "commands over ssh"
@@ -126,6 +126,35 @@ jssh logs hello -n 2000 | grep -q "app\[web" || fail "app lines missing next to 
 jssh logs hello -p web -n 20 | grep -q "app\[router\]" && fail "-p web shows router lines"
 sudo curl -fsS --unix-socket /run/jokku/jokku.sock "http://jokku/v1/requests?app=hello&tail=3" | grep -q '"type":"request"' || fail "request stream API"
 
+step "apps find each other by name"
+probe=$(mktemp -d)
+(
+  cd "$probe"
+  git init -q -b main
+  printf 'FROM public.ecr.aws/docker/library/busybox:1.36\nRUN mkdir /www\n' >Dockerfile
+  # Looks up the hello app by name, fetches it through that name, and
+  # resolves a public name through the node's DNS.
+  printf 'web: (nslookup hello.internal; wget -qO- http://hello.internal:4000/; nslookup github.com) >/www/index.html 2>&1; exec httpd -f -p "$PORT" -h /www\n' >Procfile
+  git add -A
+  git commit -qm probe
+  git push "jokku@$host:probe" main >/dev/null 2>&1
+) || fail "deploying the probe failed"
+pdomain=$(jssh domains:report probe --domains-app-vhosts)
+answer=$(curl -fsS --max-time 5 -H "Host: $pdomain" http://127.0.0.1/) || fail "the probe is not reachable"
+printf '%s\n' "$answer"
+grep -q "hello world from hello-web-" <<<"$answer" || fail "the probe could not reach hello by name"
+grep -qE "Name:[[:space:]]+github.com" <<<"$answer" || fail "the probe could not resolve a public name"
+jssh apps:destroy probe --force
+
+step "deploy an image from a registry"
+out=$(jssh git:from-image nginx public.ecr.aws/docker/library/nginx:alpine 2>&1) || fail "git:from-image failed: $out"
+printf '%s\n' "$out" | tail -n 5
+ndomain=$(jssh domains:report nginx --domains-app-vhosts)
+curl -fsS --max-time 5 -H "Host: $ndomain" http://127.0.0.1/ | grep -q "Welcome to nginx" || fail "the nginx image does not serve"
+jssh releases nginx | grep -q "Deploy public.ecr.aws/docker/library/nginx:alpine" || fail "the release does not name the image"
+jssh ps:rebuild nginx >/dev/null || fail "ps:rebuild of an image deploy failed"
+jssh apps:destroy nginx --force
+
 step "a failing deploy keeps the old release serving"
 printf 'web: echo "crashing" && exit 3\n' >Procfile
 git commit -qam broken
@@ -184,10 +213,17 @@ jssh logs keep -p web -n 50 | grep -q "app\[web.1\]: stderr reopened as app" || 
 [ "$(kget boots | wc -l)" -eq 1 ] || fail "expected one boot recorded: $(kget boots)"
 jssh ps:restart keep >/dev/null
 [ "$(kget boots | wc -l)" -eq 2 ] || fail "the volume lost data on restart: $(kget boots)"
-git commit -q --allow-empty -m again
+# A deploy that changes the image restarts web (an unchanged one leaves it
+# running), stopping the old instance before the new one takes the disk.
+echo 'ENV VERSION=2' >>Dockerfile
+git commit -qam v2
 out=$(git push "jokku@$host:keep" main 2>&1) || fail "redeploying failed: $out"
 grep -q "Stopping web.1 first" <<<"$out" || fail "the deploy did not stop the old instance first: $out"
 [ "$(kget boots | wc -l)" -eq 3 ] || fail "the volume lost data on deploy: $(kget boots)"
+git commit -q --allow-empty -m again
+out=$(git push "jokku@$host:keep" main 2>&1) || fail "redeploying failed: $out"
+grep -q "Unchanged, left running: web" <<<"$out" || fail "a deploy that changes nothing restarted web: $out"
+[ "$(kget boots | wc -l)" -eq 3 ] || fail "a deploy that changes nothing rebooted web: $(kget boots)"
 jssh storage:list keep | grep -E "^data +local +1g .* ready +web:/data" || fail "storage:list: $(jssh storage:list keep)"
 if jssh ps:scale keep web=2 2>/dev/null; then fail "scaled a process with a local volume past one"; fi
 sudo sh -c 'ls /var/lib/jokku/volumes/*.ext4' >/dev/null || fail "no volume disk on the server"
@@ -197,6 +233,52 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 if sudo sh -c 'ls /var/lib/jokku/volumes/*.ext4' 2>/dev/null; then fail "apps:destroy left the volume's disk"; fi
+cd "$GITHUB_WORKSPACE"
+
+step "a compose file deploys as one app, a process type per service"
+stack=$(mktemp -d)
+cd "$stack"
+git init -q -b main
+printf 'FROM public.ecr.aws/docker/library/busybox:1.36\nRUN mkdir /www\n' >Dockerfile
+cat >compose.yaml <<'EOF'
+services:
+  web:
+    build: .
+    ports: ["8080:3000"]
+    environment:
+      GREETING: hello ${WHO}
+    command: ["sh", "-c", "echo \"$$GREETING from compose\" >/www/index.html; ping -c 1 -W 2 db >>/www/index.html 2>&1; exec httpd -f -p 3000 -h /www"]
+    depends_on: [db]
+  db:
+    image: public.ecr.aws/docker/library/redis:7-alpine
+    volumes: ["dbdata:/data"]
+volumes:
+  dbdata:
+EOF
+git add -A
+git commit -qm stack
+jssh apps:create stack
+jssh builder:set stack selected compose
+jssh config:set --no-restart stack WHO=world
+out=$(git push "jokku@$host:stack" main 2>&1) || fail "deploying the compose file failed: $out"
+printf '%s\n' "$out" | grep -E "Deploying compose.yaml|Pulling|Building|Created volume|Starting" || true
+grep -q "Deploying compose.yaml: web, db" <<<"$out" || fail "the compose file was not deployed: $out"
+sdomain=$(jssh domains:report stack --domains-app-vhosts)
+sget() { curl -fsS --max-time 5 -H "Host: $sdomain" http://127.0.0.1/; }
+page=$(sget) || fail "the compose app's web service is not reachable"
+printf '%s\n' "$page"
+grep -q "hello world from compose" <<<"$page" || fail "\${WHO} was not filled in from the config var: $page"
+# ping resolves "db" the way an app's database URL would: through the
+# search list to db.stack.internal.
+grep -qE "PING db \(10\.[0-9.]+\)" <<<"$page" || fail "web could not resolve db: $page"
+jssh storage:list stack | grep -E "^dbdata .* db:/data" || fail "the db volume was not created and mounted: $(jssh storage:list stack)"
+dbaddr=$(jssh ps:report stack --status-db.1 | grep -oE "10\.[0-9.]+:6379")
+[ -n "$dbaddr" ] || fail "db is not running: $(jssh ps:report stack)"
+out=$(jssh config:set stack WHO=jokku 2>&1) || fail "config:set failed: $out"
+grep -q "Unchanged, left running: db" <<<"$out" || fail "the config change restarted db: $out"
+sget | grep -q "hello jokku from compose" || fail "web did not pick up the config change"
+[ "$(jssh ps:report stack --status-db.1 | grep -oE "10\.[0-9.]+:6379")" = "$dbaddr" ] || fail "db was replaced by a config change it does not use"
+jssh apps:destroy stack --force
 cd "$GITHUB_WORKSPACE"
 
 step "running install.sh again changes nothing"

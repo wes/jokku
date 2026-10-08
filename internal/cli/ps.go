@@ -34,8 +34,9 @@ func (c *Context) ps(action string) error {
 	return c.API.PS(c, c.App, action, func(e types.Event) { fmt.Fprintln(c.Stdout, e.Message) })
 }
 
-// restartIfDeployed applies settings changes to a running app; before the
-// first deploy there is nothing to restart.
+// restartIfDeployed applies settings changes to a running app, restarting
+// the process types they change; before the first deploy there is nothing
+// to restart.
 func (c *Context) restartIfDeployed() error {
 	app, err := c.API.App(c, c.App)
 	if err != nil {
@@ -44,7 +45,7 @@ func (c *Context) restartIfDeployed() error {
 	if app.CurrentRelease == 0 || app.Stopped {
 		return nil
 	}
-	return c.ps("restart")
+	return c.ps("apply")
 }
 
 func logs(c *Context) error {

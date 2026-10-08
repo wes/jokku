@@ -30,6 +30,7 @@ import (
 	"github.com/wes/jokku/internal/cluster"
 	"github.com/wes/jokku/internal/daemon"
 	"github.com/wes/jokku/internal/deps"
+	"github.com/wes/jokku/internal/dns"
 	"github.com/wes/jokku/internal/mesh"
 	"github.com/wes/jokku/internal/proxy"
 	"github.com/wes/jokku/internal/store"
@@ -234,8 +235,8 @@ func (s *setup) sysctl(ctx context.Context) error {
 	return writeIfChanged("/etc/sysctl.d/90-jokku.conf", "net.ipv4.ip_forward = 1\n", 0o644)
 }
 
-// units writes the systemd services: the daemon, the image builder and the
-// proxy.
+// units writes the systemd services: the daemon, the image builder, the
+// proxy and the microVMs' DNS.
 func (s *setup) units(ctx context.Context) error {
 	s.changedUnits = map[string]bool{}
 	bk := deps.BuildKit
@@ -247,6 +248,7 @@ func (s *setup) units(ctx context.Context) error {
 			"jokku-buildkit", "Environment=PATH="+bk.Dir()+":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"),
 		// Every request is a journal line (router logs); never rate-limit it.
 		"jokku-proxy": unit("Jokku proxy (Caddy)", s.exe+" proxy", "jokku-proxy", "LimitNOFILE=1048576\nLogRateLimitIntervalSec=0\n"),
+		"jokku-dns":   unit("Jokku DNS for microVMs", s.exe+" dns", "jokku-dns", ""),
 	}
 	if s.worker {
 		delete(units, "jokku-buildkitd")
@@ -280,8 +282,9 @@ WantedBy=multi-user.target
 }
 
 // start restarts the daemon (it is this binary) and waits until its API
-// reports this version. The builder and proxy are only restarted when their
-// unit or the proxy version changed, so updates don't interrupt traffic.
+// reports this version. The builder, proxy and DNS service are only
+// restarted when their unit or version changed, so updates don't interrupt
+// traffic or lookups.
 func (s *setup) start(ctx context.Context) error {
 	if run(ctx, "systemctl", "is-active", "--quiet", "jokku") == nil {
 		s.step("Restarting jokku")
@@ -298,13 +301,18 @@ func (s *setup) start(ctx context.Context) error {
 		return err
 	}
 
-	proxyMarker := filepath.Join(daemon.DefaultDataDir, "proxy", "version")
-	marker, _ := os.ReadFile(proxyMarker)
-	restart := map[string]bool{
-		"jokku-buildkitd": s.changedUnits["jokku-buildkitd"],
-		"jokku-proxy":     s.changedUnits["jokku-proxy"] || string(marker) != proxy.Version,
+	// Services that must not blink during updates are restarted only when
+	// their unit or their version (a marker file) changed.
+	markers := map[string]struct{ path, version string }{
+		"jokku-proxy": {filepath.Join(daemon.DefaultDataDir, "proxy", "version"), proxy.Version},
+		"jokku-dns":   {filepath.Join(daemon.DefaultDataDir, "dns", "version"), dns.Version},
 	}
-	services := []string{"jokku-buildkitd", "jokku-proxy"}
+	restart := map[string]bool{"jokku-buildkitd": s.changedUnits["jokku-buildkitd"]}
+	for svc, m := range markers {
+		running, _ := os.ReadFile(m.path)
+		restart[svc] = s.changedUnits[svc] || string(running) != m.version
+	}
+	services := []string{"jokku-buildkitd", "jokku-proxy", "jokku-dns"}
 	if s.worker {
 		services = services[1:]
 	}
@@ -321,14 +329,22 @@ func (s *setup) start(ctx context.Context) error {
 			return err
 		}
 	}
-	if _, err := writeFileIfChanged(proxyMarker, proxy.Version, 0o644); err != nil {
-		return err
+	for _, m := range markers {
+		if err := os.MkdirAll(filepath.Dir(m.path), 0o755); err != nil {
+			return err
+		}
+		if _, err := writeFileIfChanged(m.path, m.version, 0o644); err != nil {
+			return err
+		}
 	}
 	// A proxy that cannot bind 80/443 restarts in a loop; say why now rather
 	// than leaving a silent failure.
 	time.Sleep(2 * time.Second)
 	if run(ctx, "systemctl", "is-active", "--quiet", "jokku-proxy") != nil {
 		fmt.Fprintln(s.out, " !     jokku-proxy is not running. Is another web server using ports 80 or 443? See: journalctl -u jokku-proxy -n 20")
+	}
+	if run(ctx, "systemctl", "is-active", "--quiet", "jokku-dns") != nil {
+		fmt.Fprintln(s.out, " !     jokku-dns is not running, so apps can't find each other by name. See: journalctl -u jokku-dns -n 20")
 	}
 	return nil
 }

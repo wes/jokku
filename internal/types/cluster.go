@@ -17,6 +17,9 @@ type NodeState struct {
 	Instances []InstanceSpec `json:"instances"`
 	Volumes   []VolumeSpec   `json:"volumes,omitempty"`
 	Proxy     *ProxyState    `json:"proxy,omitempty"` // nil on non-ingress nodes
+	// DNS is the cluster's internal names (<process>.<app>.internal,
+	// <app>.internal) and their instances' addresses.
+	DNS map[string][]string `json:"dns,omitempty"`
 }
 
 type NodeIdentity struct {
@@ -64,11 +67,25 @@ type InstanceSpec struct {
 	// always, 0 for never.
 	MaxRestarts int `json:"max_restarts"`
 
+	// Check is how the instance proves it is up: CheckTCP (it accepts
+	// connections on Port) or CheckUp (it stays up a few seconds). Empty is
+	// the original rule: tcp for the web process, up for the others.
+	Check string `json:"check,omitempty"`
+	// StopTimeout is the seconds the app gets after StopSignal (default
+	// SIGTERM) before it is killed; 0 means the default, 10.
+	StopTimeout int    `json:"stop_timeout,omitempty"`
+	StopSignal  string `json:"stop_signal,omitempty"`
+
 	// Volumes are mounted into the VM. Each is listed in the node's Volumes
 	// as owned by it; the instance waits while one is still being copied
 	// here.
 	Volumes []InstanceVolume `json:"volumes,omitempty"`
 }
+
+const (
+	CheckTCP = "tcp"
+	CheckUp  = "up"
+)
 
 // InstanceVolume mounts a volume at Path in an instance.
 type InstanceVolume struct {

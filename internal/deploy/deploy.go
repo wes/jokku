@@ -9,13 +9,17 @@
 package deploy
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,10 +34,17 @@ import (
 
 type Pipeline struct {
 	Store   *store.Store
-	Builder *build.Builder
+	Builder ImageBuilder
 	Cluster *cluster.Controller
 	DataDir string
 	Log     *slog.Logger
+}
+
+// ImageBuilder makes root filesystems: a *build.Builder, or a fake in tests.
+type ImageBuilder interface {
+	Build(ctx context.Context, o build.Options, log func(string)) (*build.Result, error)
+	Unpack(ctx context.Context, deployID int64, source string) (string, error)
+	BuildTarget(ctx context.Context, deployID int64, t build.Target, logins []build.RegistryLogin, log func(string)) (*build.Result, error)
 }
 
 // keepReleases is how many recent releases per app keep their rootfs on
@@ -56,6 +67,19 @@ func (p *Pipeline) deploy(ctx context.Context, d *types.Deploy, sourcePath strin
 	if err != nil {
 		return 0, err
 	}
+	if d.Source == SourceImage {
+		// The source is just "FROM <image>": the app's build settings are
+		// for its own repo, not this.
+		settings = Settings{DockerfilePath: "Dockerfile", ProcfilePath: "Procfile"}
+	}
+	if settings.Builder == "compose" {
+		rel, err := p.buildCompose(ctx, d, sourcePath, settings, log)
+		if err != nil {
+			return 0, err
+		}
+		rel.Description = description(d)
+		return p.release(ctx, d, rel, log)
+	}
 	src, err := Inspect(sourcePath, settings)
 	if err != nil {
 		return 0, err
@@ -63,11 +87,19 @@ func (p *Pipeline) deploy(ctx context.Context, d *types.Deploy, sourcePath strin
 	if err := p.Cluster.CanSchedule(ctx); err != nil {
 		return 0, err
 	}
+	logins, err := p.logins(ctx)
+	if err != nil {
+		return 0, err
+	}
 	p.Store.SetDeployStatus(ctx, d.ID, "building", "")
-	log("-----> Building " + d.App + " from " + src.Dockerfile)
+	if d.Source == SourceImage {
+		log("-----> Pulling " + d.SourceRef)
+	} else {
+		log("-----> Building " + d.App + " from " + src.Dockerfile)
+	}
 	res, err := p.Builder.Build(ctx, build.Options{
 		App: d.App, DeployID: d.ID, Source: sourcePath,
-		BuildDir: settings.BuildDir, DockerfilePath: settings.DockerfilePath,
+		BuildDir: settings.BuildDir, DockerfilePath: settings.DockerfilePath, Logins: logins,
 	}, log)
 	if err != nil {
 		return 0, err
@@ -83,34 +115,78 @@ func (p *Pipeline) deploy(ctx context.Context, d *types.Deploy, sourcePath strin
 	if err != nil {
 		return 0, err
 	}
-	description := "Deploy"
-	if d.SourceRef != "" {
-		description += " " + shortRef(d.SourceRef)
-	}
 	rel := &store.Release{
 		App: d.App, Artifact: res.Artifact, ArtifactSHA: res.SHA256, ArtifactLen: res.Size,
-		Processes: procs, ConfigVars: vars, Description: description,
-		Image: store.ImageConfig{Env: res.Env, WorkingDir: res.WorkingDir, User: res.User, Port: res.Port},
+		Processes: procs, ConfigVars: vars, Description: description(d),
+		Image: store.ImageConfig{Env: res.Env, WorkingDir: res.WorkingDir, User: res.User, Port: res.Port, StopSignal: res.StopSignal},
 	}
-	if err := p.Store.CreateRelease(ctx, rel); err != nil {
-		return 0, err
-	}
-	p.Store.SetDeployRelease(ctx, d.ID, rel.ID)
 	from := res.PortFrom
 	if rel.Port() != res.Port {
 		from = "from the PORT config var"
 	}
 	log(fmt.Sprintf("-----> $PORT is %d, %s", rel.Port(), from))
+	return p.release(ctx, d, rel, log)
+}
+
+func description(d *types.Deploy) string {
+	switch {
+	case d.Source == SourceImage:
+		return "Deploy " + d.SourceRef
+	case d.SourceRef != "":
+		return "Deploy " + shortRef(d.SourceRef)
+	}
+	return "Deploy"
+}
+
+// release stores a deploy's release and rolls it out.
+func (p *Pipeline) release(ctx context.Context, d *types.Deploy, rel *store.Release, log func(string)) (int, error) {
+	if err := p.Store.CreateRelease(ctx, rel); err != nil {
+		return 0, err
+	}
+	p.Store.SetDeployRelease(ctx, d.ID, rel.ID)
 	if err := p.defaultDomains(ctx, d.App); err != nil {
 		return 0, err
 	}
-
 	p.Store.SetDeployStatus(ctx, d.ID, "deploying", "")
-	if err := p.rollout(ctx, rel, log); err != nil {
+	if err := p.rollout(ctx, rel, applyChanges, log); err != nil {
 		return 0, err
 	}
 	p.cleanup(ctx, d)
-	return rel.Version, p.printURLs(ctx, d.App, log)
+	return rel.Version, p.printURLs(ctx, rel, log)
+}
+
+// SourceImage is the deploy source of git:from-image: a registry image,
+// built from a one-line Dockerfile, "FROM <image>".
+const SourceImage = "image"
+
+// ImageSource is the source tarball for an image deploy.
+func ImageSource(image string) ([]byte, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	dockerfile := []byte("FROM " + image + "\n")
+	if err := tw.WriteHeader(&tar.Header{Name: "Dockerfile", Mode: 0o644, Size: int64(len(dockerfile)), Typeflag: tar.TypeReg}); err != nil {
+		return nil, err
+	}
+	if _, err := tw.Write(dockerfile); err != nil {
+		return nil, err
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// logins are the registry credentials builds pull with.
+func (p *Pipeline) logins(ctx context.Context) ([]build.RegistryLogin, error) {
+	stored, err := p.Store.RegistryLogins(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []build.RegistryLogin
+	for _, l := range stored {
+		out = append(out, build.RegistryLogin{Server: l.Server, Username: l.Username, Password: l.Password})
+	}
+	return out, nil
 }
 
 // Processes maps each process type to its argv. Without a Procfile, the app
@@ -132,7 +208,8 @@ func Processes(procfile map[string]string, entrypoint, cmd []string) (map[string
 	return out, nil
 }
 
-// PS runs a "ps:" action: restart, start, stop or rebuild.
+// PS runs a "ps:" action: restart, start, stop or rebuild, or apply (roll
+// out settings changes, restarting only process types they change).
 func (p *Pipeline) PS(ctx context.Context, app, action, actor string, log func(string)) error {
 	if _, err := p.Store.App(ctx, app); err != nil {
 		return err
@@ -142,18 +219,24 @@ func (p *Pipeline) PS(ctx context.Context, app, action, actor string, log func(s
 		return p.stop(ctx, app, log)
 	case "rebuild":
 		return p.rebuild(ctx, app, actor, log)
-	case "start", "restart":
+	case "start", "restart", "apply":
 		if err := p.Cluster.CanSchedule(ctx); err != nil {
 			return err
 		}
-		return p.restart(ctx, app, log)
+		mode := applyChanges
+		if action == "restart" {
+			mode = restartAll
+		}
+		return p.restart(ctx, app, mode, log)
 	}
 	return fmt.Errorf("unknown action %q", action)
 }
 
 // restart rolls out the current release again, picking up config, scale and
-// resource changes. Changed config vars make a new release.
-func (p *Pipeline) restart(ctx context.Context, app string, log func(string)) error {
+// resource changes. Changed config vars make a new release; for a compose
+// app that means reading its compose file again. restartAll replaces every
+// instance (ps:restart); applyChanges only those the changes affect.
+func (p *Pipeline) restart(ctx context.Context, app string, mode rolloutMode, log func(string)) error {
 	cur, err := p.Store.CurrentRelease(ctx, app)
 	if err != nil {
 		return err
@@ -169,18 +252,29 @@ func (p *Pipeline) restart(ctx context.Context, app string, log func(string)) er
 	if !maps.Equal(vars, cur.ConfigVars) {
 		next := *cur
 		next.ConfigVars, next.Description = vars, "Config change"
+		if cur.Compose() {
+			recomposed, err := p.recompose(ctx, app, cur, log)
+			if err != nil {
+				return err
+			}
+			next = *recomposed
+		}
 		if err := p.Store.CreateRelease(ctx, &next); err != nil {
 			return err
 		}
 		rel = &next
 	}
-	log(fmt.Sprintf("-----> Restarting %s (v%d)", app, rel.Version))
-	if err := p.rollout(ctx, rel, log); err != nil {
+	if mode == restartAll {
+		log(fmt.Sprintf("-----> Restarting %s (v%d)", app, rel.Version))
+	} else {
+		log(fmt.Sprintf("-----> Applying changes to %s (v%d)", app, rel.Version))
+	}
+	if err := p.rollout(ctx, rel, mode, log); err != nil {
 		p.Store.AddEvent(ctx, "deploy", app, "", "restart failed: %v", err)
 		return err
 	}
 	p.Store.AddEvent(ctx, "deploy", app, "", "restarted (v%d)", rel.Version)
-	return p.printURLs(ctx, app, log)
+	return p.printURLs(ctx, rel, log)
 }
 
 func (p *Pipeline) stop(ctx context.Context, app string, log func(string)) error {
@@ -230,60 +324,87 @@ func (p *Pipeline) readyNodes(ctx context.Context) (map[string]bool, error) {
 
 // rebuild deploys the most recently deployed source again.
 func (p *Pipeline) rebuild(ctx context.Context, app, actor string, log func(string)) error {
-	deploys, err := p.Store.Deploys(ctx, app, 100)
+	source, prev, err := p.lastSource(ctx, app)
 	if err != nil {
 		return err
+	}
+	kind := "rebuild"
+	if prev.Source == SourceImage {
+		kind = SourceImage // pull the image again
+	}
+	d, err := p.Store.CreateDeploy(ctx, app, kind, prev.SourceRef, actor)
+	if err != nil {
+		return err
+	}
+	dst := filepath.Join(p.DataDir, "builds", strconv.FormatInt(d.ID, 10), "source.tar")
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return err
+	}
+	if err := os.Link(source, dst); err != nil {
+		return err
+	}
+	err = p.Deploy(ctx, d, dst, log)
+	status, msg := types.StatusSucceeded, ""
+	if err != nil {
+		status, msg = types.StatusFailed, err.Error()
+	}
+	p.Store.SetDeployStatus(context.WithoutCancel(ctx), d.ID, status, msg)
+	return err
+}
+
+// lastSource finds the source tarball of the app's latest successful
+// deploy, which cleanup keeps.
+func (p *Pipeline) lastSource(ctx context.Context, app string) (string, *types.Deploy, error) {
+	deploys, err := p.Store.Deploys(ctx, app, 100)
+	if err != nil {
+		return "", nil, err
 	}
 	for _, prev := range deploys {
 		if prev.Status != types.StatusSucceeded {
 			continue
 		}
 		source := filepath.Join(p.DataDir, "builds", strconv.FormatInt(prev.ID, 10), "source.tar")
-		if _, err := os.Stat(source); err != nil {
-			continue
+		if _, err := os.Stat(source); err == nil {
+			return source, &prev, nil
 		}
-		d, err := p.Store.CreateDeploy(ctx, app, "rebuild", prev.SourceRef, actor)
-		if err != nil {
-			return err
-		}
-		dst := filepath.Join(p.DataDir, "builds", strconv.FormatInt(d.ID, 10), "source.tar")
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-			return err
-		}
-		if err := os.Link(source, dst); err != nil {
-			return err
-		}
-		err = p.Deploy(ctx, d, dst, log)
-		status, msg := types.StatusSucceeded, ""
-		if err != nil {
-			status, msg = types.StatusFailed, err.Error()
-		}
-		p.Store.SetDeployStatus(context.WithoutCancel(ctx), d.ID, status, msg)
-		return err
 	}
-	return fmt.Errorf("no source to rebuild %s from: git push to deploy it", app)
+	return "", nil, fmt.Errorf("no source to rebuild %s from: git push to deploy it", app)
 }
 
+// rolloutMode says what a rollout replaces.
+type rolloutMode int
+
+const (
+	// restartAll replaces every instance (ps:restart).
+	restartAll rolloutMode = iota
+	// applyChanges keeps the instances of process types the new release
+	// would run exactly the same way (deploys, config:set, ps:scale): a
+	// compose app's database doesn't restart because its web service
+	// changed.
+	applyChanges
+)
+
 // rollout boots rel's formation, waits for checks, switches traffic and
-// schedules the old instances' retirement.
-func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, log func(string)) error {
+// schedules the old instances' retirement. Process types start in
+// dependency order (a compose file's depends_on): each group passes checks
+// before the next starts.
+func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, mode rolloutMode, log func(string)) error {
 	app := rel.App
+	appInfo, err := p.Store.App(ctx, app)
+	if err != nil {
+		return err
+	}
+	cur, err := p.Store.CurrentRelease(ctx, app)
+	if err != nil {
+		return err
+	}
 	before, err := p.Store.Instances(ctx, app)
 	if err != nil {
 		return err
 	}
-	scaled, err := p.Store.Formation(ctx, app)
+	quantity, err := p.quantities(ctx, rel)
 	if err != nil {
 		return err
-	}
-	quantity := map[string]int{}
-	for _, proc := range scaled {
-		quantity[proc.Type] = proc.Quantity
-	}
-	for _, proc := range sortedProcessTypes(rel.Processes) {
-		if _, ok := quantity[proc]; !ok && proc == "web" {
-			quantity[proc] = 1 // as in Dokku: one web process unless scaled
-		}
 	}
 	sizes, err := p.Store.Resources(ctx, app)
 	if err != nil {
@@ -294,6 +415,21 @@ func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, log func(str
 		return err
 	}
 
+	kept := map[string]bool{} // instance IDs that carry on into rel
+	var keptProcs []string
+	if mode == applyChanges && cur != nil && !appInfo.Stopped {
+		for _, proc := range sortedProcessTypes(rel.Processes) {
+			ins, ok := unchanged(cur, rel, proc, before, quantity[proc], sizeFor(sizes, rel, proc), disks[proc].mounts)
+			if !ok || len(ins) == 0 {
+				continue
+			}
+			keptProcs = append(keptProcs, proc)
+			for _, in := range ins {
+				kept[in.ID] = true
+			}
+		}
+	}
+
 	// Instances that are not serving (a stopped app's, crashed ones) are
 	// replaced outright; serving ones retire once the new ones pass checks.
 	// A process type with local volumes can't overlap: its one instance
@@ -302,7 +438,7 @@ func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, log func(str
 	var first []store.Instance
 	for _, in := range before {
 		switch {
-		case in.Desired != store.DesiredRunning:
+		case in.Desired != store.DesiredRunning || kept[in.ID]:
 		case len(disks[in.ProcessType].mounts) > 0:
 			first = append(first, in)
 			stale = append(stale, in.ID)
@@ -327,47 +463,67 @@ func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, log func(str
 		p.restore(ctx, first)
 		return err
 	}
+	if len(keptProcs) > 0 {
+		log("-----> Unchanged, left running: " + strings.Join(keptProcs, ", "))
+	}
 
 	var created []store.Instance
-	var names []string
-	for _, proc := range sortedProcessTypes(rel.Processes) {
-		size := sizes.Effective(proc)
-		d := disks[proc]
-		for i := 1; i <= quantity[proc]; i++ {
-			node, subnet, err := p.Cluster.Place(ctx, cluster.Placement{
-				App: app, ProcessType: proc, CPUs: size.CPUs, MemoryMB: size.MemoryMB,
-				Pin: d.node, PinReason: d.pinReason, Volumes: len(d.mounts) > 0,
-			})
-			if err != nil {
-				return fail(created, err)
+	for _, stage := range stages(rel) {
+		var batch []store.Instance
+		var names []string
+		for _, proc := range stage {
+			if slices.Contains(keptProcs, proc) {
+				continue
 			}
-			for _, v := range d.unplaced {
-				if err := p.Store.PlaceVolume(ctx, v.ID, node); err != nil {
-					return fail(created, err)
+			size := sizeFor(sizes, rel, proc)
+			d := disks[proc]
+			for i := 1; i <= quantity[proc]; i++ {
+				node, subnet, err := p.Cluster.Place(ctx, cluster.Placement{
+					App: app, ProcessType: proc, CPUs: size.CPUs, MemoryMB: size.MemoryMB,
+					Pin: d.node, PinReason: d.pinReason, Volumes: len(d.mounts) > 0,
+				})
+				if err != nil {
+					return fail(append(created, batch...), err)
 				}
+				for _, v := range d.unplaced {
+					if err := p.Store.PlaceVolume(ctx, v.ID, node); err != nil {
+						return fail(append(created, batch...), err)
+					}
+				}
+				in := store.Instance{
+					App: app, ReleaseID: rel.ID, ProcessType: proc, Index: i, Node: node, Port: rel.PortFor(proc),
+					CPUs: size.CPUs, MemoryMB: size.MemoryMB, Desired: store.DesiredRunning, Volumes: d.mounts,
+				}
+				if err := p.Store.CreateInstance(ctx, &in, subnet); err != nil {
+					return fail(append(created, batch...), err)
+				}
+				batch = append(batch, in)
+				names = append(names, fmt.Sprintf("%s on %s (%d vCPU, %s)", in.Name(), node, in.CPUs, formatMB(in.MemoryMB)))
 			}
-			in := store.Instance{
-				App: app, ReleaseID: rel.ID, ProcessType: proc, Index: i, Node: node, Port: rel.Port(),
-				CPUs: size.CPUs, MemoryMB: size.MemoryMB, Desired: store.DesiredRunning, Volumes: d.mounts,
-			}
-			if err := p.Store.CreateInstance(ctx, &in, subnet); err != nil {
-				return fail(created, err)
-			}
-			created = append(created, in)
-			names = append(names, fmt.Sprintf("%s on %s (%d vCPU, %s)", in.Name(), node, in.CPUs, formatMB(in.MemoryMB)))
 		}
-	}
-	if len(created) > 0 {
+		if len(batch) == 0 {
+			continue
+		}
 		log("-----> Starting " + strings.Join(names, ", "))
 		p.Cluster.Changed()
-		if err := p.waitHealthy(ctx, app, created, log); err != nil {
+		created = append(created, batch...)
+		if err := p.waitHealthy(ctx, rel, batch, log); err != nil {
 			return fail(created, err)
 		}
-	} else {
-		log("-----> No processes are scaled up (jokku ps:scale " + app + " web=1)")
+	}
+	if len(created) == 0 && len(keptProcs) == 0 {
+		hint := "web=1"
+		if rel.Compose() {
+			hint = "<service>=1"
+		}
+		log("-----> No processes are scaled up (jokku ps:scale " + app + " " + hint + ")")
 	}
 
-	if err := p.Store.SetCurrentRelease(ctx, app, rel.ID); err != nil {
+	keptIDs := make([]string, 0, len(kept))
+	for id := range kept {
+		keptIDs = append(keptIDs, id)
+	}
+	if err := p.Store.PromoteRelease(ctx, app, rel.ID, keptIDs); err != nil {
 		return err
 	}
 	checks, err := p.computed(ctx, app, "checks")
@@ -386,9 +542,140 @@ func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, log func(str
 	return nil
 }
 
+// quantities is how many instances of each process type rel runs: what
+// ps:scale set, otherwise a compose service's replicas, otherwise one web
+// process (as in Dokku) and none of the others.
+func (p *Pipeline) quantities(ctx context.Context, rel *store.Release) (map[string]int, error) {
+	scaled, err := p.Store.Formation(ctx, rel.App)
+	if err != nil {
+		return nil, err
+	}
+	set := map[string]int{}
+	for _, proc := range scaled {
+		set[proc.Type] = proc.Quantity
+	}
+	q := map[string]int{}
+	for proc := range rel.Processes {
+		n, ok := set[proc]
+		switch {
+		case ok:
+		case rel.Compose():
+			n = rel.Services[proc].Replicas
+		case proc == "web":
+			n = 1
+		}
+		q[proc] = n
+	}
+	return q, nil
+}
+
+// sizeFor is a process type's size: resource:limit for the process type,
+// then the compose file's limits, then resource:limit for the app, then the
+// defaults.
+func sizeFor(sizes store.AppResources, rel *store.Release, proc string) types.ResourceSize {
+	size := types.ResourceSize{CPUs: store.DefaultCPUs, MemoryMB: store.DefaultMemoryMB}
+	svc := rel.Services[proc]
+	for _, o := range []types.ResourceSize{sizes.Default, {CPUs: svc.CPUs, MemoryMB: svc.MemoryMB}, sizes.Process[proc]} {
+		if o.CPUs > 0 {
+			size.CPUs = o.CPUs
+		}
+		if o.MemoryMB > 0 {
+			size.MemoryMB = o.MemoryMB
+		}
+	}
+	return size
+}
+
+// unchanged returns proc's instances when rel would run them exactly as
+// they run now (same image, command, environment, port, size and volumes,
+// same count, all healthy), so they can carry on.
+func unchanged(cur, rel *store.Release, proc string, before []store.Instance, n int, size types.ResourceSize, mounts []types.InstanceVolume) ([]store.Instance, bool) {
+	if _, ok := cur.Processes[proc]; !ok {
+		return nil, false
+	}
+	var ins []store.Instance
+	for _, in := range before {
+		if in.ProcessType != proc || in.Desired != store.DesiredRunning {
+			continue
+		}
+		if in.ReleaseID != cur.ID || in.State != store.StateHealthy {
+			return nil, false
+		}
+		ins = append(ins, in)
+	}
+	if len(ins) != n {
+		return nil, false
+	}
+	for _, in := range ins {
+		next := in
+		next.Port, next.CPUs, next.MemoryMB, next.Volumes = rel.PortFor(proc), size.CPUs, size.MemoryMB, mounts
+		if specKey(cur, in) != specKey(rel, next) {
+			return nil, false
+		}
+	}
+	return ins, true
+}
+
+// specKey sums up how an instance runs under a release: everything its VM
+// is booted with.
+func specKey(rel *store.Release, in store.Instance) string {
+	artifact, _, _, img := rel.ImageFor(in.ProcessType)
+	svc := rel.Services[in.ProcessType]
+	var vols []types.InstanceVolume
+	if len(in.Volumes) > 0 {
+		vols = in.Volumes
+	}
+	b, _ := json.Marshal([]any{
+		artifact, rel.Processes[in.ProcessType], cluster.Env(rel, in), img,
+		in.Port, in.CPUs, in.MemoryMB, vols, svc.Check, svc.StopSecs,
+	})
+	return string(b)
+}
+
+// stages orders a release's process types for starting: each stage only
+// depends on earlier ones. A Dockerfile app is one stage.
+func stages(rel *store.Release) [][]string {
+	procs := sortedProcessTypes(rel.Processes)
+	if !rel.Compose() {
+		return [][]string{procs}
+	}
+	done := map[string]bool{}
+	var out [][]string
+	for len(done) < len(procs) {
+		var stage []string
+		for _, proc := range procs {
+			if done[proc] {
+				continue
+			}
+			ready := true
+			for _, dep := range rel.Services[proc].DependsOn {
+				if _, ok := rel.Processes[dep]; ok && !done[dep] {
+					ready = false
+				}
+			}
+			if ready {
+				stage = append(stage, proc)
+			}
+		}
+		if len(stage) == 0 { // a cycle: start the rest together
+			for _, proc := range procs {
+				if !done[proc] {
+					stage = append(stage, proc)
+				}
+			}
+		}
+		for _, proc := range stage {
+			done[proc] = true
+		}
+		out = append(out, stage)
+	}
+	return out
+}
+
 // waitHealthy follows new instances until all pass checks, one fails, or the
 // checks timeout passes.
-func (p *Pipeline) waitHealthy(ctx context.Context, app string, created []store.Instance, log func(string)) error {
+func (p *Pipeline) waitHealthy(ctx context.Context, rel *store.Release, created []store.Instance, log func(string)) error {
+	app := rel.App
 	checks, err := p.computed(ctx, app, "checks")
 	if err != nil {
 		return err
@@ -432,7 +719,7 @@ func (p *Pipeline) waitHealthy(ctx context.Context, app string, created []store.
 		}
 		if time.Now().After(deadline) {
 			what := "stay up"
-			if waiting.ProcessType == "web" {
+			if check := rel.Services[waiting.ProcessType].Check; check == types.CheckTCP || (check == "" && waiting.ProcessType == "web") {
 				what = fmt.Sprintf("accept connections on port %d ($PORT)", waiting.Port)
 			}
 			return p.failed(ctx, *waiting, fmt.Sprintf("did not %s within %ds", what, secs), log)
@@ -549,7 +836,12 @@ func (p *Pipeline) failed(ctx context.Context, in store.Instance, why string, lo
 	return fmt.Errorf("%s %s; nothing was deployed", in.Name(), why)
 }
 
-func (p *Pipeline) printURLs(ctx context.Context, app string, log func(string)) error {
+func (p *Pipeline) printURLs(ctx context.Context, rel *store.Release, log func(string)) error {
+	app := rel.App
+	if rel.WebProcess() == "" {
+		log("=====> Deployed " + app + ". No service gets HTTP traffic (publish ports on one, or name it web)")
+		return nil
+	}
 	domains, err := p.Store.Domains(ctx, app)
 	if err != nil {
 		return err

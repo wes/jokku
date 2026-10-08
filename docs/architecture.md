@@ -218,8 +218,11 @@ source.tar --> BuildKit (Dockerfile) --> OCI image --> flatten layers --> rootfs
 
 Process types come from a `Procfile` in the repo root, as in Dokku. Without
 one, the app has a single `web` process running the image's
-`ENTRYPOINT`/`CMD`. The app listens on `$PORT`, which is the image's single
-`EXPOSE`d port if it has one and `5000` otherwise.
+`ENTRYPOINT`/`CMD`. The app listens on `$PORT`: the `PORT` config var if set,
+otherwise the image's `EXPOSE`d port. An image inherits its base image's ports
+(nginx's 80), so when there are several, the ones from the newest `EXPOSE` step
+in the image history win. With no `EXPOSE`, it is the image's `PORT` variable
+or `5000`.
 
 ## MicroVM runtime
 

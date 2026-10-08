@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 )
 
@@ -30,7 +31,16 @@ type ImageConfig struct {
 	Env        []string `json:"env,omitempty"` // KEY=value
 	WorkingDir string   `json:"working_dir,omitempty"`
 	User       string   `json:"user,omitempty"`
-	Port       int      `json:"port"` // $PORT: the single EXPOSEd port, or 5000
+	Port       int      `json:"port"` // $PORT picked from the image's EXPOSE, see build.Port
+}
+
+// Port is $PORT for the release's instances: the PORT config var when it is
+// a valid port, otherwise the one picked from the image.
+func (r *Release) Port() int {
+	if n, err := strconv.Atoi(r.ConfigVars["PORT"]); err == nil && n > 0 && n < 65536 {
+		return n
+	}
+	return r.Image.Port
 }
 
 // CreateRelease stores r as the app's next version and fills in ID, Version

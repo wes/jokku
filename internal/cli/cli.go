@@ -87,9 +87,11 @@ var namespaceHelp = map[string]string{
 	"git":                "Manage app deploys via git",
 	"builder":            "Manage the builder settings for an app",
 	"builder-dockerfile": "Manage the Dockerfile builder",
+	"builder-compose":    "Manage the compose builder (deploy a compose file)",
 	"ps":                 "List processes and scale an app",
 	"resource":           "Manage vCPU and memory per process type",
 	"storage":            "Manage volumes: disks for an app's data",
+	"registry":           "Manage logins to private image registries",
 	"checks":             "Manage zero-downtime deploy checks",
 	"proxy":              "Manage the HTTP proxy for an app",
 	"letsencrypt":        "Manage automatic TLS certificates",
@@ -125,6 +127,8 @@ func init() {
 	register(psCommands...)
 	register(resourceCommands...)
 	register(storageCommands...)
+	register(gitCommands...)
+	register(registryCommands...)
 	register(sshKeysCommands...)
 	register(nodesCommands...)
 	register(clusterCommands...)

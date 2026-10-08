@@ -12,6 +12,9 @@ import (
 // DefaultPort is $PORT when the image EXPOSEs no TCP port.
 const DefaultPort = 5000
 
+// DefaultPortFrom is Port's explanation when it fell back to DefaultPort.
+const DefaultPortFrom = "the default, as the image EXPOSEs no port"
+
 var (
 	// An EXPOSE step in the image history: "EXPOSE map[3000/tcp:{}]" from
 	// BuildKit, "/bin/sh -c #(nop)  EXPOSE 3000" from the classic builder.
@@ -37,7 +40,7 @@ func Port(cfg *v1.ConfigFile) (int, string) {
 				return n, "from the image's PORT variable"
 			}
 		}
-		return DefaultPort, "the default, as the image EXPOSEs no port"
+		return DefaultPort, DefaultPortFrom
 	}
 	ports := sortedPorts(exposed)
 	if len(ports) > 1 {

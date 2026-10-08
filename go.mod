@@ -9,7 +9,11 @@ require (
 	github.com/caddyserver/certmagic v0.25.6
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/charmbracelet/x/ansi v0.11.8
+	github.com/compose-spec/compose-go/v2 v2.15.0
 	github.com/google/go-containerregistry v0.22.1
+	github.com/miekg/dns v1.1.73
+	go.yaml.in/yaml/v4 v4.0.0-rc.4
 	golang.org/x/crypto v0.57.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
@@ -45,7 +49,6 @@ require (
 	github.com/cespare/xxhash v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
-	github.com/charmbracelet/x/ansi v0.11.8 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/chzyer/readline v1.5.1 // indirect
@@ -58,7 +61,10 @@ require (
 	github.com/dgraph-io/badger/v2 v2.2007.4 // indirect
 	github.com/dgraph-io/ristretto v0.2.0 // indirect
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da // indirect
+	github.com/distribution/reference v0.6.0 // indirect
 	github.com/dlclark/regexp2/v2 v2.8.0 // indirect
+	github.com/docker/go-connections v0.7.0 // indirect
+	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dunglas/go-urlpattern v1.0.0 // indirect
 	github.com/dunglas/httpsfv v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
@@ -71,6 +77,7 @@ require (
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-sql-driver/mysql v1.10.1 // indirect
+	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/certificate-transparency-go v1.3.3 // indirect
@@ -98,12 +105,12 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
+	github.com/mattn/go-shellwords v1.0.12 // indirect
 	github.com/mdlayher/genetlink v1.3.2 // indirect
 	github.com/mdlayher/netlink v1.7.2 // indirect
 	github.com/mdlayher/socket v0.5.1 // indirect
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
 	github.com/mholt/acmez/v3 v3.1.7 // indirect
-	github.com/miekg/dns v1.1.73 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
@@ -129,6 +136,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/shurcooL/sanitized_anchor_name v1.0.0 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
@@ -148,6 +156,7 @@ require (
 	github.com/tailscale/tscert v0.0.0-20251216020129-aea342f6d747 // indirect
 	github.com/urfave/cli v1.22.17 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	github.com/xhit/go-str2duration/v2 v2.1.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yuin/goldmark v1.8.6 // indirect
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc // indirect

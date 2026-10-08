@@ -24,9 +24,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/wes/jokku/internal/dns"
 	"github.com/wes/jokku/internal/guest"
 	"github.com/wes/jokku/internal/types"
 	"github.com/wes/jokku/internal/vm"
@@ -74,15 +76,23 @@ type Proxy interface {
 	Apply(ctx context.Context, ps *types.ProxyState) error
 }
 
+// Resolver hands the cluster's internal names to this node's DNS service,
+// and says whether it answers at addr, the node's bridge address.
+type Resolver interface {
+	Apply(ctx context.Context, z dns.Zone) error
+	Ready(addr string) bool
+}
+
 type Config struct {
-	Control ControlPlane
-	Runtime Runtime
-	Mesh    Mesh  // nil: no mesh
-	Proxy   Proxy // nil: no proxy
-	DataDir string
-	DNS     []string // resolvers handed to guests
-	Version string
-	Log     *slog.Logger
+	Control  ControlPlane
+	Runtime  Runtime
+	Mesh     Mesh     // nil: no mesh
+	Proxy    Proxy    // nil: no proxy
+	Resolver Resolver // nil: VMs use the host's resolvers
+	DataDir  string
+	DNS      []string // resolvers handed to guests
+	Version  string
+	Log      *slog.Logger
 	// GCArtifacts deletes root filesystems no instance here uses. Off on
 	// the control node, which keeps recent releases for rollbacks.
 	GCArtifacts bool
@@ -90,10 +100,18 @@ type Config struct {
 	Metrics func() types.NodeMetrics
 	// ReconcileEvery and ReportEvery default to 2s and 5s.
 	ReconcileEvery, ReportEvery time.Duration
+	// UpFor is how long an instance checked by staying up (no port) must
+	// run to count as healthy; default 5s.
+	UpFor time.Duration
 }
 
-// stopGrace is how long an app gets to exit after SIGTERM.
+// stopGrace is how long an app gets to exit after its stop signal, unless
+// its spec says otherwise.
 const stopGrace = 10 * time.Second
+
+// stopMargin is how long the host waits beyond that, for the guest to
+// unmount its volumes and power off.
+const stopMargin = 5 * time.Second
 
 type Agent struct {
 	Config
@@ -132,6 +150,7 @@ type local struct {
 	cpuAt       time.Time
 	cpuPercent  float64
 	memoryMB    int
+	stopWait    time.Duration // how long a stop may take, from the spec it started with
 }
 
 func New(c Config) *Agent {
@@ -140,6 +159,9 @@ func New(c Config) *Agent {
 	}
 	if c.ReportEvery == 0 {
 		c.ReportEvery = 5 * time.Second
+	}
+	if c.UpFor == 0 {
+		c.UpFor = 5 * time.Second
 	}
 	return &Agent{
 		Config: c, kick: make(chan struct{}, 1), report: make(chan struct{}, 1),
@@ -296,6 +318,13 @@ func (a *Agent) reconcile(ctx context.Context) error {
 			a.logOnce("proxy", err)
 		} else {
 			a.clearErr("proxy")
+		}
+	}
+	if a.Resolver != nil && st.Node.MeshIP != "" {
+		if err := a.Resolver.Apply(ctx, dns.Zone{Listen: st.Node.MeshIP, Records: st.DNS}); err != nil {
+			a.logOnce("dns", err)
+		} else {
+			a.clearErr("dns")
 		}
 	}
 	if a.canRun != "" {
@@ -459,10 +488,19 @@ func (a *Agent) volumesReady(spec types.InstanceSpec, l *local, attached map[str
 }
 
 func (a *Agent) healthy(spec types.InstanceSpec, l *local, now time.Time) bool {
-	if spec.ProcessType == "web" {
+	if spec.Check == types.CheckTCP || (spec.Check == "" && spec.ProcessType == "web") {
 		return a.Runtime.CheckTCP(fmt.Sprintf("%s:%d", spec.IP, spec.Port))
 	}
-	return now.Sub(l.startedAt) >= 5*time.Second
+	return now.Sub(l.startedAt) >= a.UpFor
+}
+
+// stopTimeout is how long spec's app gets between its stop signal and
+// SIGKILL.
+func stopTimeout(spec types.InstanceSpec) time.Duration {
+	if spec.StopTimeout > 0 {
+		return time.Duration(spec.StopTimeout) * time.Second
+	}
+	return stopGrace
 }
 
 func (a *Agent) start(ctx context.Context, spec types.InstanceSpec, l *local, restart bool) {
@@ -475,12 +513,20 @@ func (a *Agent) start(ctx context.Context, spec types.InstanceSpec, l *local, re
 	for _, m := range spec.Volumes {
 		vols = append(vols, vm.Volume{Disk: a.volumePath(m.ID, ""), Path: m.Path})
 	}
+	// Internal names need this node's DNS service. Where it doesn't answer
+	// (yet), the VM gets the host's resolvers: no internal names, but the
+	// internet works.
+	resolvers, search := a.DNS, []string(nil)
+	if st := a.Desired(); a.Resolver != nil && st != nil && st.Node.MeshIP != "" && a.Resolver.Ready(st.Node.MeshIP) {
+		resolvers, search = []string{st.Node.MeshIP}, []string{strings.ToLower(spec.App) + ".internal", "internal"}
+	}
 	err := a.Runtime.Start(ctx, vm.Spec{
 		ID: spec.ID, App: spec.App, Process: spec.Process, Artifact: a.artifactPath(spec.Artifact),
 		IP: spec.IP, CPUs: spec.CPUs, MemoryMB: spec.MemoryMB, Volumes: vols,
 		Guest: guest.Config{
 			Argv: spec.Argv, Env: spec.Env, User: spec.User, WorkDir: spec.WorkDir,
-			Hostname: spec.Hostname, IP: spec.IP, DNS: a.DNS, StopTimeout: int(stopGrace / time.Second),
+			Hostname: spec.Hostname, IP: spec.IP, DNS: resolvers, Search: search,
+			StopTimeout: int(stopTimeout(spec) / time.Second), StopSignal: spec.StopSignal,
 		},
 	})
 	if err != nil {
@@ -492,6 +538,7 @@ func (a *Agent) start(ctx context.Context, spec types.InstanceSpec, l *local, re
 		l.restarts++
 	}
 	l.state, l.startedAt, l.removed = "starting", time.Now(), false
+	l.stopWait = stopTimeout(spec) + stopMargin
 	l.cpuNanos, l.cpuAt = 0, time.Time{}
 }
 
@@ -501,10 +548,14 @@ func (a *Agent) stopAsync(id string, remove bool) {
 	if _, loaded := a.stopping.LoadOrStore(id, struct{}{}); loaded {
 		return
 	}
+	wait := stopGrace + stopMargin
+	if l := a.local[id]; l != nil && l.stopWait > 0 {
+		wait = l.stopWait
+	}
 	go func() {
 		defer a.stopping.Delete(id)
 		ctx := context.Background()
-		if err := a.Runtime.Stop(ctx, id, stopGrace); err != nil {
+		if err := a.Runtime.Stop(ctx, id, wait); err != nil {
 			a.Log.Error("stopping instance", "id", id, "err", err)
 			return
 		}

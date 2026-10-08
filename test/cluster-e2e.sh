@@ -144,6 +144,10 @@ if $worker_runs_vms; then
   eventually 20 "logs from both nodes" bash -c "sudo jokku logs hello -n 50 | grep -q 'app\[web.2\]: listening on'"
 fi
 
+step "internal DNS names reach every node"
+wssh "systemctl is-active jokku-dns" || fail "jokku-dns is not running on the worker"
+eventually 30 "the worker knows hello's names" wssh "sudo grep -q web.hello.internal /var/lib/jokku/dns/zone.json"
+
 step "the control node notices the worker going down and coming back"
 wssh "sudo systemctl stop jokku"
 eventually 60 "worker1 marked down" bash -c "sudo jokku nodes:list | grep -E '^worker1 +worker +down'"

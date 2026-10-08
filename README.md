@@ -161,6 +161,65 @@ worker: bin/jobs
 
 Then scale each one: `jokku ps:scale myapp web=3 worker=1`.
 
+### Deploy a compose file
+
+An app can also be a whole compose file: each service runs as one of the
+app's process types, with its own image.
+
+```sh
+jokku apps:create shop
+jokku builder:set shop selected compose
+jokku config:set --no-restart shop DB_PASSWORD=s3cret   # fills in ${DB_PASSWORD} in the file
+git push jokku main
+```
+
+```yaml
+services:
+  web:
+    build: .
+    ports: ["8080:3000"]     # this service gets the app's domains; it listens on 3000
+    environment:
+      DATABASE_URL: postgres://shop:${DB_PASSWORD}@db/shop
+    depends_on: [db]
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_DB: shop
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+volumes:
+  pgdata:
+```
+
+Services reach each other by name (`db`), named volumes become Jokku
+volumes, and `ps:scale shop web=3` or `logs shop -p db` work per service.
+Deploys and `config:set` only restart the services they change, so the
+database keeps running when the web service changes. Jokku says what it
+can't run (privileged containers, host paths, secrets) instead of guessing;
+see [Compose apps](docs/architecture.md#compose-apps).
+
+### Deploy an image
+
+Skip the build and run an image from a registry:
+
+```sh
+jokku git:from-image myapp ghcr.io/you/myapp:v2
+jokku git:from-image cache redis:7
+```
+
+For a private registry, log in first:
+`echo $TOKEN | jokku registry:login ghcr.io you`. `ps:rebuild` pulls the tag
+again.
+
+### Apps talk to each other by name
+
+Inside your apps, `<app>.internal` reaches another app, and
+`<process>.<app>.internal` one of its process types, on any server in the
+cluster. Short names work too: from `shop`, `cache` reaches the `cache` app
+and `worker` reaches shop's own worker processes. Connect on the port the app
+listens on, for example `redis://cache.internal:6379`.
+
 ### Keep data
 
 An instance's own files are reset on every deploy, as in a container. Put

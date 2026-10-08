@@ -35,9 +35,9 @@ import (
 
 	"github.com/wes/jokku/internal/agent"
 	"github.com/wes/jokku/internal/api"
-	"github.com/wes/jokku/internal/build"
 	"github.com/wes/jokku/internal/cluster"
 	"github.com/wes/jokku/internal/deploy"
+	"github.com/wes/jokku/internal/dns"
 	"github.com/wes/jokku/internal/gitrepo"
 	"github.com/wes/jokku/internal/proxy"
 	"github.com/wes/jokku/internal/store"
@@ -62,6 +62,7 @@ type fakeRuntime struct {
 	mu          sync.Mutex
 	running     map[string]vm.Spec
 	starts      int
+	order       []string    // app/process of each start, in order
 	ignoreStops atomic.Bool // VMs ignore stop requests (a hung shutdown)
 }
 
@@ -125,6 +126,7 @@ func (f *fakeRuntime) Start(_ context.Context, s vm.Spec) error {
 	}
 	f.running[s.ID] = s
 	f.starts++
+	f.order = append(f.order, s.App+"/"+s.Process)
 	f.disks.attach(f.node, s)
 	return nil
 }
@@ -263,16 +265,38 @@ func (p *fakeProxy) upstreams(app string) []string {
 	return out
 }
 
+// fakeResolver records the zone a node's agent hands its DNS service.
+type fakeResolver struct {
+	mu   sync.Mutex
+	zone dns.Zone
+}
+
+func (r *fakeResolver) Apply(_ context.Context, z dns.Zone) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.zone = z
+	return nil
+}
+
+func (r *fakeResolver) Ready(string) bool { return true }
+
+func (r *fakeResolver) get() dns.Zone {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.zone
+}
+
 type node struct {
-	name    string
-	dir     string
-	rt      *fakeRuntime
-	mesh    *fakeMesh
-	proxy   *fakeProxy
-	token   string
-	api     *httptest.Server // the agent API, where other nodes copy volumes from
-	cancel  context.CancelFunc
-	stopped chan struct{}
+	name     string
+	dir      string
+	rt       *fakeRuntime
+	mesh     *fakeMesh
+	proxy    *fakeProxy
+	resolver *fakeResolver
+	token    string
+	api      *httptest.Server // the agent API, where other nodes copy volumes from
+	cancel   context.CancelFunc
+	stopped  chan struct{}
 }
 
 type harness struct {
@@ -289,6 +313,7 @@ type harness struct {
 	log     *slog.Logger
 	release map[string]int64 // app -> current release ID
 	disks   *diskTracker
+	builder *fakeBuilder
 
 	apiMu    sync.Mutex
 	apiAddrs map[string]string // node -> its agent API's address
@@ -320,7 +345,8 @@ func newHarness(t *testing.T) *harness {
 			return h.apiAddrs[n.Name]
 		},
 	})
-	h.pipe = &deploy.Pipeline{Store: st, Builder: &build.Builder{DataDir: dir}, Cluster: h.ctl, DataDir: dir, Log: log}
+	h.builder = newFakeBuilder(dir)
+	h.pipe = &deploy.Pipeline{Store: st, Builder: h.builder, Cluster: h.ctl, DataDir: dir, Log: log}
 	srv := api.New(api.Config{
 		Store: st, Git: &gitrepo.Manager{Dir: filepath.Join(dir, "git")}, Deployer: h.pipe, Log: log, DataDir: dir, Cluster: h.ctl,
 	})
@@ -385,14 +411,14 @@ func wgKey(t *testing.T) string {
 func (h *harness) startNode(name, token, dir string, plane agent.ControlPlane) *node {
 	n := h.nodes[name]
 	if n == nil {
-		n = &node{name: name, dir: dir, rt: newFakeRuntime(name, h.disks), mesh: &fakeMesh{}, proxy: &fakeProxy{}, token: token}
+		n = &node{name: name, dir: dir, rt: newFakeRuntime(name, h.disks), mesh: &fakeMesh{}, proxy: &fakeProxy{}, resolver: &fakeResolver{}, token: token}
 		h.nodes[name] = n
 	}
 	ctx, cancel := context.WithCancel(h.ctx)
 	n.cancel, n.stopped = cancel, make(chan struct{})
 	a := agent.New(agent.Config{
-		Control: plane, Runtime: n.rt, Mesh: n.mesh, Proxy: n.proxy, DataDir: dir, Version: "test", Log: h.log,
-		GCArtifacts: name != "control", ReconcileEvery: 100 * time.Millisecond, ReportEvery: 200 * time.Millisecond,
+		Control: plane, Runtime: n.rt, Mesh: n.mesh, Proxy: n.proxy, Resolver: n.resolver, DataDir: dir, Version: "test", Log: h.log,
+		GCArtifacts: name != "control", ReconcileEvery: 100 * time.Millisecond, ReportEvery: 200 * time.Millisecond, UpFor: time.Second,
 		Metrics: func() types.NodeMetrics { return types.NodeMetrics{CPUs: 4, MemoryMB: 4096} },
 	})
 	n.api = httptest.NewServer(a.Handler(""))

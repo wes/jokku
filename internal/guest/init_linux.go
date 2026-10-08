@@ -258,6 +258,9 @@ func setupNetwork(cfg *Config) error {
 	}
 	replaceFile("/etc/hosts", hosts)
 	var resolv strings.Builder
+	if len(cfg.Search) > 0 {
+		resolv.WriteString("search " + strings.Join(cfg.Search, " ") + "\n")
+	}
 	for _, ns := range cfg.DNS {
 		resolv.WriteString("nameserver " + ns + "\n")
 	}
@@ -293,8 +296,8 @@ func replaceFile(path, content string) {
 }
 
 // supervise runs the app as PID 1's child: it reaps every orphan, forwards a
-// stop request as SIGTERM to the app's process group and escalates to SIGKILL
-// after the stop timeout.
+// stop request to the app's process group as its stop signal (SIGTERM unless
+// the image says otherwise) and escalates to SIGKILL after the stop timeout.
 func supervise(cfg *Config) error {
 	env := withDefaults(cfg.Env)
 	path, err := lookPath(cfg.Argv[0], getenv(env, "PATH"))
@@ -336,6 +339,7 @@ func supervise(cfg *Config) error {
 	if stopTimeout <= 0 {
 		stopTimeout = 10 * time.Second
 	}
+	stopSignal, name := stopSignal(cfg.StopSignal)
 	var kill <-chan time.Time
 
 	for {
@@ -343,8 +347,8 @@ func supervise(cfg *Config) error {
 		case sig := <-signals:
 			if sig != unix.SIGCHLD {
 				if kill == nil {
-					logf("stopping (SIGTERM, then SIGKILL after %s)", stopTimeout)
-					unix.Kill(-pid, unix.SIGTERM)
+					logf("stopping (%s, then SIGKILL after %s)", name, stopTimeout)
+					unix.Kill(-pid, stopSignal)
 					kill = time.After(stopTimeout)
 				}
 				continue
@@ -370,6 +374,25 @@ func supervise(cfg *Config) error {
 			unix.Kill(-pid, unix.SIGKILL)
 		}
 	}
+}
+
+// stopSignal reads a signal as Docker's STOPSIGNAL takes it (SIGINT, INT,
+// 2), falling back to SIGTERM.
+func stopSignal(s string) (unix.Signal, string) {
+	s = strings.ToUpper(strings.TrimSpace(s))
+	if n, err := strconv.Atoi(s); err == nil && n > 0 && n < 65 {
+		return unix.Signal(n), unix.SignalName(unix.Signal(n))
+	}
+	if s != "" && !strings.HasPrefix(s, "SIG") {
+		s = "SIG" + s
+	}
+	if sig := unix.SignalNum(s); sig != 0 {
+		return sig, s
+	}
+	if s != "" {
+		logf("unknown stop signal %q, using SIGTERM", s)
+	}
+	return unix.SIGTERM, "SIGTERM"
 }
 
 func withDefaults(env []string) []string {

@@ -37,7 +37,7 @@ var Plugins = []Plugin{
 	{
 		Name: "builder", Help: "Manage the builder settings for an app", Settable: true,
 		Keys: []Key{
-			{Name: "selected", Default: "", Help: "Force a builder (dockerfile)", Validate: oneOf("", "dockerfile")},
+			{Name: "selected", Default: "", Help: "The builder: dockerfile (the default) or compose", Validate: oneOf("", "dockerfile", "compose")},
 			{Name: "build-dir", Default: "", Help: "Subdirectory of the repo to build from"},
 		},
 	},
@@ -45,6 +45,12 @@ var Plugins = []Plugin{
 		Name: "builder-dockerfile", Help: "Manage the Dockerfile builder", Settable: true,
 		Keys: []Key{
 			{Name: "dockerfile-path", Default: "Dockerfile", Help: "Path to the Dockerfile, relative to the build dir"},
+		},
+	},
+	{
+		Name: "builder-compose", Help: "Manage the compose builder", Settable: true,
+		Keys: []Key{
+			{Name: "compose-file", Default: "", Help: "Path to the compose file, relative to the build dir (default: compose.yaml, compose.yml, docker-compose.yaml or docker-compose.yml)"},
 		},
 	},
 	{

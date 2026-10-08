@@ -21,7 +21,10 @@ tracks what exists today. Milestones are described in
 | `git push jokku main` (auto-creates the app; builds and deploys with zero downtime) | ✅ |
 | `git:set`, `git:report` (`deploy-branch`, `keep-git-dir`) | ✅ |
 | `builder:set` (`build-dir`), `builder-dockerfile:set` (`dockerfile-path`) | ✅ |
-| `git:sync [--build]`, `git:from-image`, `git:from-archive` | 🔜 M3 |
+| `builder:set <app> selected compose`, `builder-compose:set` (`compose-file`): deploy a compose file, a process type per service | ➕ ✅ |
+| `git:from-image <app> <image>` (pulls the image; creates the app if needed; `ps:rebuild` pulls again) | ✅ |
+| `registry:login [--password-stdin] <server> <username> [<password>]`, `registry:logout`, `registry:report` | ✅ logins apply to every app |
+| `git:sync [--build]`, `git:from-archive` | 🔜 M3 |
 | `git:generate-deploy-key`, `git:public-key`, `git:allow-host`, `git:auth` | 🔜 M3 |
 | `ps:rebuild` | ✅ |
 | `docker-options:add ... build` (build args) | 🔜 later |

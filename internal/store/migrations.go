@@ -212,4 +212,21 @@ CREATE TABLE volume_mounts (
 ALTER TABLE instances ADD COLUMN volumes TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE nodes ADD COLUMN features TEXT NOT NULL DEFAULT '';
 `,
+
+	// 5: credentials for pulling images from private registries
+	`
+CREATE TABLE registry_logins (
+	server     TEXT    PRIMARY KEY,
+	username   TEXT    NOT NULL,
+	password   TEXT    NOT NULL,
+	created_at INTEGER NOT NULL
+);
+`,
+
+	// 6: compose releases: an image per process type, and the process that
+	// gets HTTP traffic
+	`
+ALTER TABLE releases ADD COLUMN services TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE releases ADD COLUMN web TEXT NOT NULL DEFAULT '';
+`,
 }

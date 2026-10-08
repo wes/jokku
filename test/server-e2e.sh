@@ -57,7 +57,7 @@ RUN mkdir /www
 EXPOSE 3000
 EOF
 cat >Procfile <<'EOF'
-web: echo "hello ${GREETING:-nobody} from $(hostname)" > /www/index.html && echo "listening on port $PORT" && exec httpd -f -v -p "$PORT" -h /www
+web: echo "hello ${GREETING:-nobody} from $(hostname)" > /www/index.html && echo "listening on port $PORT" >/dev/stdout && exec httpd -f -v -p "$PORT" -h /www
 worker: while true; do echo "worker tick"; sleep 2; done
 EOF
 git add -A
@@ -166,7 +166,8 @@ FROM public.ecr.aws/docker/library/busybox:1.36
 RUN adduser -D app && mkdir /data && echo seeded >/data/seed && chown -R app /data
 USER app
 EOF
-printf 'web: date >>/data/boots && exec httpd -f -p "$PORT" -h /data\n' >Procfile
+# It also reopens its output by name, as nginx's error_log /dev/stderr does.
+printf 'web: echo "stderr reopened as $(id -un)" >/dev/stderr; date >>/data/boots && exec httpd -f -p "$PORT" -h /data\n' >Procfile
 git add -A
 git commit -qm init
 jssh apps:create keep
@@ -175,6 +176,11 @@ git push "jokku@$host:keep" main >/dev/null 2>&1 || fail "deploying an app with 
 kdomain=$(jssh domains:report keep --domains-app-vhosts)
 kget() { curl -fsS --max-time 5 -H "Host: $kdomain" "http://127.0.0.1/$1"; }
 [ "$(kget seed)" = seeded ] || fail "the image's /data did not seed the volume: $(kget seed)"
+for _ in $(seq 1 10); do
+  jssh logs keep -p web -n 50 | grep -q "app\[web.1\]: stderr reopened as app" && break
+  sleep 1
+done
+jssh logs keep -p web -n 50 | grep -q "app\[web.1\]: stderr reopened as app" || fail "a non-root app could not write to /dev/stderr: $(jssh logs keep -p web -n 50)"
 [ "$(kget boots | wc -l)" -eq 1 ] || fail "expected one boot recorded: $(kget boots)"
 jssh ps:restart keep >/dev/null
 [ "$(kget boots | wc -l)" -eq 2 ] || fail "the volume lost data on restart: $(kget boots)"

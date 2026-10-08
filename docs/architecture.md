@@ -2,7 +2,7 @@
 
 Jokku is Dokku's workflow on Firecracker microVMs across a cluster of
 machines. You `git push`, and Jokku builds the Dockerfile, boots the app as
-microVMs, spreads them over your nodes and routes HTTPS traffic to them.
+microVMs, spreads them over your nodes and routes HTTP(S) traffic to them.
 
 This document records the design decisions. When the code and this file
 disagree, fix one of them.
@@ -37,7 +37,7 @@ curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo sh
 # on your laptop (only git and ssh needed), in your app's repo with a Dockerfile
 git remote add jokku jokku@server:myapp
 git push jokku main
-# => https://myapp.203.0.113.10.sslip.io
+# => http://myapp.203.0.113.10.sslip.io
 
 # commands run on the server, or from anywhere as "ssh jokku@server <command>"
 ssh jokku@server config:set myapp DATABASE_URL=postgres://...
@@ -307,12 +307,15 @@ checks.
 Default domains: with `domains:set-global example.com`, apps get
 `<app>.example.com`. At install, the global domain defaults to
 `<public-ip>.sslip.io`, so the first `git push` already gets a working
-HTTPS URL.
+URL.
 
-TLS is automatic (Let's Encrypt via Caddy) for every domain that is not an
-IP address. The `letsencrypt:*` commands exist for Dokku muscle memory
-(`letsencrypt:set --global email you@x.com`, `letsencrypt:disable app`),
-and `certs:add` installs a custom certificate.
+TLS is Let's Encrypt via Caddy and, as in Dokku, it is off for a new app
+until `letsencrypt:enable app` (or `letsencrypt:enable --global`, which new
+apps then follow). With it on, every public domain of the app gets a
+certificate and HTTP redirects to HTTPS. A domain Let's Encrypt can't reach,
+such as an IP address or an sslip.io name for a private address, stays on
+plain HTTP. Apps created before this default changed keep TLS on. `certs:add`
+installs a custom certificate.
 
 `ports:set app http:80:5000 https:443:5000` mirrors Dokku's port mapping.
 Raw TCP/UDP ports are a later addition.

@@ -10,15 +10,36 @@ import (
 )
 
 func (s *Store) CreateApp(ctx context.Context, name string) (*types.App, error) {
-	now := s.now()
-	_, err := s.db.ExecContext(ctx, "INSERT INTO apps (name, created_at) VALUES (?, ?)", name, unix(now))
-	if isUniqueViolation(err) {
-		return nil, &ExistsError{What: "App " + name}
-	}
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, "INSERT INTO apps (name, created_at) VALUES (?, ?)", name, unix(s.now()))
+		if isUniqueViolation(err) {
+			return &ExistsError{What: "App " + name}
+		}
+		if err != nil {
+			return err
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
+		return newAppDefaults(ctx, tx, id)
+	})
 	if err != nil {
 		return nil, err
 	}
 	return s.App(ctx, name)
+}
+
+// newAppDefaults records the settings a new app starts with where they
+// differ from the plugin defaults, which apps created before keep. Let's
+// Encrypt starts off, as in Dokku (letsencrypt:enable turns it on), unless
+// it was turned on with --global or the app already has its own setting.
+func newAppDefaults(ctx context.Context, tx *sql.Tx, id int64) error {
+	_, err := tx.ExecContext(ctx, `
+INSERT INTO properties (app_id, plugin, key, value)
+SELECT ?, 'letsencrypt', 'enabled', 'false'
+WHERE NOT EXISTS (SELECT 1 FROM properties WHERE app_id IN (0, ?) AND plugin = 'letsencrypt' AND key = 'enabled')`, id, id)
+	return err
 }
 
 func (s *Store) App(ctx context.Context, name string) (*types.App, error) {
@@ -126,7 +147,7 @@ func (s *Store) CloneApp(ctx context.Context, name, newName string) error {
 				return err
 			}
 		}
-		return nil
+		return newAppDefaults(ctx, tx, dst)
 	})
 }
 

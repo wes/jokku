@@ -2,7 +2,8 @@
 
 Jokku is a self-hosted platform for deploying your apps, modeled on
 [Dokku](https://dokku.com). You `git push` an app that has a Dockerfile, and
-Jokku builds it and runs it behind HTTPS.
+Jokku builds it, runs it and routes your domains to it, with Let's Encrypt
+certificates for the apps you want on HTTPS.
 
 What's different: every app instance runs in its own lightweight
 [Firecracker](https://firecracker-microvm.github.io) virtual machine instead
@@ -111,9 +112,8 @@ git push jokku main
 ```
 
 Jokku builds the Dockerfile, boots the app, waits for it to accept
-connections and prints its URL, for example `https://myapp.203.0.113.10.sslip.io`
-(plain `http://` when the server's address is private, such as on a home
-network). Pushing to an app that doesn't exist yet creates it, so step 1 is
+connections and prints its URL, for example `http://myapp.203.0.113.10.sslip.io`.
+Pushing to an app that doesn't exist yet creates it, so step 1 is
 optional. If the new version fails to start, the push is rejected and the
 previous version keeps serving.
 
@@ -123,8 +123,17 @@ previous version keeps serving.
 jokku domains:add myapp myapp.com
 ```
 
-Point `myapp.com` at your server and Jokku gets an HTTPS certificate for it
-automatically.
+Point `myapp.com` at your server. New apps are served over plain HTTP on
+port 80. For HTTPS, turn on Let's Encrypt for the app:
+
+```sh
+jokku letsencrypt:set --global email you@example.com   # once, for expiry notices
+jokku letsencrypt:enable myapp
+```
+
+Jokku then gets a certificate for each of the app's public domains, renews
+it, and redirects HTTP to HTTPS. `letsencrypt:disable myapp` goes back to
+plain HTTP.
 
 ### Watch it
 

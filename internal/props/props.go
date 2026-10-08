@@ -71,6 +71,8 @@ var Plugins = []Plugin{
 		Name: "letsencrypt", Help: "Manage automatic TLS certificates", Settable: true,
 		Keys: []Key{
 			{Name: "email", Default: "", Help: "ACME account email (usually set with --global)"},
+			// New apps start with "false" (see store.CreateApp); the default
+			// is for apps created before that.
 			{Name: "enabled", Default: "true", Help: "Request certificates for the app's domains", Validate: isBool},
 		},
 	},

@@ -41,6 +41,7 @@ step "commands over ssh"
 jssh apps:create hello
 jssh checks:set hello wait-to-retire 3
 jssh apps:list | grep -qx hello || fail "apps:list"
+[ "$(jssh letsencrypt:report hello --letsencrypt-computed-enabled)" = false ] || fail "a new app has Let's Encrypt on"
 if jssh daemon 2>/dev/null; then fail "server-only command allowed over ssh"; fi
 
 step "deploy with git push"

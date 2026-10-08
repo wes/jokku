@@ -110,6 +110,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/apps/{app}/volumes/{name}/mounts", s.mountVolume)
 	m.HandleFunc("DELETE /v1/apps/{app}/volumes/{name}/mounts", s.unmountVolume)
 	m.HandleFunc("POST /v1/apps/{app}/volumes/{name}/move", s.moveVolume)
+	m.HandleFunc("GET /v1/apps/{app}/volumes/{name}/export", s.exportVolume)
+	m.HandleFunc("POST /v1/apps/{app}/volumes/{name}/import", s.importVolume)
+	m.HandleFunc("POST /v1/apps/{app}/enter", s.enter)
 
 	m.HandleFunc("GET /v1/registries", s.listRegistryLogins)
 	m.HandleFunc("PUT /v1/registries/{server}", s.setRegistryLogin)

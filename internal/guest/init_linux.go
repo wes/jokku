@@ -66,7 +66,9 @@ func boot() error {
 	// Ctrl-Alt-Del (Firecracker's graceful stop on x86) now sends SIGINT to
 	// init instead of rebooting.
 	unix.Reboot(unix.LINUX_REBOOT_CMD_CAD_OFF)
-	return supervise(cfg)
+	a := newApp()
+	go serveAgent(cfg, a)
+	return supervise(cfg, a)
 }
 
 // mountVolumes mounts each volume at its path. A fresh volume is seeded the
@@ -298,7 +300,9 @@ func replaceFile(path, content string) {
 // supervise runs the app as PID 1's child: it reaps every orphan, forwards a
 // stop request to the app's process group as its stop signal (SIGTERM unless
 // the image says otherwise) and escalates to SIGKILL after the stop timeout.
-func supervise(cfg *Config) error {
+// The agent can ask for the app to be restarted in place (after a volume is
+// restored); the VM then keeps running.
+func supervise(cfg *Config, a *app) error {
 	env := withDefaults(cfg.Env)
 	path, err := lookPath(cfg.Argv[0], getenv(env, "PATH"))
 	if err != nil {
@@ -326,49 +330,83 @@ func supervise(cfg *Config) error {
 	signals := make(chan os.Signal, 16)
 	signal.Notify(signals, unix.SIGINT, unix.SIGTERM, unix.SIGCHLD)
 
-	cmd := &exec.Cmd{
-		Path: path, Args: cfg.Argv, Env: env, Dir: dir,
-		Stdout: os.Stdout, Stderr: os.Stderr,
-		SysProcAttr: &syscall.SysProcAttr{Setpgid: true, Credential: cred},
+	start := func() (int, error) {
+		cmd := &exec.Cmd{
+			Path: path, Args: cfg.Argv, Env: env, Dir: dir,
+			Stdout: os.Stdout, Stderr: os.Stderr,
+			SysProcAttr: &syscall.SysProcAttr{Setpgid: true, Credential: cred},
+		}
+		if err := cmd.Start(); err != nil {
+			return 0, fmt.Errorf("starting %s: %w", strings.Join(cfg.Argv, " "), err)
+		}
+		a.setPGID(cmd.Process.Pid)
+		return cmd.Process.Pid, nil
 	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting %s: %w", strings.Join(cfg.Argv, " "), err)
+	pid, err := start()
+	if err != nil {
+		return err
 	}
-	pid := cmd.Process.Pid
 	stopTimeout := time.Duration(cfg.StopTimeout) * time.Second
 	if stopTimeout <= 0 {
 		stopTimeout = 10 * time.Second
 	}
 	stopSignal, name := stopSignal(cfg.StopSignal)
 	var kill <-chan time.Time
+	stopping, restarting := false, false
 
 	for {
 		select {
 		case sig := <-signals:
 			if sig != unix.SIGCHLD {
-				if kill == nil {
+				if !stopping {
+					stopping = true
 					logf("stopping (%s, then SIGKILL after %s)", name, stopTimeout)
 					unix.Kill(-pid, stopSignal)
+					unix.Kill(-pid, unix.SIGCONT) // in case it was paused
 					kill = time.After(stopTimeout)
 				}
 				continue
 			}
+			exitedApp := false
+			reapMu.Lock()
 			for {
 				var ws unix.WaitStatus
-				reaped, err := unix.Wait4(-1, &ws, unix.WNOHANG, nil)
-				if reaped <= 0 || err != nil {
+				child, err := unix.Wait4(-1, &ws, unix.WNOHANG, nil)
+				if child <= 0 || err != nil {
 					break
 				}
-				if reaped == pid {
-					unix.Kill(-pid, unix.SIGKILL) // anything the app left behind
-					if ws.Signaled() {
-						logf("app exited on signal %s", ws.Signal())
-					} else {
-						logf("app exited with status %d", ws.ExitStatus())
-					}
-					return nil
+				if reaped(child, ws) || child != pid {
+					continue // the agent's, or an orphan
 				}
+				unix.Kill(-pid, unix.SIGKILL) // anything the app left behind
+				if ws.Signaled() {
+					logf("app exited on signal %s", ws.Signal())
+				} else {
+					logf("app exited with status %d", ws.ExitStatus())
+				}
+				exitedApp = true
 			}
+			reapMu.Unlock()
+			if !exitedApp {
+				continue
+			}
+			if !restarting || stopping {
+				return nil
+			}
+			restarting, kill = false, nil
+			if pid, err = start(); err != nil {
+				return err
+			}
+			logf("app restarted")
+		case <-a.restart:
+			if stopping || restarting {
+				continue
+			}
+			restarting = true
+			logf("restarting the app (%s, then SIGKILL after %s)", name, stopTimeout)
+			unix.Kill(-pid, stopSignal)
+			unix.Kill(-pid, unix.SIGCONT)
+			kill = time.After(stopTimeout)
 		case <-kill:
 			logf("app did not stop in time, killing it")
 			unix.Kill(-pid, unix.SIGKILL)

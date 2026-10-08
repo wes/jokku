@@ -174,13 +174,16 @@ type Instance struct {
 // and the disk is copied along when the instance moves (nodes:drain,
 // storage:move).
 type Volume struct {
+	ID     string `json:"id"`
 	Name   string `json:"name"`
 	Type   string `json:"type"` // local
 	SizeMB int    `json:"size_mb"`
 	UsedMB int    `json:"used_mb"`
 	// Node holds a local volume's disk; empty until an instance first uses
 	// it.
-	Node   string        `json:"node,omitempty"`
+	Node string `json:"node,omitempty"`
+	// Disk is the disk image's path on Node.
+	Disk   string        `json:"disk,omitempty"`
 	Status string        `json:"status"` // new | ready | missing | moving | destroying
 	Move   *VolumeMove   `json:"move,omitempty"`
 	Mounts []VolumeMount `json:"mounts"`

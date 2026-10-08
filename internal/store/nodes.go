@@ -264,6 +264,13 @@ func (s *Store) UseJoinToken(ctx context.Context, hash string) error {
 	})
 }
 
+// SetNodeAgentToken sets the control node's credential for a node's agent
+// API.
+func (s *Store) SetNodeAgentToken(ctx context.Context, name, token string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE nodes SET agent_token = ? WHERE name = ?", token, name)
+	return err
+}
+
 // SetNodeToken sets the hash of a node's agent credential.
 func (s *Store) SetNodeToken(ctx context.Context, name, hash string) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE nodes SET token_hash = ? WHERE name = ?", hash, name)

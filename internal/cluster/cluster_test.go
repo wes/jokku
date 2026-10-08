@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,11 +36,13 @@ import (
 
 	"github.com/wes/jokku/internal/agent"
 	"github.com/wes/jokku/internal/api"
+	"github.com/wes/jokku/internal/client"
 	"github.com/wes/jokku/internal/cluster"
 	"github.com/wes/jokku/internal/deploy"
 	"github.com/wes/jokku/internal/dns"
 	"github.com/wes/jokku/internal/gitrepo"
 	"github.com/wes/jokku/internal/proxy"
+	"github.com/wes/jokku/internal/session"
 	"github.com/wes/jokku/internal/store"
 	"github.com/wes/jokku/internal/types"
 	"github.com/wes/jokku/internal/vm"
@@ -57,6 +60,9 @@ func init() {
 // fakeRuntime pretends to run VMs: a started VM is "running" until stopped
 // or crashed.
 type fakeRuntime struct {
+	guestDir    string         // each fake VM's filesystem: <guestDir>/<id>
+	restarts    map[string]int // app restarts the guest agent did in place (after an import)
+	tokens      map[string]string
 	node        string
 	disks       *diskTracker
 	mu          sync.Mutex
@@ -67,7 +73,88 @@ type fakeRuntime struct {
 }
 
 func newFakeRuntime(node string, disks *diskTracker) *fakeRuntime {
-	return &fakeRuntime{node: node, disks: disks, running: map[string]vm.Spec{}}
+	return &fakeRuntime{node: node, disks: disks, running: map[string]vm.Spec{}, restarts: map[string]int{}, tokens: map[string]string{}}
+}
+
+// Session connects to a fake guest agent that speaks the real protocol: exec
+// reports what it was asked and echoes stdin; export and import work on the
+// VM's directory under guestDir.
+func (f *fakeRuntime) Session(_ context.Context, id string) (io.ReadWriteCloser, string, error) {
+	f.mu.Lock()
+	_, running := f.running[id]
+	token := f.tokens[id]
+	f.mu.Unlock()
+	if !running {
+		return nil, "", fmt.Errorf("instance %s is not running", id)
+	}
+	host, guest := net.Pipe()
+	go f.guest(id, token, guest)
+	return host, token, nil
+}
+
+func (f *fakeRuntime) guest(id, token string, conn net.Conn) {
+	c := session.New(conn)
+	defer c.Close()
+	req, err := c.ReadRequest()
+	if err != nil {
+		return
+	}
+	if req.Token != token {
+		c.Exit(1, "unauthorized")
+		return
+	}
+	dir := filepath.Join(f.guestDir, id, filepath.FromSlash(req.Path))
+	switch req.Op {
+	case session.OpExec:
+		if len(req.Argv) == 2 && req.Argv[0] == "exit" {
+			code, _ := strconv.Atoi(req.Argv[1])
+			c.Exit(code, "")
+			return
+		}
+		fmt.Fprintf(c.Writer(session.FrameStdout), "ran %v root=%v tty=%v\n", req.Argv, req.Root, req.TTY)
+		for {
+			typ, p, err := c.Read()
+			if err != nil || typ == session.FrameEOF {
+				break
+			}
+			if typ == session.FrameStdin {
+				c.Write(session.FrameStdout, p)
+			}
+		}
+		c.Exit(0, "")
+	case session.OpExport:
+		os.MkdirAll(dir, 0o755)
+		if err := session.Archive(dir, c.Writer(session.FrameStdout)); err != nil {
+			c.Exit(1, err.Error())
+			return
+		}
+		c.Exit(0, "")
+	case session.OpImport:
+		os.MkdirAll(dir, 0o755)
+		pr, pw := io.Pipe()
+		go func() {
+			for {
+				typ, p, err := c.Read()
+				if err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+				if typ == session.FrameEOF {
+					pw.Close()
+					return
+				}
+				pw.Write(p)
+			}
+		}()
+		if err := session.Extract(pr, dir, req.Clear); err != nil {
+			c.Exit(1, err.Error())
+			return
+		}
+		f.mu.Lock()
+		f.restarts[id]++
+		f.mu.Unlock()
+		c.Exit(0, "")
+	}
 }
 
 // diskTracker follows which VM, on any node, has each volume attached, and
@@ -124,6 +211,10 @@ func (f *fakeRuntime) Start(_ context.Context, s vm.Spec) error {
 			return fmt.Errorf("volume disk: %w", err) // as Firecracker would
 		}
 	}
+	if s.Guest.AgentToken == "" {
+		s.Guest.AgentToken = fmt.Sprintf("token-%s-%d", s.ID, f.starts)
+	}
+	f.tokens[s.ID] = s.Guest.AgentToken
 	f.running[s.ID] = s
 	f.starts++
 	f.order = append(f.order, s.App+"/"+s.Process)
@@ -287,16 +378,17 @@ func (r *fakeResolver) get() dns.Zone {
 }
 
 type node struct {
-	name     string
-	dir      string
-	rt       *fakeRuntime
-	mesh     *fakeMesh
-	proxy    *fakeProxy
-	resolver *fakeResolver
-	token    string
-	api      *httptest.Server // the agent API, where other nodes copy volumes from
-	cancel   context.CancelFunc
-	stopped  chan struct{}
+	name       string
+	dir        string
+	rt         *fakeRuntime
+	mesh       *fakeMesh
+	proxy      *fakeProxy
+	resolver   *fakeResolver
+	token      string
+	agentToken string
+	api        *httptest.Server // the agent API, where other nodes copy volumes from
+	cancel     context.CancelFunc
+	stopped    chan struct{}
 }
 
 type harness struct {
@@ -314,6 +406,7 @@ type harness struct {
 	release map[string]int64 // app -> current release ID
 	disks   *diskTracker
 	builder *fakeBuilder
+	client  *client.Client
 
 	apiMu    sync.Mutex
 	apiAddrs map[string]string // node -> its agent API's address
@@ -369,7 +462,25 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	go h.ctl.Run(ctx)
-	h.startNode("control", "", dir, &cluster.LocalPlane{C: h.ctl, DataDir: dir})
+	if err := st.SetNodeAgentToken(ctx, "control", "control-agent-token"); err != nil {
+		t.Fatal(err)
+	}
+	h.startNode("control", "", "control-agent-token", dir, &cluster.LocalPlane{C: h.ctl, DataDir: dir})
+
+	// The admin API, as the CLI reaches it (unix socket paths must be short).
+	sockDir, err := os.MkdirTemp("", "jk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sockDir) })
+	ln, err := net.Listen("unix", filepath.Join(sockDir, "api.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := &http.Server{Handler: srv}
+	go admin.Serve(ln)
+	t.Cleanup(func() { admin.Close() })
+	h.client = client.New(client.Target{Socket: filepath.Join(sockDir, "api.sock")}, "tester")
 	return h
 }
 
@@ -408,10 +519,12 @@ func wgKey(t *testing.T) string {
 	return k.PublicKey().String()
 }
 
-func (h *harness) startNode(name, token, dir string, plane agent.ControlPlane) *node {
+func (h *harness) startNode(name, token, agentToken, dir string, plane agent.ControlPlane) *node {
 	n := h.nodes[name]
 	if n == nil {
-		n = &node{name: name, dir: dir, rt: newFakeRuntime(name, h.disks), mesh: &fakeMesh{}, proxy: &fakeProxy{}, resolver: &fakeResolver{}, token: token}
+		n = &node{name: name, dir: dir, rt: newFakeRuntime(name, h.disks), mesh: &fakeMesh{}, proxy: &fakeProxy{}, resolver: &fakeResolver{},
+			token: token, agentToken: agentToken}
+		n.rt.guestDir = filepath.Join(dir, "guests")
 		h.nodes[name] = n
 	}
 	ctx, cancel := context.WithCancel(h.ctx)
@@ -421,7 +534,7 @@ func (h *harness) startNode(name, token, dir string, plane agent.ControlPlane) *
 		GCArtifacts: name != "control", ReconcileEvery: 100 * time.Millisecond, ReportEvery: 200 * time.Millisecond, UpFor: time.Second,
 		Metrics: func() types.NodeMetrics { return types.NodeMetrics{CPUs: 4, MemoryMB: 4096} },
 	})
-	n.api = httptest.NewServer(a.Handler(""))
+	n.api = httptest.NewServer(a.Handler(n.agentToken))
 	h.apiMu.Lock()
 	h.apiAddrs[name] = n.api.Listener.Addr().String()
 	h.apiMu.Unlock()
@@ -459,7 +572,7 @@ func (h *harness) join(name string) *node {
 		h.t.Fatal(err)
 	}
 	dir := h.t.TempDir()
-	return h.startNode(name, res.NodeToken, dir, h.remote(res.NodeToken))
+	return h.startNode(name, res.NodeToken, res.AgentToken, dir, h.remote(res.NodeToken))
 }
 
 func (h *harness) postJoin(req types.JoinRequest, pin string) (*types.JoinResponse, error) {
@@ -491,7 +604,7 @@ func (h *harness) kill(name string) {
 
 func (h *harness) revive(name string) {
 	n := h.nodes[name]
-	h.startNode(name, n.token, n.dir, h.remote(n.token))
+	h.startNode(name, n.token, n.agentToken, n.dir, h.remote(n.token))
 }
 
 // deploy creates an app with a fake built release and rolls it out at the

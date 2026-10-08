@@ -150,6 +150,15 @@ func runControl(ctx context.Context, cfg Config, log *slog.Logger) error {
 	if err := st.SetNodeToken(ctx, nodeName, cluster.HashToken(selfToken)); err != nil {
 		return err
 	}
+	// The control node reaches its own agent's API (sessions with its VMs)
+	// like any other node's, with an agent token.
+	agentToken, err := loadOrCreateToken(filepath.Join(cfg.DataDir, "agent-token"))
+	if err != nil {
+		return err
+	}
+	if err := st.SetNodeAgentToken(ctx, nodeName, agentToken); err != nil {
+		return err
+	}
 	cert, pin, err := cluster.LoadIdentity(cfg.DataDir)
 	if err != nil {
 		return fmt.Errorf("loading the TLS identity: %w", err)
@@ -209,9 +218,9 @@ func runControl(ctx context.Context, cfg Config, log *slog.Logger) error {
 
 	go ctl.Run(ctx)
 	go ag.Run(ctx)
-	// The agent API on the mesh: other nodes copy volume disks from it. (The
-	// control node reads its own logs directly, so no token.)
-	go ag.Serve(ctx, net.JoinHostPort(gateway.String(), strconv.Itoa(cluster.AgentPort)), "")
+	// The agent API on the mesh: sessions with this node's VMs, and volume
+	// disks other nodes copy.
+	go ag.Serve(ctx, net.JoinHostPort(gateway.String(), strconv.Itoa(cluster.AgentPort)), agentToken)
 	log.Info("jokku daemon started", "role", "control", "version", version.Version, "node", nodeName,
 		"socket", cfg.Socket, "api", cfg.APIListen, "data_dir", cfg.DataDir)
 	return serve(ctx, servers, listeners)

@@ -44,7 +44,8 @@ tracks what exists today. Milestones are described in
 | `checks:set` (`wait-to-retire`, `timeout`), `checks:report` | ✅ |
 | `checks:enable`, `checks:disable`, `checks:skip` | 🔜 later |
 | `logs [-t] [-n N] [-p type] [-q]`, with Heroku-style `app[router]` lines per request (`-p router` for only those) | ✅ |
-| `run`, `enter` | 🔜 M4 (vsock guest agent) |
+| `enter <app> [<process>] [<command>...]` (a shell, or one command, in a running instance; `--root`) | ✅ |
+| `run` (a one-off instance) | 🔜 M4 |
 
 ## Routing
 
@@ -94,6 +95,7 @@ tracks what exists today. Milestones are described in
 | --- | --- |
 | `storage:mount <app> <name>:<path> [--process-type] [--size] [--no-restart]` (creates the volume if needed), `storage:unmount`, `storage:list`, `storage:report` | ✅ named volumes instead of host directories; a local volume is attached to one instance |
 | `storage:create [--size] [--type]`, `storage:resize`, `storage:move <app> <name> <node>`, `storage:destroy [--force]` | ➕ ✅ |
+| `storage:export <app> <name> [--live] > file.tar.gz`, `storage:import <app> <name> [--clear] < file.tar.gz` | ➕ ✅ |
 | `storage:ensure-directory` | ✖ volumes are disks, created by `storage:mount` |
 | Object-storage volumes (`--type s3`), shared by many instances | 🔜 later |
 | `postgres:*`, `redis:*`, ... | 🔜 later, as apps plus volumes plus `*:link` |

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/wes/jokku/internal/store"
@@ -27,7 +28,7 @@ func (s *Server) listVolumes(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []types.Volume{}
 	for _, v := range vols {
-		out = append(out, volumeInfo(v))
+		out = append(out, s.volumeInfo(v))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -42,7 +43,7 @@ func (s *Server) writeVolume(w http.ResponseWriter, r *http.Request, status int)
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, status, volumeInfo(*v))
+	writeJSON(w, status, s.volumeInfo(*v))
 }
 
 func (s *Server) createVolume(w http.ResponseWriter, r *http.Request) {
@@ -324,9 +325,13 @@ func validMount(m types.VolumeMount) (types.VolumeMount, error) {
 	return m, nil
 }
 
-func volumeInfo(v store.Volume) types.Volume {
+func (s *Server) volumeInfo(v store.Volume) types.Volume {
 	out := types.Volume{
-		Name: v.Name, Type: v.Type, SizeMB: v.SizeMB, UsedMB: v.UsedMB, Node: v.Node, Mounts: v.Mounts, CreatedAt: v.CreatedAt,
+		ID: v.ID, Name: v.Name, Type: v.Type, SizeMB: v.SizeMB, UsedMB: v.UsedMB, Node: v.Node, Mounts: v.Mounts, CreatedAt: v.CreatedAt,
+	}
+	if v.Node != "" {
+		// Every node keeps its data in the same place as this one.
+		out.Disk = filepath.Join(s.DataDir, "volumes", v.ID+".ext4")
 	}
 	switch {
 	case v.State == store.VolumeDestroying:

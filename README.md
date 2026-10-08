@@ -91,8 +91,9 @@ jokku@your-server top` (or put `-t` in your alias).
 
 ## Deploy an app
 
-Your app needs a `Dockerfile`, and it should listen on the port in `$PORT`
-(the port your Dockerfile `EXPOSE`s, or 5000).
+Your app needs a `Dockerfile`, and it should listen on the port in `$PORT`:
+the port your Dockerfile `EXPOSE`s, or 5000. To pick it yourself, set it with
+`jokku config:set myapp PORT=3000`.
 
 **1. Create the app and set its config**
 

@@ -32,9 +32,6 @@ import (
 // BuildKitSocket is where the jokku-buildkitd service listens.
 const BuildKitSocket = "/run/jokku-buildkit/buildkitd.sock"
 
-// DefaultPort is $PORT when the image does not EXPOSE exactly one port.
-const DefaultPort = 5000
-
 type Builder struct {
 	DataDir string // builds/ and artifacts/ live here
 	Exe     string // the jokku binary, copied into every rootfs as its init
@@ -58,7 +55,8 @@ type Result struct {
 	Env        []string
 	WorkingDir string
 	User       string
-	Port       int
+	Port       int    // $PORT, see Port
+	PortFrom   string // where Port came from, for the deploy log
 }
 
 // Build runs the Dockerfile build and converts the image. Progress goes to
@@ -109,15 +107,8 @@ func (b *Builder) Build(ctx context.Context, o Options, log func(string)) (*Resu
 		Env:        cfg.Config.Env,
 		WorkingDir: cfg.Config.WorkingDir,
 		User:       cfg.Config.User,
-		Port:       DefaultPort,
 	}
-	if len(cfg.Config.ExposedPorts) == 1 {
-		for p := range cfg.Config.ExposedPorts {
-			if n, err := strconv.Atoi(strings.TrimSuffix(p, "/tcp")); err == nil {
-				res.Port = n
-			}
-		}
-	}
+	res.Port, res.PortFrom = Port(cfg)
 
 	// The init binary is part of the artifact, so the name includes the jokku
 	// version: a rebuild after an update picks up the new init.

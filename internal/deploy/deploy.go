@@ -96,6 +96,11 @@ func (p *Pipeline) deploy(ctx context.Context, d *types.Deploy, sourcePath strin
 		return 0, err
 	}
 	p.Store.SetDeployRelease(ctx, d.ID, rel.ID)
+	from := res.PortFrom
+	if rel.Port() != res.Port {
+		from = "from the PORT config var"
+	}
+	log(fmt.Sprintf("-----> $PORT is %d, %s", rel.Port(), from))
 	if err := p.defaultDomains(ctx, d.App); err != nil {
 		return 0, err
 	}
@@ -315,7 +320,7 @@ func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, log func(str
 				return err
 			}
 			in := store.Instance{
-				App: app, ReleaseID: rel.ID, ProcessType: proc, Index: i, Node: node, Port: rel.Image.Port,
+				App: app, ReleaseID: rel.ID, ProcessType: proc, Index: i, Node: node, Port: rel.Port(),
 				CPUs: size.CPUs, MemoryMB: size.MemoryMB, Desired: store.DesiredRunning,
 			}
 			if err := p.Store.CreateInstance(ctx, &in, subnet); err != nil {

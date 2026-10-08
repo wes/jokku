@@ -47,9 +47,13 @@ step "deploy with git push"
 app=$(mktemp -d)
 cd "$app"
 git init -q -b main
+# The first EXPOSE stands in for one inherited from a base image (nginx's 80):
+# the app's own, newer EXPOSE is $PORT.
 cat >Dockerfile <<'EOF'
 FROM public.ecr.aws/docker/library/busybox:1.36
+EXPOSE 80
 RUN mkdir /www
+EXPOSE 3000
 EOF
 cat >Procfile <<'EOF'
 web: echo "hello ${GREETING:-nobody} from $(hostname)" > /www/index.html && echo "listening on port $PORT" && exec httpd -f -v -p "$PORT" -h /www
@@ -60,6 +64,7 @@ git commit -qm init
 out=$(git push "jokku@$host:hello" main 2>&1) || fail "git push failed: $out"
 printf '%s\n' "$out"
 grep -q "Application deployed" <<<"$out" || fail "no deploy summary"
+grep -q '\$PORT is 3000, from EXPOSE 3000' <<<"$out" || fail "the app's EXPOSE is not \$PORT"
 domain=$(jssh domains:report hello --domains-app-vhosts)
 [ -n "$domain" ] || fail "the app got no default domain"
 get() { curl -fsS --max-time 5 -H "Host: $domain" "http://127.0.0.1/"; }
@@ -80,11 +85,12 @@ watch_stop() {
   [ "$failures" -eq 0 ] || fail "$failures requests failed during $1"
 }
 
-step "config:set restarts with zero downtime"
+step "config:set restarts with zero downtime, even onto another port"
 watch_start
-jssh config:set hello GREETING=world
+jssh config:set hello GREETING=world PORT=4000
 watch_stop "the restart"
 get | grep -q "hello world" || fail "config change not applied"
+jssh ps:report hello | grep -q "Status web.1: *healthy (v[0-9]*, [0-9.]*:4000," || fail "PORT config var not used"
 
 step "scale out"
 jssh ps:scale hello web=2 worker=1

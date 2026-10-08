@@ -232,6 +232,11 @@ func mountSystem() error {
 	}
 	os.Symlink("/proc/self/fd", "/dev/fd")
 	os.Symlink("pts/ptmx", "/dev/ptmx")
+	// As in a container. Without them, a program that logs to /dev/stdout
+	// (nginx images do) creates a plain file in /dev instead.
+	for fd, name := range []string{"stdin", "stdout", "stderr"} {
+		os.Symlink("/proc/self/fd/"+strconv.Itoa(fd), "/dev/"+name)
+	}
 	return nil
 }
 
@@ -307,6 +312,13 @@ func supervise(cfg *Config) error {
 	if dir == "" {
 		dir = "/"
 	}
+
+	// The app's output is the console, which the kernel opened for init with
+	// mode 0600. A program that reopens it by name, such as nginx with
+	// error_log /dev/stderr, may run as another user (the image's USER, or a
+	// worker that drops privileges), so any user in the VM may write to it.
+	unix.Fchmod(int(os.Stdout.Fd()), 0o666)
+	unix.Fchmod(int(os.Stderr.Fd()), 0o666)
 
 	signals := make(chan os.Signal, 16)
 	signal.Notify(signals, unix.SIGINT, unix.SIGTERM, unix.SIGCHLD)

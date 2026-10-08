@@ -36,3 +36,23 @@ jobs:
           chmod +x dist/broken/jokku-linux-amd64
           for v in old new broken; do (cd dist/$v && sha256sum jokku-linux-amd64 > checksums.txt); done
       - run: bash test/server-e2e.sh dist
+
+  # A two-node cluster: the runner is the control node, a QEMU VM joins as a
+  # worker over WireGuard.
+  cluster:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/wes/jokku/internal/version.Version=ci-${GITHUB_SHA::7}" -o dist/jokku-linux-amd64 ./cmd/jokku
+          cd dist && sha256sum jokku-linux-amd64 > checksums.txt
+      - name: Tools for the worker VM
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils wireguard-tools >/dev/null
+      - run: bash test/cluster-e2e.sh dist

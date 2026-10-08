@@ -10,10 +10,10 @@ of a container, and you can add servers with one command, so apps scale
 across a cluster. The commands are Dokku's, so if you know Dokku, you
 already know Jokku.
 
-> **Status: early development.** On a single server, `git push` builds your
-> Dockerfile and runs it in Firecracker microVMs behind the proxy, with
-> zero-downtime deploys, scaling, logs and updates. Multi-server clusters
-> are next. See the [roadmap](docs/architecture.md#milestones).
+> **Status: early development.** `git push` builds your Dockerfile and runs
+> it in Firecracker microVMs behind the proxy, with zero-downtime deploys,
+> scaling, logs and updates, on one server or a cluster. See the
+> [roadmap](docs/architecture.md#milestones).
 
 ## Install
 
@@ -33,7 +33,7 @@ Run commands from your laptop over SSH, or on the server itself with
 `sudo jokku <command>`. The examples below assume this alias on your laptop:
 
 ```sh
-alias jokku='ssh jokku@your-server'
+alias jokku='ssh -t jokku@your-server'
 jokku apps:list
 ```
 
@@ -45,8 +45,6 @@ cat alice.pub | jokku ssh-keys:add alice
 
 ### Adding more servers
 
-*Coming in milestone 2.*
-
 One server is a complete Jokku. To add another, ask the first server for a
 join command:
 
@@ -57,19 +55,36 @@ jokku cluster:join-command
 It prints a one-liner. Run it on the new server:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo sh -s -- --join 203.0.113.10 --token jk1_...
+curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo JOKKU_VERSION=v0.1.0 sh -s -- --join 203.0.113.10:7443 --token JOKKU1...
 ```
 
-The servers connect over an encrypted private network (WireGuard). Apps are
-spread across all of them, and every server can receive web traffic, so point
-your DNS at as many as you like.
+The servers connect over an encrypted private network (WireGuard on UDP
+51820; the first server also needs TCP 7443 open for joining). Apps are spread
+across all of them, and every server can receive web traffic, so point your DNS
+at as many as you like.
 
 ```sh
 jokku nodes:list
-NAME      ROLE     STATUS  ADDRESS        CPUS  MEMORY
-server-1  control  ready   203.0.113.10   8     16g
-server-2  worker   ready   203.0.113.11   8     16g
+NAME      ROLE     STATUS  ADDRESS        MESH IP     CPUS  MEMORY  INSTANCES  VERSION
+server-1  control  ready   203.0.113.10   10.210.1.1  8     16g     3          v0.1.0
+server-2  worker   ready   203.0.113.11   10.210.2.1  8     16g     2          v0.1.0
 ```
+
+If a server dies, its apps are started on the others after a minute. To take
+one out for maintenance, `jokku nodes:drain server-2` moves its apps away
+first; `jokku nodes:remove server-2` takes it out of the cluster. The first
+server holds the cluster's state: if it goes down, the others keep running and
+serving what they have, and you can't deploy until it's back.
+
+### Watch everything
+
+```sh
+jokku top
+```
+
+A live view of the machines, apps, instances and recent events, with CPU and
+memory for each. Over SSH it needs a terminal, so use `ssh -t jokku@your-server
+top` (or put `-t` in your alias).
 
 ## Deploy an app
 
@@ -186,7 +201,8 @@ with:
 curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/update.sh | sudo sh
 ```
 
-With more than one server, update the first (control) server, then the rest.
+With more than one server, update the first (control) server, then run
+`sudo jokku update` on each of the others.
 
 ## Learn more
 

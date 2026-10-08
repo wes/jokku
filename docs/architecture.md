@@ -342,12 +342,30 @@ agent                                         control
 
 ### Scheduling
 
-When an instance needs a home, the scheduler filters nodes that are online,
-schedulable, have the release's architecture and have the memory free (no
-memory overcommit; vCPUs may be overcommitted, configurable per node). It
-then prefers nodes running the fewest instances of the same app and process
-type (spread), then the least-loaded node. Volumes pin an instance to the
-volume's node.
+When an instance needs a home, the scheduler filters nodes that are up,
+schedulable, not draining, able to run microVMs (each agent reports whether
+its CPU and KVM can) and with the memory free: total memory minus a reserve
+(a tenth, at least 512 MiB) minus what is already promised to instances.
+Memory is never overcommitted; vCPUs may be. It then prefers the node running
+the fewest instances of the same app and process type (spread), then the one
+with the most free memory. Volumes will pin an instance to the volume's node.
+
+Root filesystems are built on the control node. A node that lacks one
+downloads it from the control node and checks its SHA-256 before using it, and
+deletes ones it no longer needs.
+
+### Agents
+
+The control node computes each node's desired state from the store on every
+poll and tags it with an ETag (a hash). A long-poll returns as soon as the
+ETag changes; changes signal waiting polls immediately, and polls also
+recompute every two seconds, so nothing that changes the state can be missed.
+
+The agent caches the last state on disk. If the control node is unreachable,
+the node keeps running and serving that state, and a restarted agent picks it
+back up. Agents keep per-instance state (health, restarts) in memory; after a
+restart, VMs that are already running are adopted and checked, never started
+twice.
 
 ### Zero-downtime rollouts
 
@@ -518,9 +536,9 @@ stays the stable entry point, including for versions that predate the command.
   Firecracker driver, bridge/TAP/NAT, agent reconcile loop, embedded
   Caddy, rollouts, checks, logs, `ps:*`. At this point it is a working
   Dokku replacement on one box.
-- **M2 – cluster.** WireGuard mesh, `cluster:join-command` and
+- **M2 – cluster.** *(done)* WireGuard mesh, `cluster:join-command` and
   `install.sh --join`, `nodes:*`, scheduler, artifact distribution, cluster
-  cert storage, failover.
+  cert storage, failover, `jokku top`, events.
 - **M3 – remote API.** HTTPS listener, tokens, `git:sync`, deploy keys,
   `git:from-image`, `git:from-archive`.
 - **M4 – depth.** The Firecracker `jailer`, `run` and `enter` via vsock, volumes, `releases:rollback`,

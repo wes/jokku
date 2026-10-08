@@ -21,47 +21,51 @@ import (
 // fail after a few seconds instead of hanging a whole "jokku logs".
 var agentClient = &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 10 * time.Second}}
 
-// Logs streams an app's log lines from every node that is up. Without
-// Follow, lines are merged by timestamp and the last o.Tail returned; with
-// Follow, lines are passed on as they arrive.
+// Logs streams an app's log lines from every node that is up, with the
+// proxy's router lines (one per request) mixed in unless o.Process asks for a
+// process type. Without Follow, lines are merged by timestamp and the last
+// o.Tail returned; with Follow, lines are passed on as they arrive.
 func (c *Controller) Logs(ctx context.Context, app string, o types.LogOptions, line func(string)) error {
-	nodes, err := c.Store.Nodes(ctx)
+	live, err := c.liveNodes(ctx)
 	if err != nil {
 		return err
 	}
-	now := time.Now()
-	var live []store.Node
-	for _, n := range nodes {
-		if n.Ready(now) {
-			live = append(live, n)
-		}
-	}
+	router := o.Process == "" || o.Process == "router"
+	appLines := o.Process != "router"
 	q := url.Values{"app": {app}, "tail": {strconv.Itoa(o.Tail)}, "process": {o.Process}}
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	var lines []string
-	var errs []string
 	if o.Follow {
 		q.Set("follow", "true")
 	}
-	for _, n := range live {
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var lines, errs []string
+	emit := func(l string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if o.Follow {
+			line(l)
+		} else {
+			lines = append(lines, l)
+		}
+	}
+	if appLines {
+		for _, n := range live {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := c.nodeLogs(ctx, n, "/v1/logs", q, emit); err != nil && ctx.Err() == nil {
+					mu.Lock()
+					errs = append(errs, n.Name+": "+err.Error())
+					mu.Unlock()
+				}
+			}()
+		}
+	}
+	if router {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := c.nodeLogs(ctx, n, "/v1/logs", q, func(l string) {
-				mu.Lock()
-				defer mu.Unlock()
-				if o.Follow {
-					line(l)
-				} else {
-					lines = append(lines, l)
-				}
-			})
-			if err != nil && ctx.Err() == nil {
-				mu.Lock()
-				errs = append(errs, n.Name+": "+err.Error())
-				mu.Unlock()
-			}
+			c.Requests(ctx, app, o.Tail, o.Follow, func(r types.Request) { emit(RouterLine(r)) })
 		}()
 	}
 	wg.Wait()
@@ -74,7 +78,7 @@ func (c *Controller) Logs(ctx context.Context, app string, o types.LogOptions, l
 			line(l)
 		}
 	}
-	if len(errs) > 0 && len(errs) == len(live) {
+	if appLines && len(errs) > 0 && len(errs) == len(live) {
 		return fmt.Errorf("could not read logs: %s", strings.Join(errs, "; "))
 	}
 	return nil

@@ -195,3 +195,22 @@ type InstanceView struct {
 	CPUPercent float64 `json:"cpu_percent"`
 	MemoryUsed int     `json:"memory_used_mb"`
 }
+
+// Request is one HTTP request handled by a node's proxy: the router lines
+// in "jokku logs" and the traffic view in "jokku top".
+type Request struct {
+	At           time.Time `json:"at"`
+	App          string    `json:"app,omitempty"`  // empty for hosts no app serves
+	Node         string    `json:"node,omitempty"` // the node whose proxy received it
+	Instance     string    `json:"instance,omitempty"`
+	InstanceNode string    `json:"instance_node,omitempty"`
+	Upstream     string    `json:"upstream,omitempty"` // IP:port that answered
+	Method       string    `json:"method"`
+	Host         string    `json:"host"`
+	Path         string    `json:"path"`
+	Proto        string    `json:"proto,omitempty"`
+	Status       int       `json:"status"`
+	DurationMS   float64   `json:"duration_ms"`
+	Bytes        int64     `json:"bytes"`
+	Client       string    `json:"client,omitempty"`
+}

@@ -82,7 +82,7 @@ func Config(s Settings) ([]byte, error) {
 		}
 		route := map[string]any{
 			"match":    []any{map[string]any{"host": r.Hosts}},
-			"handle":   []any{handler(r)},
+			"handle":   append(tags(r.App), handler(r)),
 			"terminal": true,
 		}
 		if r.TLS {
@@ -114,12 +114,14 @@ func Config(s Settings) ([]byte, error) {
 		"http": map[string]any{
 			"listen": []string{fmt.Sprintf(":%d", s.HTTPPort)},
 			"routes": httpRoutes,
+			"logs":   map[string]any{},
 		},
 	}
 	if len(tlsHosts) > 0 {
 		servers["https"] = map[string]any{
 			"listen": []string{fmt.Sprintf(":%d", s.HTTPSPort)},
 			"routes": httpsRoutes,
+			"logs":   map[string]any{},
 			// The http server above already redirects, after ACME challenges
 			// (which Caddy answers before any route).
 			"automatic_https": map[string]any{"disable_redirects": true},
@@ -147,8 +149,25 @@ func Config(s Settings) ([]byte, error) {
 			"config": map[string]any{"persist": false},
 		},
 		"storage": storageConfig(s),
-		"logging": map[string]any{"logs": map[string]any{"default": map[string]any{"level": "WARN"}}},
-		"apps":    apps,
+		"logging": map[string]any{"logs": map[string]any{
+			"default": map[string]any{"level": "WARN", "exclude": []string{"http.log.access"}},
+			// One JSON line per request on stderr, so the journal: the
+			// router lines in "jokku logs" and the traffic view in top.
+			"access": map[string]any{
+				"include": []string{"http.log.access"},
+				"writer":  map[string]any{"output": "stderr"},
+				"encoder": map[string]any{
+					"format": "filter",
+					"wrap":   map[string]any{"format": "json"},
+					"fields": map[string]any{
+						"request>headers": map[string]any{"filter": "delete"},
+						"resp_headers":    map[string]any{"filter": "delete"},
+						"request>tls":     map[string]any{"filter": "delete"},
+					},
+				},
+			},
+		}},
+		"apps": apps,
 	}
 	return json.MarshalIndent(cfg, "", "  ")
 }
@@ -183,6 +202,21 @@ func (a *Applier) Apply(ctx context.Context, ps *types.ProxyState) error {
 	}
 	return Load(ctx, a.AdminSocket, a.DataDir, cfg)
 }
+
+// tags label each request's access log line with its app and the instance
+// that answered.
+func tags(app string) []any {
+	return []any{
+		map[string]any{"handler": "log_append", "key": LogApp, "value": app},
+		map[string]any{"handler": "log_append", "key": LogUpstream, "value": "{http.reverse_proxy.upstream.hostport}"},
+	}
+}
+
+// Access log fields Jokku adds.
+const (
+	LogApp      = "jokku_app"
+	LogUpstream = "jokku_upstream"
+)
 
 func handler(r Route) map[string]any {
 	if len(r.Upstreams) == 0 {

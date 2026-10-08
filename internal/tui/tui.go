@@ -29,10 +29,11 @@ const (
 	appsView
 	instancesView
 	eventsView
+	trafficView
 	logsView
 )
 
-var tabNames = []string{"Overview", "Nodes", "Apps", "Instances", "Events"}
+var tabNames = []string{"Overview", "Nodes", "Apps", "Instances", "Events", "Traffic"}
 
 // Run starts the dashboard and blocks until the user quits.
 func Run(ctx context.Context, api *client.Client, in io.Reader, out io.Writer) error {
@@ -64,6 +65,8 @@ type model struct {
 	logApp                string
 	logs                  []string
 	logErr                error
+
+	tr *traffic
 }
 
 type statusMsg struct {
@@ -125,7 +128,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case tea.KeyMsg:
-		return m, m.key(msg.String())
+		before := m.view
+		cmds := []tea.Cmd{m.key(msg.String())}
+		switch {
+		case before != trafficView && m.view == trafficView:
+			cmds = append(cmds, m.startTraffic())
+		case before == trafficView && m.view != trafficView:
+			m.stopTraffic()
+		}
+		return m, tea.Batch(cmds...)
+	case requestsMsg, trafficEndMsg, frameMsg, trafficRetryMsg:
+		if m.tr == nil {
+			return m, nil
+		}
+		return m, m.updateTraffic(msg)
 	}
 	return m, nil
 }
@@ -133,6 +149,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) key(k string) tea.Cmd {
 	if m.help {
 		m.help = false
+		return nil
+	}
+	if m.trafficKey(k) {
 		return nil
 	}
 	switch k {
@@ -143,18 +162,18 @@ func (m *model) key(k string) tea.Cmd {
 	case "r":
 		return m.fetch()
 	case "tab", "right":
-		if m.view < eventsView {
+		if m.view < trafficView {
 			m.view++
-		} else if m.view == eventsView {
+		} else if m.view == trafficView {
 			m.view = overview
 		}
 	case "shift+tab", "left":
-		if m.view > overview && m.view <= eventsView {
+		if m.view > overview && m.view <= trafficView {
 			m.view--
 		} else if m.view == overview {
-			m.view = eventsView
+			m.view = trafficView
 		}
-	case "1", "2", "3", "4", "5":
+	case "1", "2", "3", "4", "5", "6":
 		m.view = view(k[0] - '1')
 	case "up", "k":
 		m.move(-1)

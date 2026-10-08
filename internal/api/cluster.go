@@ -55,6 +55,27 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, events)
 }
 
+// requests streams the HTTP requests the cluster's proxies handle, as
+// "request" events. Query: app, tail (default 100), follow.
+func (s *Server) requests(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	app := q.Get("app")
+	if app != "" {
+		if _, err := s.Store.App(r.Context(), app); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
+	tail := 100
+	if n, err := strconv.Atoi(q.Get("tail")); err == nil && n >= 0 {
+		tail = min(n, 10000)
+	}
+	st := newStream(w)
+	st.Done(s.Cluster.Requests(r.Context(), app, tail, q.Get("follow") == "true", func(req types.Request) {
+		st.send(types.Event{Type: types.EventRequest, Request: &req})
+	}))
+}
+
 // Public endpoints (TLS on :7443)
 
 func (s *Server) join(w http.ResponseWriter, r *http.Request) {

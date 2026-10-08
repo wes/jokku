@@ -37,6 +37,8 @@ func (m *model) View() string {
 			body = m.instanceList()
 		case eventsView:
 			body = m.eventList(m.height - 6)
+		case trafficView:
+			body = m.trafficView()
 		case logsView:
 			body = m.logView()
 		}
@@ -95,7 +97,10 @@ func (m *model) tabs() string {
 }
 
 func (m *model) footer() string {
-	keys := "1-5/tab views  ↑↓ move  enter drill in  l logs  esc back  r refresh  ? help  q quit"
+	keys := "1-6/tab views  ↑↓ move  enter drill in  l logs  esc back  r refresh  ? help  q quit"
+	if m.view == trafficView {
+		keys = "1-6/tab views  p pause  c clear  ? help  q quit"
+	}
 	if m.filterApp != "" || m.filterNode != "" {
 		keys = "filtered: " + m.filterApp + m.filterNode + " (esc clears)  ·  " + keys
 	}
@@ -109,6 +114,8 @@ const helpText = `jokku top shows the cluster live, refreshed every two seconds.
   3 Apps        each app: healthy instances, release, last deploy, domains
   4 Instances   each microVM: state, node, CPU, memory, uptime, restarts
   5 Events      deploys, crashes, nodes coming and going
+  6 Traffic     every request live: dots fly across each app's lane, colored
+                by status, and land on the instance and node that answered
 
   enter on a node or app shows its instances; l shows an app's logs;
   esc goes back. Press any key to close this help.`

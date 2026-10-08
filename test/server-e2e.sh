@@ -113,7 +113,10 @@ eventually_router() {
 }
 eventually_router || fail "no router lines: $(jssh logs hello -p router -n 5)"
 jssh logs hello -p router -n 20 | grep -v "app\[router\]" && fail "-p router shows other lines"
-jssh logs hello -n 100 | grep -q "app\[web" || fail "app lines missing next to router lines"
+# Router lines are the newest, so look far enough back to find app output
+# too; -p web shows only the app's own.
+jssh logs hello -n 2000 | grep -q "app\[web" || fail "app lines missing next to router lines"
+jssh logs hello -p web -n 20 | grep -q "app\[router\]" && fail "-p web shows router lines"
 sudo curl -fsS --unix-socket /run/jokku/jokku.sock "http://jokku/v1/requests?app=hello&tail=3" | grep -q '"type":"request"' || fail "request stream API"
 
 step "a failing deploy keeps the old release serving"

@@ -299,6 +299,12 @@ func (a *Agent) reconcile(ctx context.Context) error {
 		l := a.local[spec.ID]
 		if l == nil {
 			l = &local{state: "pending"}
+			// A VM that is already running (this agent restarted, or the
+			// node's jokku was updated) is adopted, not started again:
+			// it goes through checks like a fresh one.
+			if _, running := units[spec.ID]; running {
+				l.state, l.startedAt = "starting", now
+			}
 			a.local[spec.ID] = l
 		}
 		before := l.state

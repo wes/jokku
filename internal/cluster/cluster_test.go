@@ -59,6 +59,7 @@ func init() {
 type fakeRuntime struct {
 	mu      sync.Mutex
 	running map[string]vm.Spec
+	starts  int
 }
 
 func newFakeRuntime() *fakeRuntime { return &fakeRuntime{running: map[string]vm.Spec{}} }
@@ -71,8 +72,18 @@ func (f *fakeRuntime) Remove(context.Context, string) error {
 func (f *fakeRuntime) Start(_ context.Context, s vm.Spec) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if _, ok := f.running[s.ID]; ok {
+		return fmt.Errorf("unit for %s already exists", s.ID) // as systemd-run says
+	}
 	f.running[s.ID] = s
+	f.starts++
 	return nil
+}
+
+func (f *fakeRuntime) startCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.starts
 }
 func (f *fakeRuntime) Stop(_ context.Context, id string, _ time.Duration) error {
 	f.mu.Lock()
@@ -632,6 +643,34 @@ func TestWorkersKeepRunningWhileControlIsDown(t *testing.T) {
 	eventually(t, 5*time.Second, "w1 reports again", func() error {
 		if st, _ := h.ctl.Status(h.ctx); st.Totals.NodesReady != 2 {
 			return fmt.Errorf("not ready")
+		}
+		return nil
+	})
+}
+
+func TestRestartedAgentAdoptsRunningVMs(t *testing.T) {
+	h := newHarness(t)
+	w1 := h.join("w1")
+	eventually(t, 5*time.Second, "worker ready", func() error {
+		if st, _ := h.ctl.Status(h.ctx); st.Totals.NodesReady != 2 {
+			return fmt.Errorf("not ready")
+		}
+		return nil
+	})
+	h.deploy("app", 2)
+	before := w1.rt.startCount()
+	h.kill("w1") // e.g. jokku on w1 is updated
+	h.revive("w1")
+	time.Sleep(2 * time.Second)
+	if n := w1.rt.apps()["app"]; n != 1 {
+		t.Fatalf("w1 runs %d instances after its agent restarted, want 1", n)
+	}
+	if got := w1.rt.startCount(); got != before {
+		t.Fatalf("the restarted agent started %d VMs again instead of adopting them", got-before)
+	}
+	eventually(t, 3*time.Second, "adopted instance healthy", func() error {
+		if got := h.placement("app"); got["w1"] != 1 {
+			return fmt.Errorf("placement %v", got)
 		}
 		return nil
 	})

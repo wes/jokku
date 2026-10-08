@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wes/jokku/internal/agent"
@@ -138,8 +139,13 @@ func runControl(ctx context.Context, cfg Config, log *slog.Logger) error {
 		return err
 	}
 	// The control node's own proxy reaches the shared certificate store
-	// like any other node's: with a token, over TLS on loopback.
-	selfToken := randomToken()
+	// like any other node's: with a token, over TLS on loopback. It is kept
+	// across restarts so the proxy's config (which contains it) doesn't
+	// change and reload needlessly.
+	selfToken, err := loadOrCreateToken(filepath.Join(cfg.DataDir, "control-token"))
+	if err != nil {
+		return err
+	}
 	if err := st.SetNodeToken(ctx, nodeName, cluster.HashToken(selfToken)); err != nil {
 		return err
 	}
@@ -304,10 +310,14 @@ func executable() (string, error) {
 	return filepath.EvalSymlinks(exe)
 }
 
-func randomToken() string {
+func loadOrCreateToken(path string) (string, error) {
+	if b, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(b))) > 0 {
+		return strings.TrimSpace(string(b)), nil
+	}
 	b := make([]byte, 32)
 	rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
+	token := base64.RawURLEncoding.EncodeToString(b)
+	return token, os.WriteFile(path, []byte(token+"\n"), 0o600)
 }
 
 // lookupGitUser resolves the git user's uid, gid and home. When the daemon is

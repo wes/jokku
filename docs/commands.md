@@ -40,7 +40,7 @@ tracks what exists today. Milestones are described in
 | `resource:reserve` | ✖ in a microVM the limit *is* the reservation |
 | `checks:set` (`wait-to-retire`, `timeout`), `checks:report` | ✅ |
 | `checks:enable`, `checks:disable`, `checks:skip` | 🔜 later |
-| `logs [-t] [-n N] [-p type] [-q]` | ✅ |
+| `logs [-t] [-n N] [-p type] [-q]`, with Heroku-style `app[router]` lines per request (`-p router` for only those) | ✅ |
 | `run`, `enter` | 🔜 M4 (vsock guest agent) |
 
 ## Routing
@@ -81,7 +81,7 @@ tracks what exists today. Milestones are described in
 | `nodes:drain`, `nodes:undrain` (moves instances off with no downtime) | ➕ ✅ |
 | `nodes:remove [--force]` | ➕ ✅ |
 | `events [<app>] [-n N]` | ➕ ✅ |
-| `top` (live terminal dashboard of nodes, apps, instances, events) | ➕ ✅ |
+| `top` (live terminal dashboard of nodes, apps, instances, events, and a real-time Traffic view of requests) | ➕ ✅ |
 | Rolling update of every node from the control node | 🔜 (for now: `sudo jokku update` on each node) |
 | Replicated control node | 🔜 later |
 

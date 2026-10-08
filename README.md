@@ -325,7 +325,10 @@ Both go through the running instance that mounts the volume, so the app must
 be running. The export pauses the app's processes while it copies, so a
 database file is captured at one point in time; `--live` skips the pause.
 The import replaces files with the archive's (`--clear` empties the volume
-first), then restarts the app so it reads them. Over ssh, leave out `-t`, so
+first), then restarts the app so it reads them. Imported files belong to
+whoever owns the volume's mount point, so an archive made on your laptop
+doesn't leave them owned by a user the app isn't; `--keep-owners` keeps the
+archive's numeric owners instead. Over ssh, leave out `-t`, so
 the archive passes through untouched: `ssh jokku@your-server storage:export
 myapp data > data.tar.gz`. `storage:report` shows where each volume's disk
 image is.

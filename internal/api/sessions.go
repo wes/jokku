@@ -194,7 +194,8 @@ func (s *Server) exportVolume(w http.ResponseWriter, r *http.Request) {
 
 // importVolume restores a volume's files from a tar (gzipped or not) in the
 // request body, inside the instance that mounts it, then restarts the app's
-// process there. ?clear=true empties the volume first.
+// process there. ?clear=true empties the volume first; files belong to the
+// volume's owner unless ?keep-owners=true.
 func (s *Server) importVolume(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	app, name := r.PathValue("app"), r.PathValue("name")
@@ -210,7 +211,8 @@ func (s *Server) importVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 	c := session.New(conn)
-	if err := c.SendRequest(session.Request{Op: session.OpImport, Path: path, Clear: r.URL.Query().Get("clear") == "true"}); err != nil {
+	q := r.URL.Query()
+	if err := c.SendRequest(session.Request{Op: session.OpImport, Path: path, Clear: q.Get("clear") == "true", KeepOwners: q.Get("keep-owners") == "true"}); err != nil {
 		s.fail(w, r, err)
 		return
 	}

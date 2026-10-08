@@ -73,10 +73,24 @@ func Archive(dir string, w io.Writer) error {
 	return gz.Close()
 }
 
-// Extract unpacks a tar (gzipped or not) into dir, keeping owners and
-// modes. With clear, dir is emptied first. Entries that would land outside
-// dir, directly or through a symlink, are refused.
-func Extract(r io.Reader, dir string, clear bool) error {
+// ExtractOptions say how Extract restores files.
+type ExtractOptions struct {
+	Clear bool // empty the directory first
+	// Owner, when set, owns everything extracted, instead of the numeric
+	// owners in the archive (which come from wherever it was made).
+	Owner *Owner
+}
+
+// Owner is a numeric user and group.
+type Owner struct{ UID, GID int }
+
+// lchown is os.Lchown; tests replace it to see what Extract asks for.
+var lchown = os.Lchown
+
+// Extract unpacks a tar (gzipped or not) into dir, keeping modes, and owners
+// unless o.Owner says otherwise. Entries that would land outside dir,
+// directly or through a symlink, are refused.
+func Extract(r io.Reader, dir string, o ExtractOptions) error {
 	br := bufio.NewReader(r)
 	var src io.Reader = br
 	if magic, _ := br.Peek(2); len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
@@ -91,7 +105,7 @@ func Extract(r io.Reader, dir string, clear bool) error {
 	if err != nil {
 		return err
 	}
-	if clear {
+	if o.Clear {
 		entries, err := os.ReadDir(root)
 		if err != nil {
 			return err
@@ -180,7 +194,11 @@ func Extract(r io.Reader, dir string, clear bool) error {
 		default:
 			continue // devices, pipes: not restored
 		}
-		if err := os.Lchown(target, hdr.Uid, hdr.Gid); err != nil && !os.IsPermission(err) && err != syscall.EPERM {
+		uid, gid := hdr.Uid, hdr.Gid
+		if o.Owner != nil {
+			uid, gid = o.Owner.UID, o.Owner.GID
+		}
+		if err := lchown(target, uid, gid); err != nil && !os.IsPermission(err) && err != syscall.EPERM {
 			return err
 		}
 		if hdr.Typeflag != tar.TypeSymlink {

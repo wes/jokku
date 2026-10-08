@@ -62,7 +62,7 @@ func TestArchiveRoundTrip(t *testing.T) {
 	if err := Archive(src, &buf); err != nil {
 		t.Fatal(err)
 	}
-	if err := Extract(bytes.NewReader(buf.Bytes()), dst, false); err != nil {
+	if err := Extract(bytes.NewReader(buf.Bytes()), dst, ExtractOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(dst, "kuma.db")); string(b) != "SQLite format 3" {
@@ -80,7 +80,7 @@ func TestArchiveRoundTrip(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dst, "stale")); err != nil {
 		t.Error("without clear, existing files stay")
 	}
-	if err := Extract(bytes.NewReader(buf.Bytes()), dst, true); err != nil {
+	if err := Extract(bytes.NewReader(buf.Bytes()), dst, ExtractOptions{Clear: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "stale")); !os.IsNotExist(err) {
@@ -118,7 +118,7 @@ func TestExtractStaysInside(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			dst := t.TempDir()
-			err := Extract(bytes.NewReader(tarOf(t, entries...)), dst, false)
+			err := Extract(bytes.NewReader(tarOf(t, entries...)), dst, ExtractOptions{})
 			if err == nil || !strings.Contains(err.Error(), "outside the directory") {
 				t.Fatalf("got %v", err)
 			}
@@ -129,13 +129,74 @@ func TestExtractStaysInside(t *testing.T) {
 	}
 	// A plain (not gzipped) tar is fine too.
 	dst := t.TempDir()
-	if err := Extract(bytes.NewReader(tarOf(t, &tar.Header{Name: "./ok", Typeflag: tar.TypeReg, Mode: 0o644})), dst, false); err != nil {
+	if err := Extract(bytes.NewReader(tarOf(t, &tar.Header{Name: "./ok", Typeflag: tar.TypeReg, Mode: 0o644})), dst, ExtractOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(dst, "ok")); string(b) != "data" {
 		t.Errorf("ok = %q", b)
 	}
-	if err := Extract(strings.NewReader("not a tar at all, long enough to fail"), dst, false); err == nil {
+	if err := Extract(strings.NewReader("not a tar at all, long enough to fail"), dst, ExtractOptions{}); err == nil {
 		t.Error("garbage was accepted")
+	}
+}
+
+func TestExtractOwners(t *testing.T) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	tw.WriteHeader(&tar.Header{Name: "f", Typeflag: tar.TypeReg, Mode: 0o644, Size: 1, Uid: 1001, Gid: 1001})
+	tw.Write([]byte("x"))
+	tw.Close()
+
+	owners := map[string][2]int{}
+	lchown = func(path string, uid, gid int) error {
+		owners[filepath.Base(path)] = [2]int{uid, gid}
+		return nil
+	}
+	defer func() { lchown = os.Lchown }()
+
+	// By default the archive's owners are kept...
+	if err := Extract(bytes.NewReader(buf.Bytes()), t.TempDir(), ExtractOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if owners["f"] != [2]int{1001, 1001} {
+		t.Errorf("owner %v, want the archive's", owners["f"])
+	}
+	// ...unless an owner is given: an import gives everything to the
+	// volume's owner, whoever made the archive.
+	if err := Extract(bytes.NewReader(buf.Bytes()), t.TempDir(), ExtractOptions{Owner: &Owner{UID: 70, GID: 70}}); err != nil {
+		t.Fatal(err)
+	}
+	if owners["f"] != [2]int{70, 70} {
+		t.Errorf("owner %v, want 70:70", owners["f"])
+	}
+}
+
+// A server that answers and closes at once (a command that exits without
+// reading its input) must still have its exit status relayed, even while
+// the client is sending.
+func TestSpliceDeliversTheExitStatus(t *testing.T) {
+	for range 200 {
+		clientEnd, relayClient := net.Pipe()
+		relayServer, serverEnd := net.Pipe()
+		go func() {
+			s := New(serverEnd)
+			s.Exit(3, "")
+			s.Close()
+		}()
+		go func() {
+			defer relayClient.Close()
+			defer relayServer.Close()
+			Splice(relayClient, relayServer)
+		}()
+		c := New(clientEnd)
+		go c.Writer(FrameStdin).Write(bytes.Repeat([]byte("x"), 100<<10))
+		typ, p, err := c.Read()
+		if err != nil || typ != FrameExit {
+			t.Fatalf("got frame %q, %v; want the exit status", typ, err)
+		}
+		if code, _ := ParseExit(p); code != 3 {
+			t.Fatalf("exit %d", code)
+		}
+		c.Close()
 	}
 }

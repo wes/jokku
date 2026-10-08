@@ -346,12 +346,17 @@ func (c *Client) ExportVolume(ctx context.Context, app, name string, live bool, 
 }
 
 // ImportVolume restores a volume's files from a tar (gzipped or not) and
-// restarts the app's process that mounts it. clear empties the volume first.
-func (c *Client) ImportVolume(ctx context.Context, app, name string, clear bool, archive io.Reader) error {
-	path := volumePath(app, name, "import")
+// restarts the app's process that mounts it. clear empties the volume
+// first; keepOwners keeps the archive's owners instead of the volume's.
+func (c *Client) ImportVolume(ctx context.Context, app, name string, clear, keepOwners bool, archive io.Reader) error {
+	q := url.Values{}
 	if clear {
-		path += "?clear=true"
+		q.Set("clear", "true")
 	}
+	if keepOwners {
+		q.Set("keep-owners", "true")
+	}
+	path := volumePath(app, name, "import") + "?" + q.Encode()
 	req, err := c.newRequest(ctx, http.MethodPost, path, archive)
 	if err != nil {
 		return err

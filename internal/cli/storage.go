@@ -34,7 +34,10 @@ var storageCommands = []*Command{
 	{Name: "storage:export", Help: "Write a volume's files to stdout as a .tar.gz (the app pauses for a moment)", App: NeedsApp, Args: "<name>", MinArgs: 1,
 		Flags: []Flag{{Name: "live", Help: "Don't pause the app; files being written may be caught mid-write"}}, Run: storageExport},
 	{Name: "storage:import", Help: "Restore a volume's files from a .tar or .tar.gz on stdin, then restart the process using it", App: NeedsApp, Args: "<name>", MinArgs: 1,
-		Flags: []Flag{{Name: "clear", Help: "Delete the volume's files first, so it holds exactly the archive"}}, Run: storageImport},
+		Flags: []Flag{
+			{Name: "clear", Help: "Delete the volume's files first, so it holds exactly the archive"},
+			{Name: "keep-owners", Help: "Keep the archive's numeric owners (by default, files belong to the volume's owner)"},
+		}, Run: storageImport},
 	{Name: "storage:ensure-directory", Hidden: true, MaxArgs: -1, Local: true, Run: func(*Context) error {
 		return errors.New("Jokku volumes are disks, not host directories: mount one with jokku storage:mount <app> <name>:<path>, which creates it")
 	}},
@@ -282,7 +285,7 @@ func storageImport(c *Context) error {
 		return fmt.Errorf("storage:import reads a .tar or .tar.gz from stdin: jokku storage:import %s %s < %s.tar.gz (over ssh, without -t)", c.App, c.Args[0], c.Args[0])
 	}
 	c.Step("Restoring volume %s of %s", c.Args[0], c.App)
-	if err := c.API.ImportVolume(c, c.App, c.Args[0], c.Bool("clear"), c.Stdin); err != nil {
+	if err := c.API.ImportVolume(c, c.App, c.Args[0], c.Bool("clear"), c.Bool("keep-owners"), c.Stdin); err != nil {
 		return err
 	}
 	c.Step("Restored; the process using it was restarted")

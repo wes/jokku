@@ -154,8 +154,18 @@ func importSession(a *app, c *session.Conn, req session.Request) (int, string) {
 			}
 		}
 	}()
+	opts := session.ExtractOptions{Clear: req.Clear}
+	if !req.KeepOwners {
+		// Files belong to whoever owns the volume (the app's user), not to
+		// whoever made the archive on some other machine.
+		if info, err := os.Stat(req.Path); err == nil {
+			if st, ok := info.Sys().(*syscall.Stat_t); ok {
+				opts.Owner = &session.Owner{UID: int(st.Uid), GID: int(st.Gid)}
+			}
+		}
+	}
 	a.signal(unix.SIGSTOP)
-	err := session.Extract(pr, req.Path, req.Clear)
+	err := session.Extract(pr, req.Path, opts)
 	pr.CloseWithError(io.ErrClosedPipe) // stop the reader if Extract ended early
 	if err != nil {
 		a.signal(unix.SIGCONT)

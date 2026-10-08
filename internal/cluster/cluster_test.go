@@ -146,7 +146,7 @@ func (f *fakeRuntime) guest(id, token string, conn net.Conn) {
 				pw.Write(p)
 			}
 		}()
-		if err := session.Extract(pr, dir, req.Clear); err != nil {
+		if err := session.Extract(pr, dir, session.ExtractOptions{Clear: req.Clear}); err != nil {
 			c.Exit(1, err.Error())
 			return
 		}

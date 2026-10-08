@@ -82,7 +82,7 @@ func TestEnterAndVolumeCopies(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := t.TempDir()
-	if err := session.Extract(bytes.NewReader(archive.Bytes()), got, false); err != nil {
+	if err := session.Extract(bytes.NewReader(archive.Bytes()), got, session.ExtractOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(got, "kuma.db")); string(b) != "v1" {
@@ -96,7 +96,7 @@ func TestEnterAndVolumeCopies(t *testing.T) {
 	if err := session.Archive(got, &edited); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.client.ImportVolume(h.ctx, "db", "data", true, &edited); err != nil {
+	if err := h.client.ImportVolume(h.ctx, "db", "data", true, false, &edited); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(guest, "kuma.db")); string(b) != "v2" {
@@ -111,7 +111,7 @@ func TestEnterAndVolumeCopies(t *testing.T) {
 	if restarts != 1 {
 		t.Errorf("the app restarted %d times after the import, want 1", restarts)
 	}
-	if err := h.client.ImportVolume(h.ctx, "db", "data", false, strings.NewReader("not an archive at all, really")); err == nil {
+	if err := h.client.ImportVolume(h.ctx, "db", "data", false, false, strings.NewReader("not an archive at all, really")); err == nil {
 		t.Error("garbage was imported")
 	}
 

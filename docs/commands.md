@@ -95,7 +95,7 @@ tracks what exists today. Milestones are described in
 | --- | --- |
 | `storage:mount <app> <name>:<path> [--process-type] [--size] [--no-restart]` (creates the volume if needed), `storage:unmount`, `storage:list`, `storage:report` | ✅ named volumes instead of host directories; a local volume is attached to one instance |
 | `storage:create [--size] [--type]`, `storage:resize`, `storage:move <app> <name> <node>`, `storage:destroy [--force]` | ➕ ✅ |
-| `storage:export <app> <name> [--live] > file.tar.gz`, `storage:import <app> <name> [--clear] < file.tar.gz` | ➕ ✅ |
+| `storage:export <app> <name> [--live] > file.tar.gz`, `storage:import <app> <name> [--clear] [--keep-owners] < file.tar.gz` | ➕ ✅ |
 | `storage:ensure-directory` | ✖ volumes are disks, created by `storage:mount` |
 | Object-storage volumes (`--type s3`), shared by many instances | 🔜 later |
 | `postgres:*`, `redis:*`, ... | 🔜 later, as apps plus volumes plus `*:link` |

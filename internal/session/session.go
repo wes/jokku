@@ -56,6 +56,9 @@ type Request struct {
 	Path  string `json:"path,omitempty"`  // export and import: the directory
 	Live  bool   `json:"live,omitempty"`  // export without pausing the app
 	Clear bool   `json:"clear,omitempty"` // import into an emptied directory
+	// KeepOwners restores the archive's numeric owners on import, instead
+	// of giving everything to the directory's owner.
+	KeepOwners bool `json:"keep_owners,omitempty"`
 
 	Token string `json:"token,omitempty"` // set by the node agent
 }
@@ -217,10 +220,26 @@ type ReadWriter struct {
 	io.Writer
 }
 
-// Splice relays frames both ways between two connections until either ends.
-func Splice(a, b io.ReadWriter) {
-	done := make(chan struct{}, 2)
-	go func() { io.Copy(a, b); done <- struct{}{} }()
-	go func() { io.Copy(b, a); done <- struct{}{} }()
-	<-done
+// Splice relays a session between a client and the server side (towards
+// the guest) until the server's side ends, so its last frames, the exit
+// status among them, always get through. Input the server no longer reads
+// is dropped; a client that goes away closes the server's side, which ends
+// the session.
+func Splice(client io.ReadWriter, server io.ReadWriteCloser) {
+	go func() {
+		buf := make([]byte, 32<<10)
+		for {
+			n, err := client.Read(buf)
+			if n > 0 {
+				if _, werr := server.Write(buf[:n]); werr != nil {
+					return // the server is done; its output is still on its way
+				}
+			}
+			if err != nil {
+				server.Close() // the client went away
+				return
+			}
+		}
+	}()
+	io.Copy(client, server)
 }

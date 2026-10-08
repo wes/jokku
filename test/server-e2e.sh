@@ -227,6 +227,38 @@ grep -q "Unchanged, left running: web" <<<"$out" || fail "a deploy that changes 
 jssh storage:list keep | grep -E "^data +local +1g .* ready +web:/data" || fail "storage:list: $(jssh storage:list keep)"
 if jssh ps:scale keep web=2 2>/dev/null; then fail "scaled a process with a local volume past one"; fi
 sudo sh -c 'ls /var/lib/jokku/volumes/*.ext4' >/dev/null || fail "no volume disk on the server"
+disk=$(jssh storage:report keep --storage-data-disk)
+sudo test -f "${disk#*:}" || fail "storage:report names no disk: $disk"
+
+step "jokku enter runs commands inside the instance"
+[ "$(jssh enter keep web cat /data/seed)" = seeded ] || fail "enter could not read the volume"
+[ "$(jssh enter keep web id -u)" != 0 ] || fail "enter ran as root, not the image's user"
+[ "$(jssh enter keep --root web id -u)" = 0 ] || fail "enter --root did not run as root"
+set +e
+jssh "enter keep web sh -c 'exit 7'"
+status=$?
+set -e
+[ "$status" -eq 7 ] || fail "enter returned $status for a command that exited 7"
+
+step "storage:export and storage:import copy a volume's files"
+backup=$(mktemp -d)
+jssh storage:export keep data >"$backup/data.tar.gz" || fail "storage:export failed"
+tar -tzf "$backup/data.tar.gz" | grep -qx "boots" || fail "the export lacks boots: $(tar -tzf "$backup/data.tar.gz")"
+mkdir "$backup/files"
+tar -xzf "$backup/data.tar.gz" -C "$backup/files"
+[ "$(cat "$backup/files/seed")" = seeded ] || fail "the exported seed is wrong"
+echo restored-marker >"$backup/files/boots"
+tar -czf "$backup/new.tar.gz" -C "$backup/files" .
+jssh storage:import keep data --clear <"$backup/new.tar.gz" || fail "storage:import failed"
+# The app restarted in place, appending a boot to the restored file.
+eventually_restored() {
+  for _ in $(seq 1 30); do
+    b=$(kget boots 2>/dev/null) && [ "$(head -n 1 <<<"$b")" = restored-marker ] && [ "$(wc -l <<<"$b")" -eq 2 ] && return 0
+    sleep 1
+  done
+  return 1
+}
+eventually_restored || fail "the import was not restored, or the app did not restart: $(kget boots)"
 jssh apps:destroy keep --force
 for _ in $(seq 1 30); do
   sudo sh -c 'ls /var/lib/jokku/volumes/*.ext4' >/dev/null 2>&1 || break

@@ -36,6 +36,9 @@ type Config struct {
 	StopTimeout int      `json:"stop_timeout"`          // seconds between the stop signal and SIGKILL
 	StopSignal  string   `json:"stop_signal,omitempty"` // default SIGTERM; the image's STOPSIGNAL
 	Mounts      []Mount  `json:"mounts,omitempty"`
+	// AgentToken authorizes sessions (jokku enter, volume copies) with the
+	// guest agent. Empty turns the agent off.
+	AgentToken string `json:"agent_token,omitempty"`
 }
 
 // Mount is a volume: an ext4 disk mounted at Path before the app starts.

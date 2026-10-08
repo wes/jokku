@@ -256,10 +256,42 @@ The app's stdout and stderr go to the VM's serial console, which is the
 unit's output, so they land in the journal tagged with `JOKKU_APP` and
 `JOKKU_PROCESS`; `jokku logs` reads them from there.
 
+### Sessions: jokku enter and volume copies
+
+Init doubles as a guest agent on a vsock port. Vsock is Firecracker's
+host-to-guest channel, which needs no network and nothing in the image. It
+serves three kinds of session:
+- **exec:** `jokku enter`, a command or shell with a terminal or plain pipes.
+- **export:** a directory as a `.tar.gz`, for `storage:export`.
+- **import:** restoring a directory from a tar, for `storage:import`.
+
+A session travels the same frames all the way:
+
+```
+CLI --HTTP upgrade--> API --HTTP upgrade, mesh--> node agent --vsock--> guest init
+```
+
+The node agent finds the VM through Firecracker's vsock socket in the
+instance's directory. It adds the token generated for that VM at boot,
+which sits on the config drive that only root in the VM can read. So only
+the node's agent can open sessions with a VM, and the app can't use the
+guest agent to become root. Each session is recorded in `jokku events` with
+who opened it.
+
+- Commands run as the image's `USER` with the app's environment, unless
+  `--root` is given.
+- Exports pause the app's process group (SIGSTOP/SIGCONT) while they copy,
+  unless `--live` is given.
+- Imports pause the app, extract the archive, then restart the app inside
+  the running VM: init starts it again rather than powering off.
+
+Volumes are read and written through the running instance that mounts them.
+The host never mounts a filesystem the app wrote, which would hand the host
+kernel data the app controls.
+
 Not yet: running Firecracker under its `jailer` (chroot, unprivileged uid,
-cgroup limits), and a vsock guest agent for `jokku run` and `jokku enter`.
-Both are planned; until the jailer lands, treat apps on one server as
-trusting each other, as with Dokku.
+cgroup limits), and `jokku run` (a one-off instance). Until the jailer
+lands, treat apps on one server as trusting each other, as with Dokku.
 
 Sizing is per process type: `resource:limit app --cpu 2 --memory 1g
 --process-type web`. Firecracker cannot hot-add vCPUs, so a size change is a
@@ -681,7 +713,7 @@ stays the stable entry point, including for versions that predate the command.
 | 7443/tcp | control | HTTPS API (join, tokens) |
 | 51820/udp | all nodes | WireGuard |
 | 53/udp, 53/tcp | VM bridge only | `jokku-dns`: internal names for microVMs |
-| 7444/tcp | mesh only | agent API: log streams, volume copies between nodes |
+| 7444/tcp | mesh only | agent API: log streams, sessions with VMs, volume copies between nodes |
 
 ## Differences from Dokku
 
@@ -711,6 +743,7 @@ stays the stable entry point, including for versions that predate the command.
   cert storage, failover, `jokku top`, events.
 - **M3 – remote API.** HTTPS listener, tokens, `git:sync`, deploy keys,
   `git:from-image` and `registry:login` (*done*), `git:from-archive`.
-- **M4 – depth.** The Firecracker `jailer`, `run` and `enter` via vsock, volumes (local
-  disks that move with their instance: *done*; object storage next), `releases:rollback`,
-  app.json health checks, log drains, services.
+- **M4 – depth.** The Firecracker `jailer`, `run`, `enter` via vsock (*done*, with
+  `storage:export`/`storage:import`), volumes (local disks that move with their instance:
+  *done*; object storage next), `releases:rollback`, app.json health checks, log drains,
+  services.

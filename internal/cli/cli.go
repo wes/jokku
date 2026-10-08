@@ -43,6 +43,10 @@ type Command struct {
 	// AnyFlags accepts arbitrary --flags; report commands use them to select
 	// one value (apps:report myapp --app-locked).
 	AnyFlags bool
+	// PassArgsAfter stops flag parsing after this many positional
+	// arguments (the app included), so the rest reach a command verbatim:
+	// "jokku enter app web ls -la".
+	PassArgsAfter int
 	// Local commands run without an API connection.
 	Local  bool
 	Hidden bool
@@ -99,6 +103,7 @@ var namespaceHelp = map[string]string{
 	"nodes":              "Manage the machines in the cluster",
 	"cluster":            "Add servers and see the cluster",
 	"events":             "List recent events",
+	"enter":              "Open a shell in a running instance of an app",
 	"top":                "Watch the cluster, apps and machines live",
 	"version":            "Print the jokku version",
 	"update":             "Update jokku on this server",
@@ -133,6 +138,7 @@ func init() {
 	register(nodesCommands...)
 	register(clusterCommands...)
 	register(topCommand)
+	register(enterCommand)
 	register(serverCommands...)
 	register(propertyCommands()...)
 	register(updateCommand)
@@ -264,6 +270,9 @@ func parseFlags(c *Context, args []string) ([]string, error) {
 		}
 		if !strings.HasPrefix(a, "-") || a == "-" {
 			positional = append(positional, a)
+			if n := c.Cmd.PassArgsAfter; n > 0 && len(positional) >= n {
+				return append(positional, args[i+1:]...), nil
+			}
 			continue
 		}
 		name, value, hasValue := strings.Cut(strings.TrimLeft(a, "-"), "=")

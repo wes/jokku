@@ -142,6 +142,10 @@ if $worker_runs_vms; then
   grep -q hello-web-1 <<<"$seen" && grep -q hello-web-2 <<<"$seen" || fail "requests did not reach both nodes: $seen"
   # Logs come from both nodes.
   eventually 20 "logs from both nodes" bash -c "sudo jokku logs hello -n 50 | grep -q 'app\[web.2\]: listening on'"
+  # jokku enter reaches an instance on the worker, through its agent.
+  for p in web.1 web.2; do
+    [ "$(sudo jokku enter hello "$p" hostname </dev/null)" = "hello-${p/./-}" ] || fail "enter $p: $(sudo jokku enter hello "$p" hostname </dev/null 2>&1)"
+  done
 fi
 
 step "internal DNS names reach every node"

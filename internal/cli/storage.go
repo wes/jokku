@@ -31,6 +31,13 @@ var storageCommands = []*Command{
 	{Name: "storage:move", Help: "Move a volume, and the instance using it, to another node", App: NeedsApp, Args: "<name> <node>", MinArgs: 2,
 		Flags: []Flag{{Name: "detach", Help: "Return right away instead of following the move"}}, Run: storageMove},
 	{Name: "storage:destroy", Help: "Delete a volume and its data", App: NeedsApp, Args: "<name>", MinArgs: 1, Flags: []Flag{forceFlag}, Run: storageDestroy},
+	{Name: "storage:export", Help: "Write a volume's files to stdout as a .tar.gz (the app pauses for a moment)", App: NeedsApp, Args: "<name>", MinArgs: 1,
+		Flags: []Flag{{Name: "live", Help: "Don't pause the app; files being written may be caught mid-write"}}, Run: storageExport},
+	{Name: "storage:import", Help: "Restore a volume's files from a .tar or .tar.gz on stdin, then restart the process using it", App: NeedsApp, Args: "<name>", MinArgs: 1,
+		Flags: []Flag{
+			{Name: "clear", Help: "Delete the volume's files first, so it holds exactly the archive"},
+			{Name: "keep-owners", Help: "Keep the archive's numeric owners (by default, files belong to the volume's owner)"},
+		}, Run: storageImport},
 	{Name: "storage:ensure-directory", Hidden: true, MaxArgs: -1, Local: true, Run: func(*Context) error {
 		return errors.New("Jokku volumes are disks, not host directories: mount one with jokku storage:mount <app> <name>:<path>, which creates it")
 	}},
@@ -188,6 +195,9 @@ func storageReport(c *Context) error {
 			}
 			rows = append(rows, row{"storage-" + v.Name, "Storage " + v.Name,
 				fmt.Sprintf("%s, %s (%s used), %s, %s", v.Type, formatMemory(v.SizeMB), formatMemory(v.UsedMB), where, volumeStatus(v))})
+			if v.Disk != "" {
+				rows = append(rows, row{"storage-" + v.Name + "-disk", "Storage " + v.Name + " disk", v.Node + ":" + v.Disk})
+			}
 		}
 		return c.report(a.Name+" storage information", append([]row{
 			{"storage-mounts", "Storage mounts", strings.Join(mountList, ", ")},
@@ -261,6 +271,25 @@ func storageDestroy(c *Context) error {
 	}
 	c.Step("Destroying volume %s", name)
 	return c.API.DestroyVolume(c, c.App, name)
+}
+
+func storageExport(c *Context) error {
+	if isTerminal(c.Stdout) {
+		return fmt.Errorf("storage:export writes a .tar.gz to stdout; send it to a file: jokku storage:export %s %s > %s.tar.gz (over ssh, without -t)", c.App, c.Args[0], c.Args[0])
+	}
+	return c.API.ExportVolume(c, c.App, c.Args[0], c.Bool("live"), c.Stdout)
+}
+
+func storageImport(c *Context) error {
+	if isTerminal(c.Stdin) {
+		return fmt.Errorf("storage:import reads a .tar or .tar.gz from stdin: jokku storage:import %s %s < %s.tar.gz (over ssh, without -t)", c.App, c.Args[0], c.Args[0])
+	}
+	c.Step("Restoring volume %s of %s", c.Args[0], c.App)
+	if err := c.API.ImportVolume(c, c.App, c.Args[0], c.Bool("clear"), c.Bool("keep-owners"), c.Stdin); err != nil {
+		return err
+	}
+	c.Step("Restored; the process using it was restarted")
+	return nil
 }
 
 func parseSize(s string) (int, error) {

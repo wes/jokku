@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -320,6 +321,73 @@ func (c *Client) UnmountVolume(ctx context.Context, app, name string, m types.Vo
 	}
 	var v types.Volume
 	return &v, c.call(ctx, http.MethodDelete, volumePath(app, name, "mounts")+"?"+q.Encode(), nil, &v)
+}
+
+// ExportVolume writes a volume's files to w as a .tar.gz. live skips
+// pausing the app.
+func (c *Client) ExportVolume(ctx context.Context, app, name string, live bool, w io.Writer) error {
+	path := volumePath(app, name, "export")
+	if live {
+		path += "?live=true"
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		return fmt.Errorf("the export was cut off: %w", err)
+	}
+	return nil
+}
+
+// ImportVolume restores a volume's files from a tar (gzipped or not) and
+// restarts the app's process that mounts it. clear empties the volume
+// first; keepOwners keeps the archive's owners instead of the volume's.
+func (c *Client) ImportVolume(ctx context.Context, app, name string, clear, keepOwners bool, archive io.Reader) error {
+	q := url.Values{}
+	if clear {
+		q.Set("clear", "true")
+	}
+	if keepOwners {
+		q.Set("keep-owners", "true")
+	}
+	path := volumePath(app, name, "import") + "?" + q.Encode()
+	req, err := c.newRequest(ctx, http.MethodPost, path, archive)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-tar")
+	resp, err := c.do(req)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
+}
+
+// Enter opens a session in one of an app's running instances (process "",
+// web or web.2). The caller sends a session.Request first.
+func (c *Client) Enter(ctx context.Context, app, process string) (io.ReadWriteCloser, error) {
+	req, err := c.newRequest(ctx, http.MethodPost, appPath(app, "enter")+"?process="+url.QueryEscape(process), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "jokku-session")
+	resp, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	rwc, ok := resp.Body.(io.ReadWriteCloser)
+	if resp.StatusCode != http.StatusSwitchingProtocols || !ok {
+		resp.Body.Close()
+		return nil, fmt.Errorf("the server did not open a session (%s)", resp.Status)
+	}
+	return rwc, nil
 }
 
 func (c *Client) MoveVolume(ctx context.Context, app, name, node string) (*types.Volume, error) {

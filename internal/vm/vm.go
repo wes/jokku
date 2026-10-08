@@ -10,9 +10,12 @@ package vm
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -26,6 +29,7 @@ import (
 
 	"github.com/wes/jokku/internal/deps"
 	"github.com/wes/jokku/internal/guest"
+	"github.com/wes/jokku/internal/session"
 )
 
 const (
@@ -211,6 +215,16 @@ func (h *Host) Start(ctx context.Context, s Spec) error {
 	for i, v := range s.Volumes {
 		s.Guest.Mounts = append(s.Guest.Mounts, guest.Mount{Device: guest.VolumeDevice(i), Path: v.Path})
 	}
+	// A fresh token for the guest agent at every boot; the node's agent
+	// reads it back from the instance's directory to open sessions.
+	if s.Guest.AgentToken == "" {
+		b := make([]byte, 24)
+		rand.Read(b)
+		s.Guest.AgentToken = hex.EncodeToString(b)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "session.token"), []byte(s.Guest.AgentToken), 0o600); err != nil {
+		return err
+	}
 	cfg, err := s.Guest.Encode()
 	if err != nil {
 		return err
@@ -241,6 +255,7 @@ func (h *Host) Start(ctx context.Context, s Spec) error {
 	}
 	sock := filepath.Join(dir, "fc.sock")
 	os.Remove(sock) // Firecracker refuses to start over a stale socket
+	os.Remove(filepath.Join(dir, "vsock.sock"))
 
 	process := strings.SplitN(s.Process, ".", 2)[0]
 	args := []string{
@@ -300,6 +315,9 @@ func (h *Host) firecrackerConfig(s Spec, dir string) ([]byte, error) {
 		},
 		"drives":         drives,
 		"machine-config": map[string]any{"vcpu_count": s.CPUs, "mem_size_mib": s.MemoryMB},
+		// The guest agent (jokku enter, volume copies) is reached through
+		// this socket; every VM is CID 3 behind its own.
+		"vsock": map[string]any{"guest_cid": 3, "uds_path": filepath.Join(dir, "vsock.sock")},
 		"network-interfaces": []map[string]any{{
 			"iface_id":      "eth0",
 			"guest_mac":     fmt.Sprintf("06:00:%02x:%02x:%02x:%02x", b[0], b[1], b[2], b[3]),
@@ -398,6 +416,39 @@ func (h *Host) Stop(ctx context.Context, id string, grace time.Duration) error {
 	}
 	return run(ctx, "systemctl", "stop", unit(id))
 }
+
+// Session connects to a running VM's guest agent, returning the connection
+// and the token the guest expects.
+func (h *Host) Session(ctx context.Context, id string) (io.ReadWriteCloser, string, error) {
+	token, err := os.ReadFile(filepath.Join(h.dir(id), "session.token"))
+	if err != nil {
+		return nil, "", errors.New("this instance was started by an older jokku, which could not open sessions with it; restart it first (jokku ps:restart)")
+	}
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "unix", filepath.Join(h.dir(id), "vsock.sock"))
+	if err != nil {
+		return nil, "", fmt.Errorf("reaching the VM: %w", err)
+	}
+	// Firecracker's vsock handshake: ask for the guest's port, get OK back.
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	fmt.Fprintf(conn, "CONNECT %d\n", session.Port)
+	br := bufio.NewReader(conn)
+	line, err := br.ReadString('\n')
+	if err != nil || !strings.HasPrefix(line, "OK ") {
+		conn.Close()
+		return nil, "", errors.New("the VM's agent does not answer; is the instance running?")
+	}
+	conn.SetDeadline(time.Time{})
+	return &bufferedConn{Conn: conn, r: br}, strings.TrimSpace(string(token)), nil
+}
+
+// bufferedConn reads through the reader that read the handshake.
+type bufferedConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (c *bufferedConn) Read(p []byte) (int, error) { return c.r.Read(p) }
 
 // Remove deletes a stopped instance's network device and files. Its
 // volumes are kept.

@@ -64,6 +64,10 @@ type Runtime interface {
 	CreateVolume(ctx context.Context, path string, sizeMB int) error
 	GrowVolume(ctx context.Context, path string, sizeMB int) error
 	Attached(ctx context.Context) (map[string]bool, error)
+
+	// Session connects to a running VM's guest agent, returning the token
+	// it expects.
+	Session(ctx context.Context, id string) (io.ReadWriteCloser, string, error)
 }
 
 // Mesh keeps the WireGuard mesh matching the peer list.

@@ -301,3 +301,21 @@ func TestParseMemory(t *testing.T) {
 		t.Error("expected an error")
 	}
 }
+
+func TestEnterPassesCommandArgsThrough(t *testing.T) {
+	for _, tt := range []struct {
+		args     []string
+		wantArgs []string
+		root     bool
+	}{
+		{[]string{"app", "web", "ls", "-la", "--root"}, []string{"app", "web", "ls", "-la", "--root"}, false},
+		{[]string{"--root", "app", "web", "id", "-u"}, []string{"app", "web", "id", "-u"}, true},
+		{[]string{"app", "--root", "web.2", "sh", "-c", "exit 7"}, []string{"app", "web.2", "sh", "-c", "exit 7"}, true},
+	} {
+		c := &Context{Cmd: commands["enter"], flags: map[string]string{}}
+		got, err := parseFlags(c, tt.args)
+		if err != nil || !reflect.DeepEqual(got, tt.wantArgs) || c.Bool("root") != tt.root {
+			t.Errorf("parseFlags(%q) = %q (root %v), %v; want %q (root %v)", tt.args, got, c.Bool("root"), err, tt.wantArgs, tt.root)
+		}
+	}
+}

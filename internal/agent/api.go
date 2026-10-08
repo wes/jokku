@@ -11,27 +11,33 @@ import (
 	"github.com/wes/jokku/internal/journal"
 )
 
-// Handler is the agent's API. It serves this node's app logs to the control
-// node, which presents token (empty on the control node, which reads its own
-// logs directly, so log streams are off there), and volume disks to the node
-// taking one over, which presents that move's token.
+// Handler is the agent's API. It serves the control node, which presents
+// token: this node's app logs, and sessions with its VMs (jokku enter,
+// volume copies). It also serves volume disks to the node taking one over,
+// which presents that move's token. With no token, only the latter.
 func (a *Agent) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
+	authorized := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next(w, r)
+		}
+	}
 	if token != "" {
 		for _, path := range []string{"/v1/logs", "/v1/instance-logs", "/v1/requests"} {
-			mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
-				if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
-					http.Error(w, "unauthorized", http.StatusUnauthorized)
-					return
-				}
+			mux.HandleFunc("GET "+path, authorized(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 				rc := http.NewResponseController(w)
 				journal.Serve(r.Context(), path, r.URL.Query(), func(line string) {
 					w.Write([]byte(line + "\n"))
 					rc.Flush()
 				})
-			})
+			}))
 		}
+		mux.HandleFunc("POST /v1/instances/{id}/session", authorized(a.serveSession))
 	}
 	mux.HandleFunc("POST /v1/volumes/{id}/copy", a.serveVolume)
 	return mux

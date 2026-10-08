@@ -123,11 +123,47 @@ step "logs and events cover the cluster"
 eventually 20 "app output in jokku logs" bash -c "sudo jokku logs hello -n 50 | grep -q 'app\[web.1\]: listening on'"
 sudo jokku events | grep -q "worker1 joined" || fail "no join event"
 
+worker_runs_vms=false
+if sudo jokku nodes:report worker1 --node-runs-microvms | grep -q '^yes'; then worker_runs_vms=true; fi
+echo "worker runs microVMs: $worker_runs_vms"
+
+if $worker_runs_vms; then
+  step "scale out: one instance on each node"
+  sudo jokku ps:scale hello web=2
+  sudo jokku ps:report hello
+  sudo jokku ps:report hello | grep -qE "Status web.[12]: +healthy \(v[0-9]+, 10\.210\.2\." || fail "no instance on worker1"
+  wssh "ls /var/lib/jokku/artifacts/*.ext4" >/dev/null || fail "worker1 did not download the root filesystem"
+  # The control node's proxy reaches the instance on worker1 over the mesh.
+  seen=""
+  for _ in $(seq 1 12); do seen="$seen $(curl -fsS -H "Host: $domain" http://127.0.0.1/)"; done
+  grep -q hello-web-1 <<<"$seen" && grep -q hello-web-2 <<<"$seen" || fail "requests did not reach both nodes: $seen"
+  # Logs come from both nodes.
+  eventually 20 "logs from both nodes" bash -c "sudo jokku logs hello -n 50 | grep -q 'app\[web.2\]: listening on'"
+fi
+
 step "the control node notices the worker going down and coming back"
 wssh "sudo systemctl stop jokku"
 eventually 60 "worker1 marked down" bash -c "sudo jokku nodes:list | grep -E '^worker1 +worker +down'"
+if $worker_runs_vms; then
+  wssh "systemctl list-units --plain --no-legend 'jokku-vm-*' | grep -q running" || fail "the worker's VM stopped with its jokku service"
+fi
 wssh "sudo systemctl start jokku"
 eventually 60 "worker1 back" bash -c "sudo jokku nodes:list | grep -E '^worker1 +worker +ready'"
+if $worker_runs_vms; then
+  eventually 30 "the worker's instance is adopted, not restarted" bash -c \
+    "sudo jokku ps:report hello | grep -E 'Status web.[12]: +healthy \(v[0-9]+, 10\.210\.2\..*, 0 restarts\)'"
+
+  step "a dead worker's instance moves to the control node"
+  sudo kill "$(cat "$work/qemu.pid")"
+  watch_fail=0
+  for _ in $(seq 1 60); do curl -fs -o /dev/null --max-time 2 -H "Host: $domain" http://127.0.0.1/ || watch_fail=$((watch_fail + 1)); sleep 2; done &
+  watcher=$!
+  eventually 150 "instance rescheduled to the control node" bash -c \
+    "sudo jokku ps:report hello | grep -cE 'Status web.[12]: +healthy \(v[0-9]+, 10\.210\.1\.' | grep -qx 2"
+  kill $watcher 2>/dev/null || true
+  sudo jokku events | tail -n 5
+  curl -fsS -H "Host: $domain" http://127.0.0.1/ | grep -q "served by" || fail "the app is not serving after the failover"
+fi
 
 step "removing the worker tears down its mesh peer"
 sudo jokku nodes:remove worker1 --force

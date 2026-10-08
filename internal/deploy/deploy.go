@@ -453,12 +453,20 @@ func (p *Pipeline) printURLs(ctx context.Context, app string, log func(string)) 
 		return nil
 	}
 	log("=====> Application deployed:")
+	hint := false
 	for _, d := range domains {
 		scheme := "http"
-		if le["enabled"] == "true" && proxy.PublicHost(d) {
-			scheme = "https"
+		if proxy.PublicHost(d) {
+			if le["enabled"] == "true" {
+				scheme = "https"
+			} else {
+				hint = true
+			}
 		}
 		log("       " + scheme + "://" + d)
+	}
+	if hint {
+		log("       For HTTPS: jokku letsencrypt:enable " + app)
 	}
 	return nil
 }

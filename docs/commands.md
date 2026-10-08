@@ -49,7 +49,7 @@ tracks what exists today. Milestones are described in
 | --- | --- |
 | `domains:add`, `domains:remove`, `domains:set`, `domains:clear`, `domains:report`, and the `-global` variants | ✅ |
 | `proxy:enable`, `proxy:disable`, `proxy:report` | ✅ |
-| `letsencrypt:enable`, `letsencrypt:disable`, `letsencrypt:set` (`email`), `letsencrypt:report` | ✅ automatic for public domains |
+| `letsencrypt:enable`, `letsencrypt:disable`, `letsencrypt:set` (`email`), `letsencrypt:report` | ✅ off for new apps, as in Dokku |
 | `ports:list`, `ports:add`, `ports:set`, `ports:remove`, `ports:clear` | 🔜 later (apps listen on `$PORT`) |
 | `certs:add`, `certs:remove`, `certs:report` | 🔜 M3 |
 | `nginx:*` | ✖ Caddy replaces nginx |

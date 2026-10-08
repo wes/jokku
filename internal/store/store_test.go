@@ -115,6 +115,35 @@ func TestResourcesEffective(t *testing.T) {
 	}
 }
 
+func TestNewAppsStartWithoutLetsEncrypt(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	enabled := func(app string) string {
+		t.Helper()
+		p, err := s.Properties(ctx, app, "letsencrypt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p["enabled"]
+	}
+	s.CreateApp(ctx, "new")
+	if got := enabled("new"); got != "false" {
+		t.Errorf("a new app has letsencrypt enabled=%q, want false", got)
+	}
+	// Turned on for one app, a clone keeps it on.
+	s.SetProperty(ctx, "new", "letsencrypt", "enabled", "true")
+	s.CloneApp(ctx, "new", "copy")
+	if got := enabled("copy"); got != "true" {
+		t.Errorf("a clone of an app with letsencrypt on has enabled=%q, want true", got)
+	}
+	// Turned on with --global, new apps follow the global setting.
+	s.SetProperty(ctx, "", "letsencrypt", "enabled", "true")
+	s.CreateApp(ctx, "after")
+	if got := enabled("after"); got != "" {
+		t.Errorf("with letsencrypt on globally, a new app has its own enabled=%q, want none", got)
+	}
+}
+
 func TestCloneAndDelete(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)

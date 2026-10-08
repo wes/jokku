@@ -384,15 +384,30 @@ release keeps serving, and the failing instance's logs are printed.
 
 ### Scaling and failure
 
-- **Horizontal:** `ps:scale app web=4` adds or removes instances of the
-  current release across nodes.
+- **Horizontal:** `ps:scale app web=4` rolls out that many instances of the
+  current release, spread across nodes.
 - **Vertical:** `resource:limit` sets vCPU and memory per process type and
   triggers a rollout.
-- **Node failure:** a node silent for 30s is marked `down`. Its instances
-  are rescheduled elsewhere (except volume-pinned ones). When it comes
-  back, it receives a desired state without them and stops them.
-- **Draining:** `nodes:drain node2` moves everything off before
-  maintenance.
+- **A node dies:** after 30s without a report it is marked `down` and the
+  proxies stop sending it new requests. After another 60s (so reboots and
+  updates don't shuffle anything) its instances are started on other nodes.
+  When it comes back, its desired state no longer includes them and it stops
+  them.
+- **Requests while a node dies:** the proxy gives up on an unreachable
+  instance after 2s and retries the request on another for up to 5s, and
+  passive health checks skip the dead one. Requests already in flight to a
+  machine that vanishes can still fail; CI kills a worker outright and allows
+  at most two.
+- **Draining:** `nodes:drain node2` starts a copy of each instance elsewhere,
+  waits for it to pass checks, then stops the original after a 10s grace
+  period, so traffic never drops. `nodes:remove` then takes the node out;
+  `--force` skips the drain and treats it like a dead node.
+- **The control node is unreachable:** workers keep running, restarting
+  crashed instances and serving traffic with their last known state (cached on
+  disk, so it survives their own restarts). Deploys and changes wait until it
+  is back.
+- **An agent restarts** (a crash, an update): it adopts the VMs that are
+  running instead of starting them again, so apps don't notice.
 
 ## Cluster join
 

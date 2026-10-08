@@ -17,8 +17,27 @@ func (c *Controller) Report(ctx context.Context, node string, st *types.NodeStat
 		return fmt.Errorf("node %s speaks protocol %d, this control node speaks %d: update it with sudo jokku update",
 			node, st.Protocol, types.ProtocolVersion)
 	}
-	if err := c.Store.NodeReported(ctx, node, st.Version, st.CanRun, st.Metrics); err != nil {
+	if err := c.Store.NodeReported(ctx, node, st.Version, st.CanRun, st.Features, st.Metrics); err != nil {
 		return err
+	}
+	volumesChanged := false
+	for _, vs := range st.Volumes {
+		changed, err := c.Store.ReportVolume(ctx, node, vs)
+		if err != nil {
+			return err
+		}
+		volumesChanged = volumesChanged || changed
+		if changed && vs.State == types.VolumeMissing {
+			if v, err := c.Store.VolumeByID(ctx, vs.ID); err == nil {
+				c.Store.AddEvent(ctx, "volume", v.App, node, "the disk of volume %s is missing on %s; its instance cannot start", v.Name, node)
+			}
+		}
+	}
+	if volumesChanged {
+		// Moves advance on what nodes report; don't wait for the next tick.
+		if _, err := c.tickVolumes(ctx); err != nil {
+			return err
+		}
 	}
 	insts, err := c.Store.Instances(ctx, "")
 	if err != nil {
@@ -70,7 +89,7 @@ func (c *Controller) Report(ctx context.Context, node string, st *types.NodeStat
 			changed = true
 		}
 	}
-	if changed {
+	if changed || volumesChanged {
 		c.Changed()
 	}
 	return nil

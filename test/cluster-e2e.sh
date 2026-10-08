@@ -156,6 +156,36 @@ if $worker_runs_vms; then
   eventually 30 "the worker's instance is adopted, not restarted" bash -c \
     "sudo jokku ps:report hello | grep -E 'Status web.[12]: +healthy \(v[0-9]+, 10\.210\.2\..*, 0 restarts\)'"
 
+  step "a volume moves between nodes with its data"
+  ctl=$(sudo jokku nodes:list | awk '$2 == "control" {print $1}')
+  mkdir -p "$work/keep" && cd "$work/keep"
+  git init -q -b main
+  printf 'FROM public.ecr.aws/docker/library/busybox:1.36\nRUN mkdir /data\n' >Dockerfile
+  printf 'web: date >>/data/boots && exec httpd -f -p "$PORT" -h /data\n' >Procfile
+  git add -A && git commit -qm init
+  sudo git -c safe.directory='*' archive --format=tar HEAD >"$work/keep.tar"
+  cd "$OLDPWD"
+  sudo jokku apps:create keep
+  sudo jokku storage:create keep data --size 1g
+  sudo jokku storage:move keep data worker1 # never used yet: its disk is made on worker1
+  sudo jokku storage:mount keep data:/data --no-restart
+  sudo curl -fsS --unix-socket /run/jokku/jokku.sock -H "Content-Type: application/x-tar" \
+    --data-binary "@$work/keep.tar" "http://jokku/v1/apps/keep/deploys?source=archive" | tee "$work/keep.log" | tail -n 3
+  grep -q '"status":"succeeded"' "$work/keep.log" || fail "deploying the app with a volume failed"
+  sudo jokku ps:report keep | grep -qE "Status web.1: +healthy \(v[0-9]+, 10\.210\.2\." || fail "the volume's instance is not on worker1"
+  kdomain=$(sudo jokku domains:report keep --domains-app-vhosts)
+  kboots() { curl -fsS --max-time 5 -H "Host: $kdomain" http://127.0.0.1/boots | wc -l; }
+  eventually 30 "keep serves its volume" curl -fsS --max-time 5 -H "Host: $kdomain" http://127.0.0.1/boots
+  [ "$(kboots)" -eq 1 ] || fail "expected one boot on worker1"
+  sudo jokku storage:move keep data "$ctl" || fail "storage:move to the control node"
+  eventually 60 "keep healthy on the control node" bash -c \
+    "sudo jokku ps:report keep | grep -qE 'Status web.1: +healthy \(v[0-9]+, 10\.210\.1\.'"
+  eventually 30 "keep serves after the move" curl -fsS --max-time 5 -H "Host: $kdomain" http://127.0.0.1/boots
+  [ "$(kboots)" -eq 2 ] || fail "the volume's data did not come along: $(curl -fsS -H "Host: $kdomain" http://127.0.0.1/boots)"
+  eventually 30 "worker1 deletes its old copy" wssh "! sudo sh -c 'ls /var/lib/jokku/volumes/*.ext4*'"
+  sudo jokku events keep | tail -n 5
+  sudo jokku apps:destroy keep --force
+
   step "a dead worker's instance moves to the control node"
   rm -f "$work/failures"
   (while :; do curl -fs -o /dev/null --max-time 10 -H "Host: $domain" http://127.0.0.1/ || echo x >>"$work/failures"; sleep 0.5; done) &

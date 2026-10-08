@@ -38,6 +38,10 @@ func (s *Server) scale(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := s.scaleWithVolumes(r.Context(), app, req.Quantities); err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	if err := s.Store.Scale(r.Context(), app, req.Quantities); err != nil {
 		s.fail(w, r, err)
 		return

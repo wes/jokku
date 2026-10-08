@@ -102,6 +102,15 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /v1/apps/{app}/releases", s.listReleases)
 	m.HandleFunc("GET /v1/apps/{app}/logs", s.logs)
 
+	m.HandleFunc("GET /v1/apps/{app}/volumes", s.listVolumes)
+	m.HandleFunc("POST /v1/apps/{app}/volumes", s.createVolume)
+	m.HandleFunc("GET /v1/apps/{app}/volumes/{name}", s.getVolume)
+	m.HandleFunc("PATCH /v1/apps/{app}/volumes/{name}", s.resizeVolume)
+	m.HandleFunc("DELETE /v1/apps/{app}/volumes/{name}", s.destroyVolume)
+	m.HandleFunc("POST /v1/apps/{app}/volumes/{name}/mounts", s.mountVolume)
+	m.HandleFunc("DELETE /v1/apps/{app}/volumes/{name}/mounts", s.unmountVolume)
+	m.HandleFunc("POST /v1/apps/{app}/volumes/{name}/move", s.moveVolume)
+
 	m.HandleFunc("GET /v1/ssh-keys", s.listSSHKeys)
 	m.HandleFunc("POST /v1/ssh-keys", s.addSSHKey)
 	m.HandleFunc("DELETE /v1/ssh-keys/{name}", s.removeSSHKey)

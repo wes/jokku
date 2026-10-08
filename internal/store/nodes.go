@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/wes/jokku/internal/types"
@@ -28,10 +30,11 @@ type Node struct {
 
 	Version     string
 	WGPublicKey string
-	WGEndpoint  string // host:port
-	TokenHash   string // hash of the agent's credential
-	AgentToken  string // the control node's credential for the agent's API
-	CanRun      string // why microVMs cannot run there; empty if they can
+	WGEndpoint  string   // host:port
+	TokenHash   string   // hash of the agent's credential
+	AgentToken  string   // the control node's credential for the agent's API
+	CanRun      string   // why microVMs cannot run there; empty if they can
+	Features    []string // what its agent supports, e.g. types.FeatureVolumes
 	Metrics     types.NodeMetrics
 }
 
@@ -45,6 +48,9 @@ const (
 var NodeDownAfter = 30 * time.Second
 
 func (n Node) Ready(now time.Time) bool { return now.Sub(n.LastSeen) <= NodeDownAfter }
+
+// Has reports whether the node's agent supports feature.
+func (n Node) Has(feature string) bool { return slices.Contains(n.Features, feature) }
 
 func (n Node) Status(now time.Time) string {
 	switch {
@@ -154,17 +160,21 @@ func (s *Store) NodeByTokenHash(ctx context.Context, hash string) (*Node, error)
 }
 
 const nodeSelect = `SELECT name, role, subnet_index, address, arch, cpus, memory_mb, schedulable, ingress, draining,
-	last_seen, created_at, version, wg_public_key, wg_endpoint, token_hash, agent_token, can_run, metrics FROM nodes`
+	last_seen, created_at, version, wg_public_key, wg_endpoint, token_hash, agent_token, can_run, metrics, features FROM nodes`
 
 func scanNode(row scanner) (*Node, error) {
 	var n Node
 	var seen, created int64
 	var metrics []byte
+	var features string
 	err := row.Scan(&n.Name, &n.Role, &n.SubnetIndex, &n.Address, &n.Arch, &n.CPUs, &n.MemoryMB,
 		&n.Schedulable, &n.Ingress, &n.Draining, &seen, &created,
-		&n.Version, &n.WGPublicKey, &n.WGEndpoint, &n.TokenHash, &n.AgentToken, &n.CanRun, &metrics)
+		&n.Version, &n.WGPublicKey, &n.WGEndpoint, &n.TokenHash, &n.AgentToken, &n.CanRun, &metrics, &features)
 	if err != nil {
 		return nil, err
+	}
+	if features != "" {
+		n.Features = strings.Split(features, ",")
 	}
 	n.LastSeen, n.CreatedAt = fromUnix(seen), fromUnix(created)
 	json.Unmarshal(metrics, &n.Metrics)
@@ -173,13 +183,13 @@ func scanNode(row scanner) (*Node, error) {
 
 // NodeReported records an agent's report: it is alive, and these are its
 // facts.
-func (s *Store) NodeReported(ctx context.Context, name, version, canRun string, m types.NodeMetrics) error {
+func (s *Store) NodeReported(ctx context.Context, name, version, canRun string, features []string, m types.NodeMetrics) error {
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
-	q := "UPDATE nodes SET last_seen = ?, version = ?, can_run = ?, metrics = ?"
-	args := []any{unix(s.now()), version, canRun, b}
+	q := "UPDATE nodes SET last_seen = ?, version = ?, can_run = ?, features = ?, metrics = ?"
+	args := []any{unix(s.now()), version, canRun, strings.Join(features, ","), b}
 	if m.CPUs > 0 {
 		q += ", cpus = ?, memory_mb = ?"
 		args = append(args, m.CPUs, m.MemoryMB)

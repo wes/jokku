@@ -111,8 +111,11 @@ func (c *Controller) ComputeState(ctx context.Context, name string) (*types.Node
 			Artifact: filepath.Base(rel.Artifact), ArtifactSHA256: rel.ArtifactSHA, ArtifactSize: rel.ArtifactLen,
 			IP: in.IP, Port: in.Port, CPUs: in.CPUs, MemoryMB: in.MemoryMB,
 			Argv: rel.Processes[in.ProcessType], Env: Env(rel, in), User: rel.Image.User, WorkDir: rel.Image.WorkingDir,
-			Hostname: Hostname(in), MaxRestarts: max,
+			Hostname: Hostname(in), MaxRestarts: max, Volumes: in.Volumes,
 		})
+	}
+	if st.Volumes, err = c.volumeSpecs(ctx, name, nodes); err != nil {
+		return nil, err
 	}
 	if node.Ingress {
 		if st.Proxy, err = c.proxyState(ctx, apps, insts, nodes, now); err != nil {

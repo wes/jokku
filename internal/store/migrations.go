@@ -176,4 +176,40 @@ CREATE TABLE certlocks (
 	expires_at INTEGER NOT NULL
 );
 `,
+
+	// 4: volumes. A destroyed volume's row stays (state 'destroying', and
+	// app_id NULL once its app is gone) until its node has deleted the disk.
+	// Move columns describe a copy to moving_to in progress; previous_node
+	// keeps the old copy until the new node reports the disk.
+	`
+CREATE TABLE volumes (
+	id            TEXT    PRIMARY KEY,
+	app_id        INTEGER REFERENCES apps (id) ON DELETE SET NULL,
+	name          TEXT    NOT NULL,
+	type          TEXT    NOT NULL,
+	size_mb       INTEGER NOT NULL,
+	state         TEXT    NOT NULL DEFAULT 'new',
+	node          TEXT    NOT NULL DEFAULT '',
+	status        TEXT    NOT NULL DEFAULT '',
+	used_mb       INTEGER NOT NULL DEFAULT 0,
+	previous_node TEXT    NOT NULL DEFAULT '',
+	moving_to     TEXT    NOT NULL DEFAULT '',
+	move_token    TEXT    NOT NULL DEFAULT '',
+	transfer      TEXT    NOT NULL DEFAULT '',
+	copied_mb     INTEGER NOT NULL DEFAULT 0,
+	move_error    TEXT    NOT NULL DEFAULT '',
+	created_at    INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX volumes_app_name ON volumes (app_id, name) WHERE state != 'destroying';
+
+CREATE TABLE volume_mounts (
+	volume_id    TEXT NOT NULL REFERENCES volumes (id) ON DELETE CASCADE,
+	process_type TEXT NOT NULL,
+	path         TEXT NOT NULL,
+	PRIMARY KEY (volume_id, process_type, path)
+);
+
+ALTER TABLE instances ADD COLUMN volumes TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE nodes ADD COLUMN features TEXT NOT NULL DEFAULT '';
+`,
 }

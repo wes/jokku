@@ -156,6 +156,59 @@ type Instance struct {
 	StartedAt time.Time `json:"started_at"`
 }
 
+// Volume is persistent storage for an app's instances. Type "local" is an
+// ext4 disk on one node: the instance it is mounted in runs on that node,
+// and the disk is copied along when the instance moves (nodes:drain,
+// storage:move).
+type Volume struct {
+	Name   string `json:"name"`
+	Type   string `json:"type"` // local
+	SizeMB int    `json:"size_mb"`
+	UsedMB int    `json:"used_mb"`
+	// Node holds a local volume's disk; empty until an instance first uses
+	// it.
+	Node   string        `json:"node,omitempty"`
+	Status string        `json:"status"` // new | ready | missing | moving | destroying
+	Move   *VolumeMove   `json:"move,omitempty"`
+	Mounts []VolumeMount `json:"mounts"`
+
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// VolumeMove is a local volume's copy to another node.
+type VolumeMove struct {
+	To       string `json:"to"`
+	State    string `json:"state"` // copying | synced (waiting for the instance to stop) | received
+	CopiedMB int    `json:"copied_mb"`
+	Error    string `json:"error,omitempty"`
+}
+
+// VolumeMount puts a volume at Path in a process type's instances.
+type VolumeMount struct {
+	ProcessType string `json:"process_type"`
+	Path        string `json:"path"`
+}
+
+const (
+	VolumeLocal = "local"
+)
+
+type CreateVolumeRequest struct {
+	Name   string `json:"name"`
+	Type   string `json:"type,omitempty"`    // default local
+	SizeMB int    `json:"size_mb,omitempty"` // default 10 GiB
+}
+
+// ResizeVolumeRequest grows a volume. The instance using it picks up the new
+// size when it restarts.
+type ResizeVolumeRequest struct {
+	SizeMB int `json:"size_mb"`
+}
+
+type MoveVolumeRequest struct {
+	Node string `json:"node"`
+}
+
 type Release struct {
 	Version     int       `json:"version"`
 	Description string    `json:"description"`

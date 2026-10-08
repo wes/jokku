@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"testing"
 
 	"github.com/wes/jokku/internal/types"
@@ -185,5 +186,149 @@ func TestDeploys(t *testing.T) {
 	list, _ := s.Deploys(ctx, "web", 10)
 	if len(list) != 1 || list[0].Status != types.StatusFailed || list[0].FinishedAt == nil {
 		t.Fatalf("deploys = %+v", list)
+	}
+}
+
+func TestVolumes(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	s.CreateApp(ctx, "db")
+
+	v := &Volume{App: "db", Name: "data", Type: types.VolumeLocal, SizeMB: 1024}
+	if err := s.CreateVolume(ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateVolume(ctx, &Volume{App: "db", Name: "data", Type: types.VolumeLocal, SizeMB: 1}); !errors.Is(err, ErrExists) {
+		t.Fatalf("duplicate name: %v", err)
+	}
+	m := types.VolumeMount{ProcessType: "web", Path: "/data"}
+	if err := s.AddVolumeMount(ctx, v.ID, m); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Volume(ctx, "db", "data")
+	if err != nil || got.State != VolumeNew || got.Node != "" || len(got.Mounts) != 1 || got.Mounts[0] != m {
+		t.Fatalf("volume: %+v, %v", got, err)
+	}
+
+	// The first instance places it; later placements don't move it.
+	s.PlaceVolume(ctx, v.ID, "n1")
+	s.PlaceVolume(ctx, v.ID, "n2")
+	if got, _ := s.VolumeByID(ctx, v.ID); got.Node != "n1" {
+		t.Fatalf("placed on %s, want n1", got.Node)
+	}
+	// Its node reporting the disk makes it ready.
+	if changed, err := s.ReportVolume(ctx, "n1", types.VolumeStatus{ID: v.ID, State: types.VolumeReady, UsedMB: 12}); err != nil || !changed {
+		t.Fatalf("report: %v, %v", changed, err)
+	}
+	if got, _ := s.VolumeByID(ctx, v.ID); got.State != VolumeReady || got.UsedMB != 12 {
+		t.Fatalf("after report: %+v", got)
+	}
+	// Another node's report about it means nothing.
+	if changed, _ := s.ReportVolume(ctx, "n9", types.VolumeStatus{ID: v.ID, State: types.VolumeMissing}); changed {
+		t.Fatal("a stranger's report changed the volume")
+	}
+
+	// A move: progress comes from the receiving node; a commit swaps homes
+	// and keeps the old copy until the new node has the disk.
+	if err := s.StartVolumeMove(ctx, v.ID, "n2", "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StartVolumeMove(ctx, v.ID, "n3", "tok2"); err == nil {
+		t.Fatal("a second move started while one runs")
+	}
+	s.ReportVolume(ctx, "n2", types.VolumeStatus{ID: v.ID, State: types.VolumeSynced, CopiedMB: 7})
+	if got, _ := s.VolumeByID(ctx, v.ID); got.Transfer != types.VolumeSynced || got.CopiedMB != 7 || got.MovingTo != "n2" {
+		t.Fatalf("during move: %+v", got)
+	}
+	s.CommitVolumeMove(ctx, v.ID)
+	got, _ = s.VolumeByID(ctx, v.ID)
+	if got.Node != "n2" || got.PreviousNode != "n1" || got.Moving() || got.MoveToken != "" {
+		t.Fatalf("after commit: %+v", got)
+	}
+	s.ReportVolume(ctx, "n2", types.VolumeStatus{ID: v.ID, State: types.VolumeReady})
+	if got, _ := s.VolumeByID(ctx, v.ID); got.PreviousNode != "" {
+		t.Fatalf("the old copy is still kept: %+v", got)
+	}
+	s.StartVolumeMove(ctx, v.ID, "n3", "tok3")
+	s.AbortVolumeMove(ctx, v.ID)
+	if got, _ := s.VolumeByID(ctx, v.ID); got.Node != "n2" || got.Moving() {
+		t.Fatalf("after abort: %+v", got)
+	}
+
+	// Destroying: a never-used volume goes at once; a placed one waits for
+	// its node to delete the disk, and its name is free meanwhile.
+	unused := &Volume{App: "db", Name: "unused", Type: types.VolumeLocal, SizeMB: 64}
+	s.CreateVolume(ctx, unused)
+	s.DestroyVolume(ctx, unused.ID)
+	if _, err := s.VolumeByID(ctx, unused.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unused volume after destroy: %v", err)
+	}
+	if err := s.DestroyVolume(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.VolumeByID(ctx, v.ID)
+	if got.State != VolumeDestroying || len(got.Mounts) != 0 {
+		t.Fatalf("destroying: %+v", got)
+	}
+	if _, err := s.Volume(ctx, "db", "data"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a destroyed volume is still found by name: %v", err)
+	}
+	if err := s.CreateVolume(ctx, &Volume{App: "db", Name: "data", Type: types.VolumeLocal, SizeMB: 64}); err != nil {
+		t.Fatalf("reusing the name: %v", err)
+	}
+	s.ReportVolume(ctx, "n2", types.VolumeStatus{ID: v.ID, State: types.VolumeDestroyed})
+	if _, err := s.VolumeByID(ctx, v.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after the node deleted the disk: %v", err)
+	}
+}
+
+func TestDeletingAnAppDestroysItsVolumes(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	s.CreateApp(ctx, "db")
+	v := &Volume{App: "db", Name: "data", Type: types.VolumeLocal, SizeMB: 64}
+	s.CreateVolume(ctx, v)
+	s.AddVolumeMount(ctx, v.ID, types.VolumeMount{ProcessType: "web", Path: "/data"})
+	s.PlaceVolume(ctx, v.ID, "n1")
+	if err := s.DeleteApp(ctx, "db"); err != nil {
+		t.Fatal(err)
+	}
+	vols, err := s.Volumes(ctx, "")
+	if err != nil || len(vols) != 1 || vols[0].State != VolumeDestroying || vols[0].App != "" || vols[0].Node != "n1" {
+		t.Fatalf("volumes after deleting the app: %+v, %v", vols, err)
+	}
+	// A new app by the same name doesn't inherit it.
+	s.CreateApp(ctx, "db")
+	if vols, _ := s.Volumes(ctx, "db"); len(vols) != 0 {
+		t.Fatalf("the new app has %d volumes", len(vols))
+	}
+}
+
+func TestInstanceVolumesAndNodeFeatures(t *testing.T) {
+	ctx := context.Background()
+	s := open(t)
+	s.CreateApp(ctx, "db")
+	rel := &Release{App: "db", Processes: map[string][]string{"web": {"x"}}}
+	if err := s.CreateRelease(ctx, rel); err != nil {
+		t.Fatal(err)
+	}
+	in := &Instance{App: "db", ReleaseID: rel.ID, ProcessType: "web", Index: 1, Node: "n1", Desired: DesiredRunning,
+		Volumes: []types.InstanceVolume{{ID: "abc", Path: "/data"}}}
+	if err := s.CreateInstance(ctx, in, netip.MustParsePrefix("10.210.1.0/24")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Instance(ctx, in.ID)
+	if err != nil || len(got.Volumes) != 1 || got.Volumes[0].ID != "abc" {
+		t.Fatalf("instance volumes: %+v, %v", got, err)
+	}
+
+	s.RegisterControlNode(ctx, Node{Name: "n1"})
+	s.NodeReported(ctx, "n1", "v1", "", []string{types.FeatureVolumes}, types.NodeMetrics{})
+	if n, _ := s.Node(ctx, "n1"); !n.Has(types.FeatureVolumes) {
+		t.Fatalf("features: %v", n.Features)
+	}
+	s.NodeReported(ctx, "n1", "v0", "", nil, types.NodeMetrics{})
+	if n, _ := s.Node(ctx, "n1"); n.Has(types.FeatureVolumes) {
+		t.Fatal("an older agent kept the newer one's features")
 	}
 }

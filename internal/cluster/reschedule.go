@@ -40,6 +40,10 @@ func (c *Controller) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	vols, err := c.Store.Volumes(ctx, "")
+	if err != nil {
+		return err
+	}
 	byID := map[string]store.Instance{}
 	replacing := map[string]bool{} // instance ID -> a wanted replacement exists
 	for _, in := range insts {
@@ -64,8 +68,10 @@ func (c *Controller) tick(ctx context.Context) error {
 				changed = true
 			}
 		}
-		// A replacement that failed is given up; another is tried later.
-		if in.Replaces != "" && in.Desired == store.DesiredRunning && in.State == store.StateFailed {
+		// A replacement that failed is given up; another is tried later. (One
+		// that came with its volumes is all there is now: it stays, as a
+		// failed instance on its own node would.)
+		if in.Replaces != "" && in.Desired == store.DesiredRunning && in.State == store.StateFailed && len(in.Volumes) == 0 {
 			c.Store.AddEvent(ctx, "instance", in.App, in.Node, "%s failed to start on %s while moving", in.Name(), in.Node)
 			if err := c.Store.StopInstances(ctx, []string{in.ID}, nil); err != nil {
 				return err
@@ -89,12 +95,34 @@ func (c *Controller) tick(ctx context.Context) error {
 		case n.Draining:
 			reason = in.Node + " is draining"
 		default:
+			delete(c.pinned, in.ID)
 			continue
+		}
+		// An instance with volumes goes where their disks are: along with
+		// them when its node drains, nowhere when it is down (its data is
+		// there) or still waiting for them to arrive.
+		pinned := pinnedVolumes(in, vols)
+		if len(in.Volumes) > 0 && (len(pinned) == 0 || !exists || !n.Ready(now)) {
+			if len(pinned) > 0 {
+				c.warnPinned(ctx, in, pinned, reason)
+			}
+			continue
+		}
+		if len(pinned) > 0 && (in.State == store.StatePending || in.State == store.StateStarting) {
+			continue // a deploy is starting it; move it once it has settled
 		}
 		if last, tried := c.attempts[in.ID]; tried && now.Sub(last) < RetryAfter {
 			continue
 		}
 		c.attempts[in.ID] = now
+		if len(pinned) > 0 {
+			if err := c.moveInstance(ctx, in, pinned, reason); err != nil {
+				c.Store.AddEvent(ctx, "instance", in.App, in.Node, "cannot move %s off %s: %v", in.Name(), in.Node, err)
+				continue
+			}
+			changed = true
+			continue
+		}
 		if err := c.replace(ctx, in, reason, !exists || !n.Ready(now)); err != nil {
 			c.Store.AddEvent(ctx, "instance", in.App, in.Node, "cannot move %s off %s: %v", in.Name(), in.Node, err)
 			continue
@@ -115,10 +143,15 @@ func (c *Controller) tick(ctx context.Context) error {
 				return err
 			}
 			delete(c.attempts, in.ID)
+			delete(c.pinned, in.ID)
 			changed = true
 		}
 	}
-	if changed {
+	volumesChanged, err := c.tickVolumes(ctx)
+	if err != nil {
+		return err
+	}
+	if changed || volumesChanged {
 		c.Changed()
 	}
 	return nil

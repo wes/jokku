@@ -97,6 +97,10 @@ func (s *Store) DeleteApp(ctx context.Context, name string) error {
 				return err
 			}
 		}
+		// Volumes outlive the app until their nodes have deleted the disks.
+		if err := destroyVolumes(ctx, tx, "app_id = ?", id); err != nil {
+			return err
+		}
 		// formations, resources, releases and deploys cascade.
 		_, err = tx.ExecContext(ctx, "DELETE FROM apps WHERE id = ?", id)
 		return err

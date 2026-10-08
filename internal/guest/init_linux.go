@@ -59,10 +59,85 @@ func boot() error {
 	if err := setupNetwork(cfg); err != nil {
 		return fmt.Errorf("configuring the network: %w", err)
 	}
+	if err := mountVolumes(cfg); err != nil {
+		return fmt.Errorf("mounting volumes: %w", err)
+	}
+	defer unmountVolumes(cfg)
 	// Ctrl-Alt-Del (Firecracker's graceful stop on x86) now sends SIGINT to
 	// init instead of rebooting.
 	unix.Reboot(unix.LINUX_REBOOT_CMD_CAD_OFF)
 	return supervise(cfg)
+}
+
+// mountVolumes mounts each volume at its path. A fresh volume is seeded the
+// way Docker seeds a new named volume: with what the image has at that path,
+// owned as in the image, or, where the image has nothing, owned by the app's
+// user so the app can write to it. mkfs's lost+found goes first, since some
+// programs (initdb) refuse a data directory that is not empty.
+func mountVolumes(cfg *Config) error {
+	if len(cfg.Mounts) == 0 {
+		return nil
+	}
+	cred, _, err := lookupUser(cfg.User)
+	if err != nil {
+		return err
+	}
+	for i, m := range cfg.Mounts {
+		stage := fmt.Sprintf("%s/volume%d", MountDir, i)
+		if err := os.MkdirAll(stage, 0o700); err != nil {
+			return err
+		}
+		if err := unix.Mount(m.Device, stage, "ext4", unix.MS_NOATIME, "discard"); err != nil {
+			return fmt.Errorf("%s at %s: %w", m.Device, m.Path, err)
+		}
+		image, err := os.Stat(m.Path)
+		switch {
+		case err == nil && !image.IsDir():
+			return fmt.Errorf("%s is a file in the image, not a directory", m.Path)
+		case err != nil:
+			image = nil
+		}
+		fresh, err := isFresh(stage)
+		if err != nil {
+			return err
+		}
+		if fresh {
+			os.Remove(stage + "/lost+found")
+			switch {
+			case image != nil:
+				if err := copyTree(m.Path, stage); err != nil {
+					return fmt.Errorf("copying the image's %s into the new volume: %w", m.Path, err)
+				}
+			case cred != nil:
+				if err := os.Chown(stage, int(cred.Uid), int(cred.Gid)); err != nil {
+					return err
+				}
+			}
+		}
+		if image == nil {
+			if err := os.MkdirAll(m.Path, 0o755); err != nil {
+				return err
+			}
+		}
+		if err := unix.Mount(stage, m.Path, "", unix.MS_MOVE, ""); err != nil {
+			return fmt.Errorf("moving the volume to %s: %w", m.Path, err)
+		}
+	}
+	return nil
+}
+
+// unmountVolumes leaves each volume's filesystem clean before power off, or
+// at least read-only when something still holds files open.
+func unmountVolumes(cfg *Config) {
+	for i := len(cfg.Mounts) - 1; i >= 0; i-- {
+		path := cfg.Mounts[i].Path
+		if unix.Unmount(path, 0) == nil {
+			continue
+		}
+		if err := unix.Mount("", path, "", unix.MS_REMOUNT|unix.MS_RDONLY, ""); err != nil {
+			logf("unmounting the volume at %s: %v", path, err)
+		}
+	}
 }
 
 func readConfig(dev string) (*Config, error) {

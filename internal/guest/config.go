@@ -20,6 +20,9 @@ const (
 	MountDir = "/.jokku/mnt"
 )
 
+// VolumeDevice is the device of the i-th volume, after the scratch disk.
+func VolumeDevice(i int) string { return "/dev/vd" + string(rune('d'+i)) }
+
 // Config is everything the guest needs to start the app.
 type Config struct {
 	Argv        []string `json:"argv"`
@@ -30,6 +33,13 @@ type Config struct {
 	IP          string   `json:"ip"`
 	DNS         []string `json:"dns,omitempty"`
 	StopTimeout int      `json:"stop_timeout"` // seconds between SIGTERM and SIGKILL
+	Mounts      []Mount  `json:"mounts,omitempty"`
+}
+
+// Mount is a volume: an ext4 disk mounted at Path before the app starts.
+type Mount struct {
+	Device string `json:"device"` // /dev/vdd
+	Path   string `json:"path"`
 }
 
 // Encode renders the config drive: JSON padded with NULs to whole sectors,

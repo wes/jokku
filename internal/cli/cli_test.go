@@ -141,6 +141,58 @@ func TestCLIAgainstAPI(t *testing.T) {
 	}
 }
 
+func TestStorageCLI(t *testing.T) {
+	startAPI(t)
+	mustJokku(t, "apps:create", "db")
+
+	// Dokku muscle memory gets pointed at named volumes.
+	if _, errOut, code := jokku(t, "", "storage:mount", "db", "/var/lib/dokku/data/storage/db:/data"); code == 0 || !strings.Contains(errOut, "named disks") {
+		t.Fatalf("host path: exit %d, %q", code, errOut)
+	}
+	out := mustJokku(t, "storage:mount", "db", "pg:/var/lib/postgresql/data", "--size", "20g")
+	if !strings.Contains(out, "Created volume pg (local, 20g)") || !strings.Contains(out, "Mounted volume pg at /var/lib/postgresql/data in web") {
+		t.Fatalf("storage:mount = %q", out)
+	}
+	if out := mustJokku(t, "storage:list", "db"); !strings.Contains(out, "pg") || !strings.Contains(out, "web:/var/lib/postgresql/data") || !strings.Contains(out, "new") {
+		t.Fatalf("storage:list = %q", out)
+	}
+	if out := mustJokku(t, "storage:report", "db", "--storage-mounts"); out != "web pg:/var/lib/postgresql/data\n" {
+		t.Fatalf("storage:report = %q", out)
+	}
+
+	// A local volume belongs to one instance.
+	if _, errOut, code := jokku(t, "", "ps:scale", "db", "web=2"); code == 0 || !strings.Contains(errOut, "one instance") {
+		t.Fatalf("scaling past one: exit %d, %q", code, errOut)
+	}
+	mustJokku(t, "ps:scale", "db", "worker=3")
+	if _, errOut, code := jokku(t, "", "storage:mount", "db", "cache:/cache", "--process-type", "worker"); code == 0 || !strings.Contains(errOut, "runs 3 instances") {
+		t.Fatalf("mounting into a scaled process: exit %d, %q", code, errOut)
+	}
+	if _, errOut, code := jokku(t, "", "storage:mount", "db", "pg:/other"); code == 0 || !strings.Contains(errOut, "already mounted") {
+		t.Fatalf("mounting twice: exit %d, %q", code, errOut)
+	}
+	if _, errOut, code := jokku(t, "", "storage:mount", "db", "x:/proc/x"); code == 0 || !strings.Contains(errOut, "cannot be mounted") {
+		t.Fatalf("reserved path: exit %d, %q", code, errOut)
+	}
+
+	mustJokku(t, "storage:resize", "db", "pg", "30g")
+	if _, errOut, code := jokku(t, "", "storage:resize", "db", "pg", "1g"); code == 0 || !strings.Contains(errOut, "only grow") {
+		t.Fatalf("shrinking: exit %d, %q", code, errOut)
+	}
+
+	if _, errOut, code := jokku(t, "", "storage:destroy", "--force", "db", "pg"); code == 0 || !strings.Contains(errOut, "unmount it first") {
+		t.Fatalf("destroying a mounted volume: exit %d, %q", code, errOut)
+	}
+	mustJokku(t, "storage:unmount", "db", "pg")
+	if _, errOut, code := jokku(t, "", "storage:destroy", "db", "pg"); code == 0 || !strings.Contains(errOut, "--force") {
+		t.Fatalf("destroy without a terminal must require --force: exit %d, %q", code, errOut)
+	}
+	mustJokku(t, "storage:destroy", "--force", "db", "pg")
+	if out := mustJokku(t, "storage:list", "db"); !strings.Contains(out, "none") {
+		t.Fatalf("storage:list after destroy = %q", out)
+	}
+}
+
 func TestSSHKeysCLI(t *testing.T) {
 	startAPI(t)
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKo6wvodnpAVyBluWuHPcgrJTcSBDE9Ozy8NPmmowyTO me@laptop\n"
@@ -210,7 +262,7 @@ func TestSplitWords(t *testing.T) {
 }
 
 func TestParseMemory(t *testing.T) {
-	for in, want := range map[string]int{"512": 512, "512m": 512, "512MB": 512, "1g": 1024, "1.5G": 1536, "2GiB": 2048, "1048576k": 1024} {
+	for in, want := range map[string]int{"512": 512, "512m": 512, "512MB": 512, "1g": 1024, "1.5G": 1536, "2GiB": 2048, "1048576k": 1024, "1t": 1 << 20} {
 		if got, err := parseMemory(in); err != nil || got != want {
 			t.Errorf("parseMemory(%q) = %d, %v; want %d", in, got, err, want)
 		}

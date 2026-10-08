@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/wes/jokku/internal/store"
@@ -94,6 +95,17 @@ func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
 		if running > 0 {
 			s.fail(w, r, httpErrorf(http.StatusConflict,
 				"%s still runs %d instances. Move them first with: jokku nodes:drain %s (or remove it anyway with --force)", name, running, name))
+			return
+		}
+		vols, err := s.nodeVolumes(ctx, name)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		if len(vols) > 0 {
+			s.fail(w, r, httpErrorf(http.StatusConflict,
+				"%s holds the disks of volumes %s. Move them first with: jokku nodes:drain %s (or remove it anyway with --force, losing them)",
+				name, strings.Join(vols, ", "), name))
 			return
 		}
 	}

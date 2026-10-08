@@ -237,17 +237,18 @@ restarting or updating jokku leaves apps running.
 | `/.jokku/init` | The jokku binary itself, copied into every rootfs and started by the kernel as PID 1. |
 | `vdb` | A tiny config drive: JSON with the command, env, user, workdir, hostname and DNS. |
 | `vdc` | A per-instance sparse scratch ext4 used as the overlay upper layer: a writable root that is kept across restarts of the instance and discarded when it is replaced (like Dokku's containers). |
-| `vdd`+ | Persistent volumes from `storage:mount` (milestone 4). |
+| `vdd`+ | Volumes from `storage:mount`: ext4 disk images on the node, attached with Firecracker's `Writeback` cache so a guest `fsync` reaches the host's disk (the default ignores flushes), and with discard so deleted data frees space in the sparse image. See [Volumes](#volumes). |
 | `eth0` | A TAP device on the node's `jokku0` bridge, addressed via the kernel `ip=` boot argument. |
 
 Boot sequence inside the VM: the kernel mounts `vda` read-only and runs
 `/.jokku/init`, which reads the config drive, stages an overlay of `vda` and
 `vdc` in a tmpfs, `pivot_root`s into it, mounts `/proc`, `/sys`, `/dev`,
 `/run` and cgroups, brings up loopback, writes `/etc/hosts` and
-`/etc/resolv.conf`, then starts the process as the image's `USER`. It stays
+`/etc/resolv.conf`, mounts volumes, then starts the process as the image's
+`USER`. It stays
 PID 1 to reap zombies. A stop request (Firecracker's Ctrl-Alt-Del on x86)
 becomes `SIGTERM` to the app's process group, then `SIGKILL` after 10
-seconds, then power off.
+seconds, then volumes are unmounted and the VM powers off.
 
 The app's stdout and stderr go to the VM's serial console, which is the
 unit's output, so they land in the journal tagged with `JOKKU_APP` and
@@ -354,7 +355,9 @@ its CPU and KVM can) and with the memory free: total memory minus a reserve
 (a tenth, at least 512 MiB) minus what is already promised to instances.
 Memory is never overcommitted; vCPUs may be. It then prefers the node running
 the fewest instances of the same app and process type (spread), then the one
-with the most free memory. Volumes will pin an instance to the volume's node.
+with the most free memory. An instance with volumes runs on the node holding
+their disks, and only on nodes whose agent reports volume support, so a node
+still on an older release never starts one without its disk.
 
 Root filesystems are built on the control node. A node that lacks one
 downloads it from the control node and checks its SHA-256 before using it, and
@@ -398,7 +401,8 @@ release keeps serving, and the failing instance's logs are printed.
   proxies stop sending it new requests. After another 60s (so reboots and
   updates don't shuffle anything) its instances are started on other nodes.
   When it comes back, its desired state no longer includes them and it stops
-  them.
+  them. Instances with volumes on it stay put and wait for it: their data is
+  there (an event says so).
 - **Requests while a node dies:** the proxy gives up on an unreachable
   instance after 2s and retries the request on another for up to 5s, and
   passive health checks skip the dead one. Requests already in flight to a
@@ -406,14 +410,75 @@ release keeps serving, and the failing instance's logs are printed.
   at most two.
 - **Draining:** `nodes:drain node2` starts a copy of each instance elsewhere,
   waits for it to pass checks, then stops the original after a 10s grace
-  period, so traffic never drops. `nodes:remove` then takes the node out;
-  `--force` skips the drain and treats it like a dead node.
+  period, so traffic never drops. Instances with volumes move with their
+  disks instead, which costs a short stop (see [Volumes](#volumes)).
+  `nodes:remove` then takes the node out; it refuses while the node holds
+  volumes, and `--force` skips the drain and treats it like a dead node
+  (losing the volumes on it).
 - **The control node is unreachable:** workers keep running, restarting
   crashed instances and serving traffic with their last known state (cached on
   disk, so it survives their own restarts). Deploys and changes wait until it
   is back.
 - **An agent restarts** (a crash, an update): it adopts the VMs that are
   running instead of starting them again, so apps don't notice.
+
+## Volumes
+
+`storage:mount myapp data:/app/data` mounts a named volume, created on first
+use, in one process type's instance (`web` unless `--process-type` says
+otherwise). Every volume has a **type**. Today there is one, `local`, but the
+records, API and agent protocol carry the type so other kinds can be added
+alongside it (an object-storage type, shared by many instances, is the
+likely next one).
+
+A **local** volume is an ext4 disk image, `/var/lib/jokku/volumes/<id>.ext4`,
+on one node. It is sparse, so its size (default 10g, `--size`,
+`storage:resize` to grow) is a limit, not an allocation. Because only one VM
+can safely mount an ext4 filesystem:
+
+- A process type with a local volume runs one instance (`ps:scale` refuses
+  more), and that instance is placed on the node holding the disk. A new
+  volume's disk is made, empty, wherever its instance is first placed.
+- Deploys stop the old instance before starting the new one, so it has a
+  short gap instead of a zero-downtime switch. If the new one fails checks,
+  the old one is started again. Independently, an agent never starts a VM
+  while another VM on that node has one of its disks attached.
+
+Inside the VM, init mounts each volume before starting the app. A fresh
+volume is seeded the way Docker seeds a named volume: with whatever the
+image has at that path (owners and modes kept), or, where the image has
+nothing, owned by the image's `USER`. mkfs's `lost+found` is removed, because
+programs like `initdb` refuse a data directory that isn't empty.
+
+**Moving** a volume (a drain, or `storage:move`) copies the disk node to node
+over the mesh, with the receiving node pulling from the owner's agent API
+using a token made for that move:
+
+1. The volume is marked as moving, and a replacement instance is placed on
+   the new node. It waits there (state `syncing`) for the disk.
+2. The new node copies the disk while the app keeps running. It repeats the
+   copy until a pass changes little, then reports `synced`.
+3. The control node stops the instance. The owner refuses the final pass
+   until the VM has let go of the disk. It then sends only the blocks that
+   changed, and renames its copy `.moved` so nothing on it can use the disk
+   any more.
+4. The new node reports `received`, and the move is committed: the new node
+   owns the disk and starts the replacement. The old copy is deleted once
+   the new node reports the disk ready.
+
+Copies compare 1 MiB blocks by SHA-256, skip holes and zero blocks (sparse
+disks stay sparse), and verify every block on arrival. An interrupted pass
+resumes from what has already arrived. If the new node goes down before the
+commit, the move is called off: the old node takes its disk back and the
+instance starts there again. A volume never moves when its node dies, because
+the data is only there. Instances wait for that node, which makes backups
+the answer to losing a server for good.
+
+**Deleting** is explicit. `storage:destroy` (refused while the volume is
+mounted or in use) or `apps:destroy` marks a volume as destroying, and its
+node deletes the disk and reports it gone. An agent never deletes a disk
+just because the control node stopped listing it. Leftovers of moves
+(`.incoming`, `.received`, `.moved`) are cleaned up that way.
 
 ## Cluster join
 
@@ -455,7 +520,8 @@ SQLite (WAL) at `/var/lib/jokku/jokku.db` on the control node. Main tables:
 | `properties` | generic `(app, plugin, key) -> value` behind every Dokku-style `*:set` / `*:report` command (`git:set`, `checks:set`, `builder-dockerfile:set`, ...) |
 | `formations` / `resources` | `ps:scale` quantities and `resource:limit` sizes per process type |
 | `releases` / `deploys` | immutable releases, deploy history and status |
-| `instances` | desired and observed state of every microVM |
+| `instances` | desired and observed state of every microVM, with the volumes it mounts |
+| `volumes` / `volume_mounts` | volumes (type, size, node, move in progress) and where they are mounted |
 | `nodes` | mesh address, WireGuard key, capacity, health |
 | `ssh_keys` / `api_tokens` | credentials |
 
@@ -521,7 +587,7 @@ stays the stable entry point, including for versions that predate the command.
 /var/lib/jokku/artifacts/         rootfs images by digest (cache on workers)
 /var/lib/jokku/kernel/            vmlinux + initramfs
 /var/lib/jokku/instances/<id>/    per-VM scratch disk, config drive, sockets, logs
-/var/lib/jokku/volumes/           persistent volumes
+/var/lib/jokku/volumes/           volume disks: <id>.ext4 (plus copies while one moves)
 /var/lib/jokku/backups/           database backups taken by update.sh
 /home/jokku/.ssh/authorized_keys  generated from ssh-keys:*
 ```
@@ -532,7 +598,7 @@ stays the stable entry point, including for versions that predate the command.
 | 80, 443/tcp | ingress nodes | Caddy |
 | 7443/tcp | control | HTTPS API (join, tokens) |
 | 51820/udp | all nodes | WireGuard |
-| 7444/tcp | mesh only | agent streams (logs, exec) |
+| 7444/tcp | mesh only | agent API: log streams, volume copies between nodes |
 
 ## Differences from Dokku
 
@@ -542,7 +608,7 @@ stays the stable entry point, including for versions that predate the command.
 | Machines | one server | cluster, same commands |
 | Builders | herokuish, CNB, Dockerfile, nixpacks, ... | Dockerfile and images first; buildpacks later |
 | Proxy | nginx (pluggable) | embedded Caddy, automatic TLS |
-| `storage:mount` | host directory, shared by all containers | ext4 volume attached to one VM; pins it to a node |
+| `storage:mount` | host directory, shared by all containers | named ext4 volume attached to one instance; it runs where the disk is, and the disk moves with it |
 | Plugins | bash plugin ecosystem | none in v1; services (postgres, redis) later as apps plus volumes plus `*:link` |
 | Releases | no rollback | `releases`, `releases:rollback` |
 | Nodes | n/a | `nodes:*`, `cluster:*` |
@@ -562,5 +628,6 @@ stays the stable entry point, including for versions that predate the command.
   cert storage, failover, `jokku top`, events.
 - **M3 – remote API.** HTTPS listener, tokens, `git:sync`, deploy keys,
   `git:from-image`, `git:from-archive`.
-- **M4 – depth.** The Firecracker `jailer`, `run` and `enter` via vsock, volumes, `releases:rollback`,
+- **M4 – depth.** The Firecracker `jailer`, `run` and `enter` via vsock, volumes (local
+  disks that move with their instance: *done*; object storage next), `releases:rollback`,
   app.json health checks, log drains, services.

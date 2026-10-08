@@ -269,3 +269,60 @@ func (c *Client) Requests(ctx context.Context, app string, tail int, follow bool
 		}
 	})
 }
+
+// Volumes
+
+func volumePath(app, name, rest string) string {
+	p := appPath(app, "volumes/"+url.PathEscape(name))
+	if rest != "" {
+		p += "/" + rest
+	}
+	return p
+}
+
+func (c *Client) Volumes(ctx context.Context, app string) ([]types.Volume, error) {
+	var out []types.Volume
+	return out, c.call(ctx, http.MethodGet, appPath(app, "volumes"), nil, &out)
+}
+
+func (c *Client) Volume(ctx context.Context, app, name string) (*types.Volume, error) {
+	var v types.Volume
+	return &v, c.call(ctx, http.MethodGet, volumePath(app, name, ""), nil, &v)
+}
+
+func (c *Client) CreateVolume(ctx context.Context, app string, req types.CreateVolumeRequest) (*types.Volume, error) {
+	var v types.Volume
+	return &v, c.call(ctx, http.MethodPost, appPath(app, "volumes"), req, &v)
+}
+
+func (c *Client) ResizeVolume(ctx context.Context, app, name string, sizeMB int) (*types.Volume, error) {
+	var v types.Volume
+	return &v, c.call(ctx, http.MethodPatch, volumePath(app, name, ""), types.ResizeVolumeRequest{SizeMB: sizeMB}, &v)
+}
+
+func (c *Client) DestroyVolume(ctx context.Context, app, name string) error {
+	return c.call(ctx, http.MethodDelete, volumePath(app, name, ""), nil, nil)
+}
+
+func (c *Client) MountVolume(ctx context.Context, app, name string, m types.VolumeMount) (*types.Volume, error) {
+	var v types.Volume
+	return &v, c.call(ctx, http.MethodPost, volumePath(app, name, "mounts"), m, &v)
+}
+
+// UnmountVolume removes a mount; an empty path removes the volume's only one.
+func (c *Client) UnmountVolume(ctx context.Context, app, name string, m types.VolumeMount) (*types.Volume, error) {
+	q := url.Values{}
+	if m.ProcessType != "" {
+		q.Set("process_type", m.ProcessType)
+	}
+	if m.Path != "" {
+		q.Set("path", m.Path)
+	}
+	var v types.Volume
+	return &v, c.call(ctx, http.MethodDelete, volumePath(app, name, "mounts")+"?"+q.Encode(), nil, &v)
+}
+
+func (c *Client) MoveVolume(ctx context.Context, app, name, node string) (*types.Volume, error) {
+	var v types.Volume
+	return &v, c.call(ctx, http.MethodPost, volumePath(app, name, "move"), types.MoveVolumeRequest{Node: node}, &v)
+}

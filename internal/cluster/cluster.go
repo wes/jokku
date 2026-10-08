@@ -14,7 +14,9 @@ package cluster
 import (
 	"context"
 	"log/slog"
+	"net"
 	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 
@@ -33,18 +35,36 @@ type Controller struct {
 	Pin string
 	// TickEvery is how often the controller loop runs (default 3s).
 	TickEvery time.Duration
+	// AgentAddr is where a node's agent API listens, host:port. The default
+	// is its mesh address and AgentPort; tests override it.
+	AgentAddr func(store.Node) string
 
 	mu        sync.Mutex
 	changed   chan struct{} // closed and replaced on every change
 	lastReady map[string]bool
 	attempts  map[string]time.Time // instance ID -> last replacement attempt
+	pinned    map[string]string    // instance ID -> why it can't move (told once)
+
+	volMu       sync.Mutex           // one volume decision at a time; guards volAttempts
+	volAttempts map[string]time.Time // volume ID -> last attempt to move it off a draining node
 }
 
 func New(c *Controller) *Controller {
 	c.changed = make(chan struct{})
 	c.lastReady = map[string]bool{}
 	c.attempts = map[string]time.Time{}
+	c.pinned = map[string]string{}
+	c.volAttempts = map[string]time.Time{}
 	return c
+}
+
+// agentAddr is where n's agent API listens.
+func (c *Controller) agentAddr(n store.Node) string {
+	if c.AgentAddr != nil {
+		return c.AgentAddr(n)
+	}
+	_, meshIP := NodeSubnet(c.ClusterCIDR, n.SubnetIndex)
+	return net.JoinHostPort(meshIP.String(), strconv.Itoa(AgentPort))
 }
 
 // Changed wakes every waiting agent so it recomputes its state now.

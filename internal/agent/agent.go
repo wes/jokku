@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -55,6 +56,12 @@ type Runtime interface {
 	Units(ctx context.Context) (map[string]string, error)
 	Usage(ctx context.Context, ids []string) (map[string]vm.Usage, error)
 	CheckTCP(addr string) bool
+
+	// Volume disks: create an empty one, grow one that no VM has attached,
+	// and list those attached to running VMs.
+	CreateVolume(ctx context.Context, path string, sizeMB int) error
+	GrowVolume(ctx context.Context, path string, sizeMB int) error
+	Attached(ctx context.Context) (map[string]bool, error)
 }
 
 // Mesh keeps the WireGuard mesh matching the peer list.
@@ -107,6 +114,11 @@ type Agent struct {
 	errMu    sync.Mutex
 	lastErr  map[string]string
 	host     *hostSampler
+
+	volMu        sync.Mutex
+	vols         map[string]*vol
+	exporting    sync.Map // volume ID -> struct{} while its final pass is being served
+	volumeClient *http.Client
 }
 
 // local is what this node knows about an instance beyond the desired state.
@@ -132,6 +144,9 @@ func New(c Config) *Agent {
 	return &Agent{
 		Config: c, kick: make(chan struct{}, 1), report: make(chan struct{}, 1),
 		local: map[string]*local{}, lastErr: map[string]string{}, host: &hostSampler{},
+		vols: map[string]*vol{},
+		// No overall timeout: a first copy of a large disk takes a while.
+		volumeClient: &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: time.Minute}},
 	}
 }
 
@@ -291,6 +306,11 @@ func (a *Agent) reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	attached, err := a.Runtime.Attached(ctx)
+	if err != nil {
+		return err
+	}
+	a.syncVolumes(ctx, st, attached)
 	now := time.Now()
 	specs := map[string]types.InstanceSpec{}
 	changed := false
@@ -308,7 +328,7 @@ func (a *Agent) reconcile(ctx context.Context) error {
 			a.local[spec.ID] = l
 		}
 		before := l.state
-		a.step(ctx, spec, l, units, now)
+		a.step(ctx, spec, l, units, attached, now)
 		if l.state != before {
 			changed = true
 		}
@@ -352,7 +372,7 @@ func (a *Agent) reconcile(ctx context.Context) error {
 }
 
 // step advances one instance's state machine.
-func (a *Agent) step(ctx context.Context, spec types.InstanceSpec, l *local, units map[string]string, now time.Time) {
+func (a *Agent) step(ctx context.Context, spec types.InstanceSpec, l *local, units map[string]string, attached map[string]bool, now time.Time) {
 	_, running := units[spec.ID]
 	if _, busy := a.stopping.Load(spec.ID); busy {
 		return
@@ -377,7 +397,10 @@ func (a *Agent) step(ctx context.Context, spec types.InstanceSpec, l *local, uni
 	}
 
 	switch l.state {
-	case "pending":
+	case "pending", "syncing":
+		if !a.volumesReady(spec, l, attached) {
+			return
+		}
 		a.start(ctx, spec, l, false)
 	case "starting":
 		switch {
@@ -402,6 +425,13 @@ func (a *Agent) step(ctx context.Context, spec types.InstanceSpec, l *local, uni
 			a.Log.Warn("not restarting instance (restart policy)", "app", spec.App, "process", spec.Process, "restarts", l.restarts)
 			l.state = "failed"
 		case now.Sub(l.startedAt) >= backoff:
+			if wait, err := a.volumeGate(spec, attached); err != nil {
+				a.Log.Error("cannot restart instance", "app", spec.App, "process", spec.Process, "err", err)
+				l.state = "failed"
+				return
+			} else if wait != "" {
+				return // its volume is being handed to another node; the control node decides what's next
+			}
 			a.start(ctx, spec, l, true)
 		}
 	case "failed":
@@ -409,6 +439,23 @@ func (a *Agent) step(ctx context.Context, spec types.InstanceSpec, l *local, uni
 			a.stopAsync(spec.ID, false)
 		}
 	}
+}
+
+// volumesReady holds an instance back while one of its volumes is still
+// being copied here (state syncing) or attached to another VM (pending, as
+// when a deploy replaces the instance on the same node).
+func (a *Agent) volumesReady(spec types.InstanceSpec, l *local, attached map[string]bool) bool {
+	wait, err := a.volumeGate(spec, attached)
+	switch {
+	case err != nil:
+		a.Log.Error("cannot start instance", "app", spec.App, "process", spec.Process, "err", err)
+		l.state = "failed"
+		return false
+	case wait != "":
+		l.state = wait
+		return false
+	}
+	return true
 }
 
 func (a *Agent) healthy(spec types.InstanceSpec, l *local, now time.Time) bool {
@@ -424,9 +471,13 @@ func (a *Agent) start(ctx context.Context, spec types.InstanceSpec, l *local, re
 		l.state = "failed"
 		return
 	}
+	var vols []vm.Volume
+	for _, m := range spec.Volumes {
+		vols = append(vols, vm.Volume{Disk: a.volumePath(m.ID, ""), Path: m.Path})
+	}
 	err := a.Runtime.Start(ctx, vm.Spec{
 		ID: spec.ID, App: spec.App, Process: spec.Process, Artifact: a.artifactPath(spec.Artifact),
-		IP: spec.IP, CPUs: spec.CPUs, MemoryMB: spec.MemoryMB,
+		IP: spec.IP, CPUs: spec.CPUs, MemoryMB: spec.MemoryMB, Volumes: vols,
 		Guest: guest.Config{
 			Argv: spec.Argv, Env: spec.Env, User: spec.User, WorkDir: spec.WorkDir,
 			Hostname: spec.Hostname, IP: spec.IP, DNS: a.DNS, StopTimeout: int(stopGrace / time.Second),
@@ -601,7 +652,10 @@ func (a *Agent) reportLoop(ctx context.Context) {
 
 // Status is the report sent to the control node.
 func (a *Agent) Status() *types.NodeStatus {
-	st := &types.NodeStatus{Protocol: types.ProtocolVersion, Version: a.Version, CanRun: a.canRun, Instances: []types.InstanceStatus{}}
+	st := &types.NodeStatus{
+		Protocol: types.ProtocolVersion, Version: a.Version, CanRun: a.canRun, Instances: []types.InstanceStatus{},
+		Features: []string{types.FeatureVolumes}, Volumes: a.volumeStatus(),
+	}
 	if d := a.Desired(); d != nil {
 		st.ETag = d.ETag
 	}

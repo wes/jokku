@@ -78,7 +78,7 @@ tracks what exists today. Milestones are described in
 | `cluster:join-command [--ttl 1h] [--reusable]` (prints an `install.sh --join` one-liner) | ➕ ✅ |
 | `cluster:report` | ➕ ✅ |
 | `nodes:list`, `nodes:report`, `nodes:set` (`schedulable`, `ingress`) | ➕ ✅ |
-| `nodes:drain`, `nodes:undrain` (moves instances off with no downtime) | ➕ ✅ |
+| `nodes:drain`, `nodes:undrain` (moves instances off with no downtime; instances with volumes stop briefly while their disks move) | ➕ ✅ |
 | `nodes:remove [--force]` | ➕ ✅ |
 | `events [<app>] [-n N]` | ➕ ✅ |
 | `top` (live terminal dashboard of nodes, apps, instances, events, and a real-time Traffic view of requests) | ➕ ✅ |
@@ -89,6 +89,9 @@ tracks what exists today. Milestones are described in
 
 | Command | Status |
 | --- | --- |
-| `storage:ensure-directory`, `storage:mount`, `storage:unmount`, `storage:list` | 🔜 M4 (ext4 volumes; pins the instance to a node) |
+| `storage:mount <app> <name>:<path> [--process-type] [--size] [--no-restart]` (creates the volume if needed), `storage:unmount`, `storage:list`, `storage:report` | ✅ named volumes instead of host directories; a local volume is attached to one instance |
+| `storage:create [--size] [--type]`, `storage:resize`, `storage:move <app> <name> <node>`, `storage:destroy [--force]` | ➕ ✅ |
+| `storage:ensure-directory` | ✖ volumes are disks, created by `storage:mount` |
+| Object-storage volumes (`--type s3`), shared by many instances | 🔜 later |
 | `postgres:*`, `redis:*`, ... | 🔜 later, as apps plus volumes plus `*:link` |
 | `plugin:*` | ✖ |

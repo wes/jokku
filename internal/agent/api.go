@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
-	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -12,26 +11,36 @@ import (
 	"github.com/wes/jokku/internal/journal"
 )
 
-// Serve runs the agent's API on addr (this node's mesh address) until ctx is
-// done. It serves this node's app logs to the control node, which presents
-// the agent token. The firewall keeps VMs away from the port as well.
-func Serve(ctx context.Context, addr, token string, log *slog.Logger) {
+// Handler is the agent's API. It serves this node's app logs to the control
+// node, which presents token (empty on the control node, which reads its own
+// logs directly, so log streams are off there), and volume disks to the node
+// taking one over, which presents that move's token.
+func (a *Agent) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
-	for _, path := range []string{"/v1/logs", "/v1/instance-logs", "/v1/requests"} {
-		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
-			if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			rc := http.NewResponseController(w)
-			journal.Serve(r.Context(), path, r.URL.Query(), func(line string) {
-				w.Write([]byte(line + "\n"))
-				rc.Flush()
+	if token != "" {
+		for _, path := range []string{"/v1/logs", "/v1/instance-logs", "/v1/requests"} {
+			mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
+				if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				rc := http.NewResponseController(w)
+				journal.Serve(r.Context(), path, r.URL.Query(), func(line string) {
+					w.Write([]byte(line + "\n"))
+					rc.Flush()
+				})
 			})
-		})
+		}
 	}
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	mux.HandleFunc("POST /v1/volumes/{id}/copy", a.serveVolume)
+	return mux
+}
+
+// Serve runs the agent's API on addr (this node's mesh address) until ctx is
+// done. The firewall keeps VMs away from the port as well.
+func (a *Agent) Serve(ctx context.Context, addr, token string) {
+	srv := &http.Server{Handler: a.Handler(token), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		srv.Close()
@@ -43,9 +52,9 @@ func Serve(ctx context.Context, addr, token string, log *slog.Logger) {
 			sleep(ctx, 5*time.Second)
 			continue
 		}
-		log.Info("agent API listening", "addr", addr)
+		a.Log.Info("agent API listening", "addr", addr)
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("agent API", "err", err)
+			a.Log.Error("agent API", "err", err)
 			sleep(ctx, 5*time.Second)
 		}
 	}

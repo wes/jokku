@@ -57,12 +57,55 @@ func init() {
 // fakeRuntime pretends to run VMs: a started VM is "running" until stopped
 // or crashed.
 type fakeRuntime struct {
-	mu      sync.Mutex
-	running map[string]vm.Spec
-	starts  int
+	node        string
+	disks       *diskTracker
+	mu          sync.Mutex
+	running     map[string]vm.Spec
+	starts      int
+	ignoreStops atomic.Bool // VMs ignore stop requests (a hung shutdown)
 }
 
-func newFakeRuntime() *fakeRuntime { return &fakeRuntime{running: map[string]vm.Spec{}} }
+func newFakeRuntime(node string, disks *diskTracker) *fakeRuntime {
+	return &fakeRuntime{node: node, disks: disks, running: map[string]vm.Spec{}}
+}
+
+// diskTracker follows which VM, on any node, has each volume attached, and
+// records it if two ever do at once.
+type diskTracker struct {
+	mu         sync.Mutex
+	attached   map[string]string // volume ID -> node/instance
+	violations []string
+}
+
+func volumeID(disk string) string { return strings.TrimSuffix(filepath.Base(disk), ".ext4") }
+
+func (d *diskTracker) attach(node string, s vm.Spec) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, v := range s.Volumes {
+		id := volumeID(v.Disk)
+		if other, ok := d.attached[id]; ok {
+			d.violations = append(d.violations, fmt.Sprintf("volume %s attached to %s/%s while %s has it", id, node, s.ID, other))
+		}
+		d.attached[id] = node + "/" + s.ID
+	}
+}
+
+func (d *diskTracker) detach(node string, s vm.Spec) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, v := range s.Volumes {
+		if id := volumeID(v.Disk); d.attached[id] == node+"/"+s.ID {
+			delete(d.attached, id)
+		}
+	}
+}
+
+func (d *diskTracker) problems() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.violations...)
+}
 
 func (f *fakeRuntime) Available() error                    { return nil }
 func (f *fakeRuntime) EnsureNetwork(context.Context) error { return nil }
@@ -75,9 +118,41 @@ func (f *fakeRuntime) Start(_ context.Context, s vm.Spec) error {
 	if _, ok := f.running[s.ID]; ok {
 		return fmt.Errorf("unit for %s already exists", s.ID) // as systemd-run says
 	}
+	for _, v := range s.Volumes {
+		if _, err := os.Stat(v.Disk); err != nil {
+			return fmt.Errorf("volume disk: %w", err) // as Firecracker would
+		}
+	}
 	f.running[s.ID] = s
 	f.starts++
+	f.disks.attach(f.node, s)
 	return nil
+}
+
+// CreateVolume makes a sparse file; a real one would also get a filesystem.
+func (f *fakeRuntime) CreateVolume(_ context.Context, path string, sizeMB int) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return file.Truncate(int64(sizeMB) << 20)
+}
+
+func (f *fakeRuntime) GrowVolume(_ context.Context, path string, sizeMB int) error {
+	return os.Truncate(path, int64(sizeMB)<<20)
+}
+
+func (f *fakeRuntime) Attached(context.Context) (map[string]bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]bool{}
+	for _, s := range f.running {
+		for _, v := range s.Volumes {
+			out[v.Disk] = true
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeRuntime) startCount() int {
@@ -86,8 +161,12 @@ func (f *fakeRuntime) startCount() int {
 	return f.starts
 }
 func (f *fakeRuntime) Stop(_ context.Context, id string, _ time.Duration) error {
+	if f.ignoreStops.Load() {
+		return nil
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.disks.detach(f.node, f.running[id])
 	delete(f.running, id)
 	return nil
 }
@@ -119,6 +198,7 @@ func (f *fakeRuntime) CheckTCP(addr string) bool {
 func (f *fakeRuntime) crash(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.disks.detach(f.node, f.running[id])
 	delete(f.running, id)
 }
 
@@ -190,6 +270,7 @@ type node struct {
 	mesh    *fakeMesh
 	proxy   *fakeProxy
 	token   string
+	api     *httptest.Server // the agent API, where other nodes copy volumes from
 	cancel  context.CancelFunc
 	stopped chan struct{}
 }
@@ -207,6 +288,10 @@ type harness struct {
 	nodes   map[string]*node
 	log     *slog.Logger
 	release map[string]int64 // app -> current release ID
+	disks   *diskTracker
+
+	apiMu    sync.Mutex
+	apiAddrs map[string]string // node -> its agent API's address
 }
 
 func newHarness(t *testing.T) *harness {
@@ -224,10 +309,16 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, ctx: ctx, dir: dir, st: st, pin: pin, nodes: map[string]*node{}, log: log, release: map[string]int64{}}
+	h := &harness{t: t, ctx: ctx, dir: dir, st: st, pin: pin, nodes: map[string]*node{}, log: log, release: map[string]int64{},
+		disks: &diskTracker{attached: map[string]string{}}, apiAddrs: map[string]string{}}
 	h.ctl = cluster.New(&cluster.Controller{
 		Store: st, Log: log, Self: "control", ClusterCIDR: netip.MustParsePrefix("10.210.0.0/16"),
 		Version: "test", Pin: pin, TickEvery: 200 * time.Millisecond,
+		AgentAddr: func(n store.Node) string {
+			h.apiMu.Lock()
+			defer h.apiMu.Unlock()
+			return h.apiAddrs[n.Name]
+		},
 	})
 	h.pipe = &deploy.Pipeline{Store: st, Builder: &build.Builder{DataDir: dir}, Cluster: h.ctl, DataDir: dir, Log: log}
 	srv := api.New(api.Config{
@@ -294,7 +385,7 @@ func wgKey(t *testing.T) string {
 func (h *harness) startNode(name, token, dir string, plane agent.ControlPlane) *node {
 	n := h.nodes[name]
 	if n == nil {
-		n = &node{name: name, dir: dir, rt: newFakeRuntime(), mesh: &fakeMesh{}, proxy: &fakeProxy{}, token: token}
+		n = &node{name: name, dir: dir, rt: newFakeRuntime(name, h.disks), mesh: &fakeMesh{}, proxy: &fakeProxy{}, token: token}
 		h.nodes[name] = n
 	}
 	ctx, cancel := context.WithCancel(h.ctx)
@@ -304,7 +395,11 @@ func (h *harness) startNode(name, token, dir string, plane agent.ControlPlane) *
 		GCArtifacts: name != "control", ReconcileEvery: 100 * time.Millisecond, ReportEvery: 200 * time.Millisecond,
 		Metrics: func() types.NodeMetrics { return types.NodeMetrics{CPUs: 4, MemoryMB: 4096} },
 	})
-	stopped := n.stopped
+	n.api = httptest.NewServer(a.Handler(""))
+	h.apiMu.Lock()
+	h.apiAddrs[name] = n.api.Listener.Addr().String()
+	h.apiMu.Unlock()
+	stopped, api := n.stopped, n.api
 	go func() {
 		a.Run(ctx)
 		close(stopped)
@@ -314,6 +409,7 @@ func (h *harness) startNode(name, token, dir string, plane agent.ControlPlane) *
 	h.t.Cleanup(func() {
 		cancel()
 		<-stopped
+		api.Close()
 	})
 	return n
 }
@@ -363,6 +459,8 @@ func (h *harness) kill(name string) {
 	n := h.nodes[name]
 	n.cancel()
 	<-n.stopped
+	n.api.CloseClientConnections()
+	n.api.Close()
 }
 
 func (h *harness) revive(name string) {
@@ -374,9 +472,19 @@ func (h *harness) revive(name string) {
 // given scale.
 func (h *harness) deploy(app string, web int) {
 	h.t.Helper()
+	h.deployWith(app, web, nil)
+}
+
+// deployWith is deploy with a chance to set the app up (volumes, say) before
+// the rollout.
+func (h *harness) deployWith(app string, web int, setup func()) {
+	h.t.Helper()
 	ctx := h.ctx
 	if _, err := h.st.CreateApp(ctx, app); err != nil {
 		h.t.Fatal(err)
+	}
+	if setup != nil {
+		setup()
 	}
 	h.st.SetProperty(ctx, app, "checks", "wait-to-retire", "0")
 	h.st.UpdateDomains(ctx, app, types.DomainsPatch{Add: []string{app + ".example.test"}})

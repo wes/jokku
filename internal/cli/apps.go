@@ -44,7 +44,11 @@ func appsDestroy(c *Context) error {
 		return err
 	}
 	if !c.Bool("force") {
-		if err := c.confirm("destroy app "+c.App, c.App); err != nil {
+		action := "destroy app " + c.App
+		if vols, err := c.API.Volumes(c, c.App); err == nil && len(vols) > 0 {
+			action += fmt.Sprintf(" and its %d volumes, with all their data", len(vols))
+		}
+		if err := c.confirm(action, c.App); err != nil {
 			return err
 		}
 	}

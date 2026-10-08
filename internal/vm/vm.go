@@ -52,8 +52,19 @@ type Spec struct {
 	IP       string
 	CPUs     int
 	MemoryMB int
+	Volumes  []Volume
 	Guest    guest.Config
 }
+
+// Volume is a disk image attached after the scratch disk (vdd, vde, ...)
+// and mounted at Path in the guest.
+type Volume struct {
+	Disk string
+	Path string
+}
+
+// MaxVolumes is how many volumes one instance can mount.
+const MaxVolumes = 16
 
 // Available explains why this machine cannot run microVMs, or returns nil.
 func (h *Host) Available() error {
@@ -190,6 +201,13 @@ func (h *Host) Start(ctx context.Context, s Spec) error {
 			return err
 		}
 	}
+	if len(s.Volumes) > MaxVolumes {
+		return fmt.Errorf("%d volumes, at most %d can be mounted", len(s.Volumes), MaxVolumes)
+	}
+	s.Guest.Mounts = nil
+	for i, v := range s.Volumes {
+		s.Guest.Mounts = append(s.Guest.Mounts, guest.Mount{Device: guest.VolumeDevice(i), Path: v.Path})
+	}
 	cfg, err := s.Guest.Encode()
 	if err != nil {
 		return err
@@ -256,17 +274,28 @@ func (h *Host) firecrackerConfig(s Spec, dir string) ([]byte, error) {
 		// ip=<client>::<gateway>:<netmask>:<hostname>:<device>:<autoconf>
 		fmt.Sprintf("ip=%s::%s:%s:%s:eth0:off", s.IP, h.Gateway.Addr(), net.IP(mask).String(), s.Guest.Hostname),
 	}, " ")
+	// Order matters: vda (root), vdb (config), vdc (scratch), then volumes.
+	drives := []map[string]any{
+		{"drive_id": "rootfs", "path_on_host": s.Artifact, "is_root_device": true, "is_read_only": true},
+		{"drive_id": "config", "path_on_host": filepath.Join(dir, "config.img"), "is_root_device": false, "is_read_only": true},
+		{"drive_id": "scratch", "path_on_host": filepath.Join(dir, "scratch.ext4"), "is_root_device": false, "is_read_only": false},
+	}
+	for i, v := range s.Volumes {
+		drives = append(drives, map[string]any{
+			"drive_id": fmt.Sprintf("volume%d", i), "path_on_host": v.Disk, "is_root_device": false, "is_read_only": false,
+			// Writeback makes a guest fsync an fsync of the disk image, so
+			// what a database commits survives the host losing power.
+			// (Unsafe, the default, ignores flushes.) Discard lets deleted
+			// files free space in the sparse image.
+			"cache_type": "Writeback", "discard": true,
+		})
+	}
 	cfg := map[string]any{
 		"boot-source": map[string]any{
 			"kernel_image_path": deps.KernelPath(),
 			"boot_args":         bootArgs,
 		},
-		// Order matters: vda (root), vdb (config), vdc (scratch).
-		"drives": []map[string]any{
-			{"drive_id": "rootfs", "path_on_host": s.Artifact, "is_root_device": true, "is_read_only": true},
-			{"drive_id": "config", "path_on_host": filepath.Join(dir, "config.img"), "is_root_device": false, "is_read_only": true},
-			{"drive_id": "scratch", "path_on_host": filepath.Join(dir, "scratch.ext4"), "is_root_device": false, "is_read_only": false},
-		},
+		"drives":         drives,
 		"machine-config": map[string]any{"vcpu_count": s.CPUs, "mem_size_mib": s.MemoryMB},
 		"network-interfaces": []map[string]any{{
 			"iface_id":      "eth0",
@@ -367,10 +396,76 @@ func (h *Host) Stop(ctx context.Context, id string, grace time.Duration) error {
 	return run(ctx, "systemctl", "stop", unit(id))
 }
 
-// Remove deletes a stopped instance's network device and files.
+// Remove deletes a stopped instance's network device and files. Its
+// volumes are kept.
 func (h *Host) Remove(ctx context.Context, id string) error {
 	run(ctx, "ip", "link", "del", tap(id))
 	return os.RemoveAll(h.dir(id))
+}
+
+// CreateVolume makes an empty ext4 disk image of sizeMB, sparse so only what
+// is written uses space. Unlike the scratch disk it has a journal: a volume
+// must survive the VM or the host stopping abruptly.
+func (h *Host) CreateVolume(ctx context.Context, path string, sizeMB int) error {
+	tmp := path + ".new"
+	os.Remove(tmp)
+	if err := run(ctx, "truncate", "-s", strconv.Itoa(sizeMB)+"M", tmp); err != nil {
+		return err
+	}
+	if err := run(ctx, "mkfs.ext4", "-q", "-F", "-m", "0", "-E", "lazy_itable_init=1,lazy_journal_init=1,nodiscard", tmp); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// GrowVolume enlarges a volume's disk image and its filesystem. The image
+// must not be attached to a VM.
+func (h *Host) GrowVolume(ctx context.Context, path string, sizeMB int) error {
+	// resize2fs insists on a freshly checked filesystem. e2fsck exits 1 when
+	// it fixed something, which is fine here.
+	out, err := exec.CommandContext(ctx, "e2fsck", "-f", "-p", path).CombinedOutput()
+	var exit *exec.ExitError
+	if err != nil && !(errors.As(err, &exit) && exit.ExitCode() == 1) {
+		return fmt.Errorf("e2fsck %s: %v: %s", path, err, strings.TrimSpace(string(out)))
+	}
+	if err := run(ctx, "truncate", "-s", strconv.Itoa(sizeMB)+"M", path); err != nil {
+		return err
+	}
+	return run(ctx, "resize2fs", path)
+}
+
+// Attached returns the volume disk images attached to VMs that are running.
+func (h *Host) Attached(ctx context.Context) (map[string]bool, error) {
+	units, err := h.Units(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for id, state := range units {
+		if state == "failed" {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(h.dir(id), "vm.json"))
+		if err != nil {
+			continue
+		}
+		var cfg struct {
+			Drives []struct {
+				ID   string `json:"drive_id"`
+				Path string `json:"path_on_host"`
+			} `json:"drives"`
+		}
+		if err := json.Unmarshal(b, &cfg); err != nil {
+			continue
+		}
+		for _, d := range cfg.Drives {
+			if strings.HasPrefix(d.ID, "volume") {
+				out[d.Path] = true
+			}
+		}
+	}
+	return out, nil
 }
 
 // ctrlAltDel uses Firecracker's API to press Ctrl-Alt-Del, which the guest

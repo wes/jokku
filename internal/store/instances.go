@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -36,6 +37,7 @@ type Instance struct {
 	CreatedAt   time.Time
 
 	Replaces     string // ID of the instance this one is taking over from
+	Volumes      []types.InstanceVolume
 	CPUPercent   float64
 	MemoryUsedMB int
 	ReportedAt   time.Time
@@ -52,6 +54,7 @@ const (
 	StateFailed   = "failed"   // exited and will not be restarted
 	StatePulling  = "pulling"  // its node is downloading the root filesystem
 	StateStopped  = "stopped"  // kept off while the app is stopped
+	StateSyncing  = "syncing"  // its node is receiving its volume's disk
 )
 
 // Name is how Dokku names processes: web.1, worker.2.
@@ -94,10 +97,17 @@ func (s *Store) CreateInstance(ctx context.Context, in *Instance, subnet netip.P
 		if in.IP == "" {
 			return fmt.Errorf("no free addresses left in %s", subnet)
 		}
+		vols, err := json.Marshal(in.Volumes)
+		if err != nil {
+			return err
+		}
+		if in.Volumes == nil {
+			vols = []byte("[]")
+		}
 		_, err = tx.ExecContext(ctx, `
-INSERT INTO instances (id, app_id, release_id, process_type, idx, node, ip, port, cpus, memory_mb, desired, state, replaces, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			in.ID, id, in.ReleaseID, in.ProcessType, in.Index, in.Node, in.IP, in.Port, in.CPUs, in.MemoryMB, in.Desired, in.State, in.Replaces, unix(in.CreatedAt))
+INSERT INTO instances (id, app_id, release_id, process_type, idx, node, ip, port, cpus, memory_mb, desired, state, replaces, volumes, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			in.ID, id, in.ReleaseID, in.ProcessType, in.Index, in.Node, in.IP, in.Port, in.CPUs, in.MemoryMB, in.Desired, in.State, in.Replaces, vols, unix(in.CreatedAt))
 		return err
 	})
 }
@@ -105,7 +115,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 const instanceSelect = `
 SELECT i.id, a.name, i.release_id, r.version, i.process_type, i.idx, i.node, i.ip, i.port, i.cpus, i.memory_mb,
 	i.desired, i.state, i.healthy_once, i.restarts, i.retire_at, COALESCE(i.started_at, 0), i.created_at,
-	i.replaces, i.cpu_percent, i.memory_used_mb, i.reported_at
+	i.replaces, i.volumes, i.cpu_percent, i.memory_used_mb, i.reported_at
 FROM instances i JOIN apps a ON a.id = i.app_id JOIN releases r ON r.id = i.release_id`
 
 // Instances lists an app's instances, or every instance for app "".
@@ -127,11 +137,15 @@ func (s *Store) Instances(ctx context.Context, app string) ([]Instance, error) {
 		var in Instance
 		var retire sql.NullInt64
 		var started, created, reported int64
+		var vols []byte
 		err := rows.Scan(&in.ID, &in.App, &in.ReleaseID, &in.Release, &in.ProcessType, &in.Index, &in.Node, &in.IP, &in.Port,
 			&in.CPUs, &in.MemoryMB, &in.Desired, &in.State, &in.HealthyOnce, &in.Restarts, &retire, &started, &created,
-			&in.Replaces, &in.CPUPercent, &in.MemoryUsedMB, &reported)
+			&in.Replaces, &vols, &in.CPUPercent, &in.MemoryUsedMB, &reported)
 		if err != nil {
 			return nil, err
+		}
+		if err := json.Unmarshal(vols, &in.Volumes); err != nil {
+			return nil, fmt.Errorf("instance %s volumes: %w", in.ID, err)
 		}
 		if retire.Valid {
 			t := fromUnix(retire.Int64)

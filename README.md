@@ -161,6 +161,38 @@ worker: bin/jobs
 
 Then scale each one: `jokku ps:scale myapp web=3 worker=1`.
 
+### Keep data
+
+An instance's own files are reset on every deploy, as in a container. Put
+data that must last, such as a database, uploads or a SQLite file, on a
+volume:
+
+```sh
+jokku storage:mount myapp data:/app/data                # creates the volume "data" (10g) if needed
+jokku storage:mount mydb pg:/var/lib/postgresql/data --size 50g
+jokku storage:list myapp
+```
+
+A volume is a disk on the server its instance runs on. It works the way a
+Docker volume does. On first use it gets whatever the image has at that path,
+and it is writable by the image's user. The disk only uses space for what is
+written.
+
+- **One instance per volume.** A process with a volume runs a single
+  instance, so `ps:scale myapp web=2` is refused. Deploys stop the old
+  instance before starting the new one, so expect a few seconds of downtime
+  instead of a zero-downtime switch.
+- **Moving servers.** `jokku nodes:drain` brings volumes along: the disk is
+  copied while the app keeps running, then the app stops briefly for a final
+  copy and starts on the new server. Move one yourself with
+  `jokku storage:move myapp data server-2`.
+- **If a server dies,** apps with volumes on it wait for it to come back
+  instead of starting elsewhere, because their data is there. Keep backups of
+  anything that matters.
+
+`storage:unmount` detaches a volume and keeps its data. `storage:resize` grows
+it, and `storage:destroy` deletes it.
+
 ### Deploy from GitHub Actions
 
 Create a key for GitHub and give it access:

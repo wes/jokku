@@ -154,6 +154,43 @@ grep -q "needs a terminal" <<<"$out" || fail "top: $out"
 step "push to a new app creates and deploys it"
 git push "jokku@$host:fresh" main >/dev/null 2>&1 || fail "deploying a new app failed"
 jssh apps:list | grep -qx fresh || fail "push did not create the app"
+
+step "a volume keeps data across restarts and deploys"
+keep=$(mktemp -d)
+cd "$keep"
+git init -q -b main
+# A non-root app with files at the mount path: they seed the new volume,
+# which the app can then write to.
+cat >Dockerfile <<'EOF'
+FROM public.ecr.aws/docker/library/busybox:1.36
+RUN adduser -D app && mkdir /data && echo seeded >/data/seed && chown -R app /data
+USER app
+EOF
+printf 'web: date >>/data/boots && exec httpd -f -p "$PORT" -h /data\n' >Procfile
+git add -A
+git commit -qm init
+jssh apps:create keep
+jssh storage:mount keep data:/data --size 1g | grep -q "Mounted volume data at /data in web" || fail "storage:mount"
+git push "jokku@$host:keep" main >/dev/null 2>&1 || fail "deploying an app with a volume failed"
+kdomain=$(jssh domains:report keep --domains-app-vhosts)
+kget() { curl -fsS --max-time 5 -H "Host: $kdomain" "http://127.0.0.1/$1"; }
+[ "$(kget seed)" = seeded ] || fail "the image's /data did not seed the volume: $(kget seed)"
+[ "$(kget boots | wc -l)" -eq 1 ] || fail "expected one boot recorded: $(kget boots)"
+jssh ps:restart keep >/dev/null
+[ "$(kget boots | wc -l)" -eq 2 ] || fail "the volume lost data on restart: $(kget boots)"
+git commit -q --allow-empty -m again
+out=$(git push "jokku@$host:keep" main 2>&1) || fail "redeploying failed: $out"
+grep -q "Stopping web.1 first" <<<"$out" || fail "the deploy did not stop the old instance first: $out"
+[ "$(kget boots | wc -l)" -eq 3 ] || fail "the volume lost data on deploy: $(kget boots)"
+jssh storage:list keep | grep -E "^data +local +1g .* ready +web:/data" || fail "storage:list: $(jssh storage:list keep)"
+if jssh ps:scale keep web=2 2>/dev/null; then fail "scaled a process with a local volume past one"; fi
+sudo sh -c 'ls /var/lib/jokku/volumes/*.ext4' >/dev/null || fail "no volume disk on the server"
+jssh apps:destroy keep --force
+for _ in $(seq 1 30); do
+  sudo sh -c 'ls /var/lib/jokku/volumes/*.ext4' >/dev/null 2>&1 || break
+  sleep 1
+done
+if sudo sh -c 'ls /var/lib/jokku/volumes/*.ext4' 2>/dev/null; then fail "apps:destroy left the volume's disk"; fi
 cd "$GITHUB_WORKSPACE"
 
 step "running install.sh again changes nothing"

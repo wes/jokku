@@ -207,6 +207,9 @@ func runControl(ctx context.Context, cfg Config, log *slog.Logger) error {
 
 	go ctl.Run(ctx)
 	go ag.Run(ctx)
+	// The agent API on the mesh: other nodes copy volume disks from it. (The
+	// control node reads its own logs directly, so no token.)
+	go ag.Serve(ctx, net.JoinHostPort(gateway.String(), strconv.Itoa(cluster.AgentPort)), "")
 	log.Info("jokku daemon started", "role", "control", "version", version.Version, "node", nodeName,
 		"socket", cfg.Socket, "api", cfg.APIListen, "data_dir", cfg.DataDir)
 	return serve(ctx, servers, listeners)
@@ -235,7 +238,7 @@ func runWorker(ctx context.Context, cfg Config, nf *NodeFile, log *slog.Logger) 
 		}},
 		DataDir: cfg.DataDir, DNS: vm.HostDNS(), Version: version.Version, Log: log, GCArtifacts: true,
 	})
-	go agent.Serve(ctx, net.JoinHostPort(nf.Node.MeshIP, strconv.Itoa(cluster.AgentPort)), nf.AgentToken, log)
+	go ag.Serve(ctx, net.JoinHostPort(nf.Node.MeshIP, strconv.Itoa(cluster.AgentPort)), nf.AgentToken)
 
 	// The local socket answers "jokku version" (and setup's health check);
 	// everything else belongs on the control node.

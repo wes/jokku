@@ -15,6 +15,7 @@ type NodeState struct {
 	Node      NodeIdentity   `json:"node"`
 	Peers     []Peer         `json:"peers"`
 	Instances []InstanceSpec `json:"instances"`
+	Volumes   []VolumeSpec   `json:"volumes,omitempty"`
 	Proxy     *ProxyState    `json:"proxy,omitempty"` // nil on non-ingress nodes
 }
 
@@ -62,7 +63,73 @@ type InstanceSpec struct {
 	// MaxRestarts is how often a crashed instance is restarted: -1 for
 	// always, 0 for never.
 	MaxRestarts int `json:"max_restarts"`
+
+	// Volumes are mounted into the VM. Each is listed in the node's Volumes
+	// as owned by it; the instance waits while one is still being copied
+	// here.
+	Volumes []InstanceVolume `json:"volumes,omitempty"`
 }
+
+// InstanceVolume mounts a volume at Path in an instance.
+type InstanceVolume struct {
+	ID   string `json:"id"`
+	Path string `json:"path"`
+}
+
+// VolumeSpec is a local volume's disk this node holds, receives or deletes.
+// Disks are deleted only on an explicit VolumeDestroy, never because a
+// volume stopped being listed.
+type VolumeSpec struct {
+	ID     string `json:"id"`
+	App    string `json:"app"`
+	Name   string `json:"name"`
+	SizeMB int    `json:"size_mb"`
+	Role   string `json:"role"` // owner | incoming | previous | destroy
+
+	// Create lets the owner make the disk when it has none: the volume has
+	// never held data. Without it a missing disk is an error, not an empty
+	// volume.
+	Create bool `json:"create,omitempty"`
+	// Token authorizes a move: the owner serves the disk to whoever presents
+	// it, and the incoming node presents it to From (the owner's agent API,
+	// host:port).
+	Token string `json:"token,omitempty"`
+	From  string `json:"from,omitempty"`
+}
+
+const (
+	VolumeOwner    = "owner"    // the disk lives here
+	VolumeIncoming = "incoming" // copy the disk from From
+	VolumePrevious = "previous" // moved away; keep the old copy until the new node has the disk
+	VolumeDestroy  = "destroy"  // delete the disk
+)
+
+// VolumeStatus is what a node reports about a volume it holds.
+type VolumeStatus struct {
+	ID string `json:"id"`
+	// State is ready, missing or moved (handed to the incoming node) for
+	// an owner; copying, synced (copied while the instance runs; waiting for
+	// it to stop) or received for an incoming node; destroyed once deleted.
+	State    string `json:"state"`
+	UsedMB   int    `json:"used_mb,omitempty"`
+	CopiedMB int    `json:"copied_mb,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+const (
+	VolumeReady     = "ready"
+	VolumeMissing   = "missing"
+	VolumeMoved     = "moved"
+	VolumeCopying   = "copying"
+	VolumeSynced    = "synced"
+	VolumeReceived  = "received"
+	VolumeDestroyed = "destroyed"
+)
+
+// FeatureVolumes is reported by agents that can hold volumes. Instances with
+// volumes are only placed on nodes reporting it, so an agent a release
+// behind never starts one without its disk.
+const FeatureVolumes = "volumes"
 
 type ProxyState struct {
 	Routes []ProxyRoute `json:"routes"`
@@ -82,8 +149,10 @@ type NodeStatus struct {
 	Version   string           `json:"version"`
 	ETag      string           `json:"etag"`              // the state it is applying
 	CanRun    string           `json:"can_run,omitempty"` // why microVMs cannot run here; empty if they can
+	Features  []string         `json:"features,omitempty"`
 	Metrics   NodeMetrics      `json:"metrics"`
 	Instances []InstanceStatus `json:"instances"`
+	Volumes   []VolumeStatus   `json:"volumes,omitempty"`
 }
 
 type NodeMetrics struct {
@@ -98,7 +167,7 @@ type NodeMetrics struct {
 
 type InstanceStatus struct {
 	ID          string    `json:"id"`
-	State       string    `json:"state"` // pulling | starting | healthy | crashed | failed | stopped
+	State       string    `json:"state"` // pulling | syncing | starting | healthy | crashed | failed | stopped
 	HealthyOnce bool      `json:"healthy_once"`
 	Restarts    int       `json:"restarts"`
 	StartedAt   time.Time `json:"started_at"`

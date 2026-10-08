@@ -89,6 +89,7 @@ var namespaceHelp = map[string]string{
 	"builder-dockerfile": "Manage the Dockerfile builder",
 	"ps":                 "List processes and scale an app",
 	"resource":           "Manage vCPU and memory per process type",
+	"storage":            "Manage volumes: disks for an app's data",
 	"checks":             "Manage zero-downtime deploy checks",
 	"proxy":              "Manage the HTTP proxy for an app",
 	"letsencrypt":        "Manage automatic TLS certificates",
@@ -123,6 +124,7 @@ func init() {
 	register(domainsCommands...)
 	register(psCommands...)
 	register(resourceCommands...)
+	register(storageCommands...)
 	register(sshKeysCommands...)
 	register(nodesCommands...)
 	register(clusterCommands...)

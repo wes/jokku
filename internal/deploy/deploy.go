@@ -272,24 +272,6 @@ func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, log func(str
 	if err != nil {
 		return err
 	}
-	// Instances that are not serving (a stopped app's, crashed ones) are
-	// replaced outright; serving ones retire once the new ones pass checks.
-	var stale, serving []string
-	for _, in := range before {
-		switch {
-		case in.Desired != store.DesiredRunning:
-		case in.State == store.StateHealthy:
-			serving = append(serving, in.ID)
-		default:
-			stale = append(stale, in.ID)
-		}
-	}
-	if err := p.Store.StopInstances(ctx, stale, nil); err != nil {
-		return err
-	}
-	if err := p.Store.SetAppStopped(ctx, app, false); err != nil {
-		return err
-	}
 	scaled, err := p.Store.Formation(ctx, app)
 	if err != nil {
 		return err
@@ -298,34 +280,78 @@ func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, log func(str
 	for _, proc := range scaled {
 		quantity[proc.Type] = proc.Quantity
 	}
+	for _, proc := range sortedProcessTypes(rel.Processes) {
+		if _, ok := quantity[proc]; !ok && proc == "web" {
+			quantity[proc] = 1 // as in Dokku: one web process unless scaled
+		}
+	}
 	sizes, err := p.Store.Resources(ctx, app)
 	if err != nil {
+		return err
+	}
+	disks, err := p.disks(ctx, app, rel, quantity)
+	if err != nil {
+		return err
+	}
+
+	// Instances that are not serving (a stopped app's, crashed ones) are
+	// replaced outright; serving ones retire once the new ones pass checks.
+	// A process type with local volumes can't overlap: its one instance
+	// holds the disks, so the old instance stops first.
+	var stale, serving []string
+	var first []store.Instance
+	for _, in := range before {
+		switch {
+		case in.Desired != store.DesiredRunning:
+		case len(disks[in.ProcessType].mounts) > 0:
+			first = append(first, in)
+			stale = append(stale, in.ID)
+		case in.State == store.StateHealthy:
+			serving = append(serving, in.ID)
+		default:
+			stale = append(stale, in.ID)
+		}
+	}
+	for _, in := range first {
+		log(fmt.Sprintf("-----> Stopping %s first: volume %s can only be attached to one instance at a time",
+			in.Name(), disks[in.ProcessType].names()))
+	}
+	if err := p.Store.StopInstances(ctx, stale, nil); err != nil {
+		return err
+	}
+	if err := p.Store.SetAppStopped(ctx, app, false); err != nil {
+		return err
+	}
+	fail := func(created []store.Instance, err error) error {
+		p.abandon(ctx, created)
+		p.restore(ctx, first)
 		return err
 	}
 
 	var created []store.Instance
 	var names []string
 	for _, proc := range sortedProcessTypes(rel.Processes) {
-		n, ok := quantity[proc]
-		if !ok && proc == "web" {
-			n = 1 // as in Dokku: one web process unless scaled
-		}
 		size := sizes.Effective(proc)
-		for i := 1; i <= n; i++ {
+		d := disks[proc]
+		for i := 1; i <= quantity[proc]; i++ {
 			node, subnet, err := p.Cluster.Place(ctx, cluster.Placement{
 				App: app, ProcessType: proc, CPUs: size.CPUs, MemoryMB: size.MemoryMB,
+				Pin: d.node, PinReason: d.pinReason, Volumes: len(d.mounts) > 0,
 			})
 			if err != nil {
-				p.abandon(ctx, created)
-				return err
+				return fail(created, err)
+			}
+			for _, v := range d.unplaced {
+				if err := p.Store.PlaceVolume(ctx, v.ID, node); err != nil {
+					return fail(created, err)
+				}
 			}
 			in := store.Instance{
 				App: app, ReleaseID: rel.ID, ProcessType: proc, Index: i, Node: node, Port: rel.Port(),
-				CPUs: size.CPUs, MemoryMB: size.MemoryMB, Desired: store.DesiredRunning,
+				CPUs: size.CPUs, MemoryMB: size.MemoryMB, Desired: store.DesiredRunning, Volumes: d.mounts,
 			}
 			if err := p.Store.CreateInstance(ctx, &in, subnet); err != nil {
-				p.abandon(ctx, created)
-				return err
+				return fail(created, err)
 			}
 			created = append(created, in)
 			names = append(names, fmt.Sprintf("%s on %s (%d vCPU, %s)", in.Name(), node, in.CPUs, formatMB(in.MemoryMB)))
@@ -335,8 +361,7 @@ func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, log func(str
 		log("-----> Starting " + strings.Join(names, ", "))
 		p.Cluster.Changed()
 		if err := p.waitHealthy(ctx, app, created, log); err != nil {
-			p.abandon(ctx, created)
-			return err
+			return fail(created, err)
 		}
 	} else {
 		log("-----> No processes are scaled up (jokku ps:scale " + app + " web=1)")
@@ -414,6 +439,91 @@ func (p *Pipeline) waitHealthy(ctx context.Context, app string, created []store.
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
+}
+
+// processDisks are the local volumes mounted in one process type.
+type processDisks struct {
+	mounts    []types.InstanceVolume
+	vols      []store.Volume
+	unplaced  []store.Volume // no disk yet: made where the instance lands
+	node      string         // where the others' disks are
+	pinReason string
+}
+
+func (d processDisks) names() string {
+	names := make([]string, len(d.vols))
+	for i, v := range d.vols {
+		names[i] = v.Name
+	}
+	return strings.Join(names, ", ")
+}
+
+// disks works out, for each process type, the volumes its instance mounts
+// and the node it must therefore run on. It refuses a rollout that cannot
+// work: more than one instance, disks on different nodes, a disk moving.
+func (p *Pipeline) disks(ctx context.Context, app string, rel *store.Release, quantity map[string]int) (map[string]processDisks, error) {
+	vols, err := p.Store.Volumes(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]processDisks{}
+	for _, v := range vols {
+		if v.State == store.VolumeDestroying {
+			continue
+		}
+		for _, m := range v.Mounts {
+			d := out[m.ProcessType]
+			d.mounts = append(d.mounts, types.InstanceVolume{ID: v.ID, Path: m.Path})
+			d.vols = append(d.vols, v)
+			out[m.ProcessType] = d
+		}
+	}
+	for proc, d := range out {
+		if _, ok := rel.Processes[proc]; !ok {
+			continue
+		}
+		if quantity[proc] > 1 {
+			return nil, fmt.Errorf("%s mounts volume %s, which can only be attached to one instance; scale it down with: jokku ps:scale %s %s=1",
+				proc, d.names(), app, proc)
+		}
+		for _, v := range d.vols {
+			switch {
+			case v.Moving():
+				return nil, fmt.Errorf("volume %s is moving to %s; deploy again once it is there (jokku storage:list %s)", v.Name, v.MovingTo, app)
+			case v.Node == "":
+				d.unplaced = append(d.unplaced, v)
+			case d.node == "":
+				d.node, d.pinReason = v.Node, fmt.Sprintf("volume %s is on %s", v.Name, v.Node)
+			case d.node != v.Node:
+				return nil, fmt.Errorf("%s mounts volumes on two nodes (%s, and %s on %s); move one with: jokku storage:move %s %s %s",
+					proc, d.pinReason, v.Name, v.Node, app, v.Name, d.node)
+			}
+		}
+		out[proc] = d
+	}
+	return out, nil
+}
+
+// restore starts again, where they ran, the instances a failed rollout had
+// stopped first to free their volumes.
+func (p *Pipeline) restore(ctx context.Context, insts []store.Instance) {
+	ctx = context.WithoutCancel(ctx)
+	for _, in := range insts {
+		if in.State != store.StateHealthy {
+			continue
+		}
+		node, err := p.Store.Node(ctx, in.Node)
+		if err != nil {
+			continue
+		}
+		subnet, _ := cluster.NodeSubnet(p.Cluster.ClusterCIDR, node.SubnetIndex)
+		back := in
+		back.Replaces = ""
+		if err := p.Store.CreateInstance(ctx, &back, subnet); err != nil {
+			p.Log.Error("restarting the previous instance", "app", in.App, "process", in.Name(), "err", err)
+		}
+	}
+	p.Cluster.Changed()
 }
 
 // abandon stops instances a failed rollout created.

@@ -74,6 +74,7 @@ func (s *Server) destroyApp(w http.ResponseWriter, r *http.Request) {
 	if err := s.Git.Remove(name); err != nil {
 		s.Log.Warn("removing git repo", "app", name, "err", err)
 	}
+	s.Cluster.Changed() // stop its instances and delete its volumes' disks now
 	w.WriteHeader(http.StatusNoContent)
 }
 

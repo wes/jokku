@@ -264,12 +264,14 @@ func orDefaultMem(mb int, def string) string {
 	return formatMemory(mb)
 }
 
-// parseMemory reads sizes like 512, 512m, 512MB, 1g, 1.5G into megabytes.
+// parseMemory reads sizes like 512, 512m, 512MB, 1g, 1.5G, 1t into megabytes.
 func parseMemory(s string) (int, error) {
 	v := strings.ToLower(strings.TrimSpace(s))
 	v = strings.TrimSuffix(strings.TrimSuffix(v, "ib"), "b")
 	mult := 1.0
 	switch {
+	case strings.HasSuffix(v, "t"):
+		mult, v = 1024*1024, strings.TrimSuffix(v, "t")
 	case strings.HasSuffix(v, "g"):
 		mult, v = 1024, strings.TrimSuffix(v, "g")
 	case strings.HasSuffix(v, "m"):

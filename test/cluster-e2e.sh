@@ -80,7 +80,7 @@ step "serve jokku to the VM"
 cp ./install.sh "$dist/install.sh"
 (cd "$dist" && python3 -m http.server 8000 --bind "$host_ip" >/dev/null 2>&1) &
 server=$!
-trap 'kill $server 2>/dev/null; sudo kill $(cat "$work/qemu.pid") 2>/dev/null || true' EXIT
+trap 'kill $server 2>/dev/null; sudo kill "$(sudo cat "$work/qemu.pid")" 2>/dev/null || true' EXIT
 eventually 30 "the file server answers" curl -fsS "http://$host_ip:8000/checksums.txt"
 
 step "join the worker with install.sh --join"
@@ -154,13 +154,16 @@ if $worker_runs_vms; then
     "sudo jokku ps:report hello | grep -E 'Status web.[12]: +healthy \(v[0-9]+, 10\.210\.2\..*, 0 restarts\)'"
 
   step "a dead worker's instance moves to the control node"
-  sudo kill "$(cat "$work/qemu.pid")"
-  watch_fail=0
-  for _ in $(seq 1 60); do curl -fs -o /dev/null --max-time 2 -H "Host: $domain" http://127.0.0.1/ || watch_fail=$((watch_fail + 1)); sleep 2; done &
+  rm -f "$work/failures"
+  (while :; do curl -fs -o /dev/null --max-time 10 -H "Host: $domain" http://127.0.0.1/ || echo x >>"$work/failures"; sleep 0.5; done) &
   watcher=$!
+  sudo kill "$(sudo cat "$work/qemu.pid")" # the worker machine dies
   eventually 150 "instance rescheduled to the control node" bash -c \
     "sudo jokku ps:report hello | grep -cE 'Status web.[12]: +healthy \(v[0-9]+, 10\.210\.1\.' | grep -qx 2"
   kill $watcher 2>/dev/null || true
+  failures=0
+  [ ! -f "$work/failures" ] || failures=$(wc -l <"$work/failures")
+  [ "$failures" -eq 0 ] || fail "$failures requests failed while the worker died and its instance moved"
   sudo jokku events | tail -n 5
   curl -fsS -H "Host: $domain" http://127.0.0.1/ | grep -q "served by" || fail "the app is not serving after the failover"
 fi

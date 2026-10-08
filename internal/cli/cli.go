@@ -94,6 +94,9 @@ var namespaceHelp = map[string]string{
 	"letsencrypt":        "Manage automatic TLS certificates",
 	"ssh-keys":           "Manage SSH keys used for git push and remote commands",
 	"nodes":              "Manage the machines in the cluster",
+	"cluster":            "Add servers and see the cluster",
+	"events":             "List recent events",
+	"top":                "Watch the cluster, apps and machines live",
 	"version":            "Print the jokku version",
 	"update":             "Update jokku on this server",
 	"logs":               "Display an app's log output",
@@ -122,6 +125,8 @@ func init() {
 	register(resourceCommands...)
 	register(sshKeysCommands...)
 	register(nodesCommands...)
+	register(clusterCommands...)
+	register(topCommand)
 	register(serverCommands...)
 	register(propertyCommands()...)
 	register(updateCommand)

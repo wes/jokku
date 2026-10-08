@@ -1,66 +1,158 @@
-// Package agent makes this node match the desired state in the store: it
-// boots instances that should run, health-checks them, restarts crashes per
-// the app's restart policy, retires old instances after deploys and keeps the
-// proxy's routes current.
+// Package agent runs on every node, the control node included. It makes the
+// node match the desired state the control node computes for it: it boots the
+// instances it should hold, health-checks them, restarts crashes per the
+// app's restart policy, stops and removes what it should no longer hold,
+// keeps the WireGuard mesh and the proxy's routes current, and reports what
+// it observes.
 //
-// Every pass is idempotent: it compares the store with the VM units that are
-// actually running and fixes the difference, so crashes, daemon restarts and
-// reboots all converge the same way.
+// The desired state is cached on disk, so a node keeps running (and serving
+// traffic for) its last known state while the control node is unreachable.
+// Every pass compares the desired state with the VMs actually running and
+// fixes the difference, so crashes, restarts and reboots converge the same
+// way.
 package agent
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
-	"os/exec"
-	"strconv"
-	"strings"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/wes/jokku/internal/guest"
-	"github.com/wes/jokku/internal/props"
-	"github.com/wes/jokku/internal/proxy"
-	"github.com/wes/jokku/internal/store"
 	"github.com/wes/jokku/internal/types"
 	"github.com/wes/jokku/internal/vm"
 )
 
+// ErrRemoved means the control node no longer knows this node.
+var ErrRemoved = errors.New("this node was removed from the cluster")
+
+// ControlPlane is how an agent reaches the control node: in-process on the
+// control node, HTTPS everywhere else.
+type ControlPlane interface {
+	// State long-polls for this node's desired state, returning once it
+	// differs from etag (or after a timeout).
+	State(ctx context.Context, etag string) (*types.NodeState, error)
+	Report(ctx context.Context, st *types.NodeStatus) error
+	// Artifact downloads a root filesystem image.
+	Artifact(ctx context.Context, name string, w io.Writer) error
+}
+
+// Runtime runs microVMs: vm.Host in production, a fake in tests.
+type Runtime interface {
+	Available() error
+	EnsureNetwork(ctx context.Context) error
+	Start(ctx context.Context, s vm.Spec) error
+	Stop(ctx context.Context, id string, grace time.Duration) error
+	Remove(ctx context.Context, id string) error
+	Units(ctx context.Context) (map[string]string, error)
+	Usage(ctx context.Context, ids []string) (map[string]vm.Usage, error)
+	CheckTCP(addr string) bool
+}
+
+// Mesh keeps the WireGuard mesh matching the peer list.
+type Mesh interface {
+	Sync(ctx context.Context, self types.NodeIdentity, peers []types.Peer) error
+}
+
+// Proxy loads routes into this node's proxy.
+type Proxy interface {
+	Apply(ctx context.Context, ps *types.ProxyState) error
+}
+
+type Config struct {
+	Control ControlPlane
+	Runtime Runtime
+	Mesh    Mesh  // nil: no mesh
+	Proxy   Proxy // nil: no proxy
+	DataDir string
+	DNS     []string // resolvers handed to guests
+	Version string
+	Log     *slog.Logger
+	// GCArtifacts deletes root filesystems no instance here uses. Off on
+	// the control node, which keeps recent releases for rollbacks.
+	GCArtifacts bool
+	// Metrics measures the host; nil reads /proc.
+	Metrics func() types.NodeMetrics
+	// ReconcileEvery and ReportEvery default to 2s and 5s.
+	ReconcileEvery, ReportEvery time.Duration
+}
+
 // stopGrace is how long an app gets to exit after SIGTERM.
 const stopGrace = 10 * time.Second
 
-type Config struct {
-	Store   *store.Store
-	Host    *vm.Host
-	Node    string
-	DataDir string
-	DNS     []string // resolvers handed to guests
-	Log     *slog.Logger
-}
-
 type Agent struct {
 	Config
-	kick      chan struct{}
-	mu        sync.Mutex // one pass at a time
-	stopping  sync.Map   // instance ID -> struct{}, while a graceful stop runs
-	lastProxy []byte
-	lastErr   string
+
+	kick     chan struct{}
+	report   chan struct{}
+	stateMu  sync.Mutex
+	desired  *types.NodeState
+	mu       sync.Mutex // one reconcile pass at a time
+	local    map[string]*local
+	stopping sync.Map // instance ID -> struct{} while a graceful stop runs
+	pulling  sync.Map // artifact name -> struct{} while downloading
+	lastMesh string
+	lastSync time.Time
+	lastProx string
+	lastGC   time.Time
+	canRun   string
+	errMu    sync.Mutex
+	lastErr  map[string]string
+	host     *hostSampler
+}
+
+// local is what this node knows about an instance beyond the desired state.
+type local struct {
+	state       string
+	healthyOnce bool
+	restarts    int
+	startedAt   time.Time
+	removed     bool // files deleted
+	cpuNanos    uint64
+	cpuAt       time.Time
+	cpuPercent  float64
+	memoryMB    int
 }
 
 func New(c Config) *Agent {
-	return &Agent{Config: c, kick: make(chan struct{}, 1)}
+	if c.ReconcileEvery == 0 {
+		c.ReconcileEvery = 2 * time.Second
+	}
+	if c.ReportEvery == 0 {
+		c.ReportEvery = 5 * time.Second
+	}
+	return &Agent{
+		Config: c, kick: make(chan struct{}, 1), report: make(chan struct{}, 1),
+		local: map[string]*local{}, lastErr: map[string]string{}, host: &hostSampler{},
+	}
 }
 
-// Available reports why this node cannot run microVMs, or nil.
-func (a *Agent) Available() error { return a.Host.Available() }
-
-// Run reconciles every two seconds, and right away when kicked.
+// Run starts the agent and blocks until ctx is done.
 func (a *Agent) Run(ctx context.Context) {
-	if err := a.Host.EnsureNetwork(ctx); err != nil {
+	if st, err := a.loadCachedState(); err == nil {
+		a.setDesired(st, false)
+		a.Log.Info("loaded the cached desired state", "instances", len(st.Instances))
+	}
+	if err := a.Runtime.Available(); err != nil {
+		a.canRun = err.Error()
+		a.Log.Warn("this node cannot run microVMs", "reason", err)
+	}
+	// The bridge carries the node's mesh address too, so set it up even
+	// where VMs can't run.
+	if err := a.Runtime.EnsureNetwork(ctx); err != nil {
 		a.Log.Error("setting up the VM network", "err", err)
 	}
-	t := time.NewTicker(2 * time.Second)
+	go a.watch(ctx)
+	go a.reportLoop(ctx)
+	t := time.NewTicker(a.ReconcileEvery)
 	defer t.Stop()
 	for {
 		a.Reconcile(ctx)
@@ -73,12 +165,92 @@ func (a *Agent) Run(ctx context.Context) {
 	}
 }
 
-// Kick asks for a pass soon.
+// Kick asks for a reconcile pass soon.
 func (a *Agent) Kick() {
 	select {
 	case a.kick <- struct{}{}:
 	default:
 	}
+}
+
+func (a *Agent) reportSoon() {
+	select {
+	case a.report <- struct{}{}:
+	default:
+	}
+}
+
+// watch long-polls the control node and applies every new desired state.
+func (a *Agent) watch(ctx context.Context) {
+	backoff := time.Second
+	for ctx.Err() == nil {
+		etag := ""
+		if st := a.Desired(); st != nil {
+			etag = st.ETag
+		}
+		st, err := a.Control.State(ctx, etag)
+		switch {
+		case errors.Is(err, ErrRemoved):
+			a.logOnce("state", err)
+			a.setDesired(&types.NodeState{ETag: "removed"}, true)
+			sleep(ctx, 30*time.Second)
+			continue
+		case err != nil:
+			if ctx.Err() == nil {
+				a.logOnce("state", fmt.Errorf("cannot reach the control node, running the last known state: %w", err))
+			}
+			sleep(ctx, backoff)
+			backoff = min(backoff*2, 30*time.Second)
+			continue
+		}
+		a.clearErr("state")
+		backoff = time.Second
+		if st.ETag != etag {
+			a.setDesired(st, true)
+		}
+	}
+}
+
+func (a *Agent) setDesired(st *types.NodeState, persist bool) {
+	a.stateMu.Lock()
+	a.desired = st
+	a.stateMu.Unlock()
+	if persist {
+		if err := a.saveCachedState(st); err != nil {
+			a.logOnce("cache", err)
+		}
+	}
+	a.Kick()
+}
+
+// Desired is the state the agent is applying, or nil before the first one.
+func (a *Agent) Desired() *types.NodeState {
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.desired
+}
+
+func (a *Agent) cachePath() string { return filepath.Join(a.DataDir, "agent-state.json") }
+
+func (a *Agent) loadCachedState() (*types.NodeState, error) {
+	b, err := os.ReadFile(a.cachePath())
+	if err != nil {
+		return nil, err
+	}
+	var st types.NodeState
+	return &st, json.Unmarshal(b, &st)
+}
+
+func (a *Agent) saveCachedState(st *types.NodeState) error {
+	b, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	tmp := a.cachePath() + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, a.cachePath())
 }
 
 // Reconcile runs one pass.
@@ -87,216 +259,193 @@ func (a *Agent) Reconcile(ctx context.Context) {
 	defer a.mu.Unlock()
 	if err := a.reconcile(ctx); err != nil {
 		a.logOnce("reconcile", err)
+	} else {
+		a.clearErr("reconcile")
 	}
 }
 
 func (a *Agent) reconcile(ctx context.Context) error {
-	insts, err := a.Store.Instances(ctx, "")
-	if err != nil {
-		return err
+	st := a.Desired()
+	if st == nil {
+		return nil // nothing known yet
 	}
-	apps, err := a.Store.Apps(ctx)
-	if err != nil {
-		return err
+	if st.Node.Name != "" && a.Mesh != nil {
+		if err := a.syncMesh(ctx, st); err != nil {
+			a.logOnce("mesh", err)
+		} else {
+			a.clearErr("mesh")
+		}
 	}
-	stoppedApp := map[string]bool{}
-	for _, app := range apps {
-		stoppedApp[app.Name] = app.Stopped
+	if a.Proxy != nil && st.Proxy != nil {
+		if err := a.syncProxy(ctx, st.Proxy); err != nil {
+			a.logOnce("proxy", err)
+		} else {
+			a.clearErr("proxy")
+		}
 	}
-	units, err := a.Host.Units(ctx)
+	if a.canRun != "" {
+		return nil
+	}
+
+	units, err := a.Runtime.Units(ctx)
 	if err != nil {
 		return err
 	}
 	now := time.Now()
-	releases := map[int64]*store.Release{}
-	known := map[string]bool{}
-
-	for _, in := range insts {
-		if in.Node != a.Node {
-			continue
+	specs := map[string]types.InstanceSpec{}
+	changed := false
+	for _, spec := range st.Instances {
+		specs[spec.ID] = spec
+		l := a.local[spec.ID]
+		if l == nil {
+			l = &local{state: "pending"}
+			// A VM that is already running (this agent restarted, or the
+			// node's jokku was updated) is adopted, not started again:
+			// it goes through checks like a fresh one.
+			if _, running := units[spec.ID]; running {
+				l.state, l.startedAt = "starting", now
+			}
+			a.local[spec.ID] = l
 		}
-		known[in.ID] = true
-		_, running := units[in.ID]
-		if _, busy := a.stopping.Load(in.ID); busy {
-			continue
-		}
-		if !shouldRun(in, stoppedApp[in.App], now) {
-			switch {
-			case running:
-				a.stopAsync(in.ID, in.Desired == store.DesiredStopped)
-			case in.Desired == store.DesiredStopped:
-				a.remove(ctx, in.ID)
-			case in.State != store.StatePending:
-				// The app was stopped: start fresh on ps:start.
-				a.Store.SetInstanceState(ctx, in.ID, store.StatePending)
-			}
-			continue
-		}
-
-		switch in.State {
-		case store.StatePending:
-			a.start(ctx, in, releases, false)
-		case store.StateStarting:
-			switch {
-			case !running && in.HealthyOnce:
-				a.crashed(ctx, in)
-			case !running:
-				a.Log.Warn("instance exited before passing checks", "app", in.App, "process", in.Name())
-				a.Store.SetInstanceState(ctx, in.ID, store.StateFailed)
-			case healthy(in):
-				a.Store.SetInstanceState(ctx, in.ID, store.StateHealthy)
-			}
-		case store.StateHealthy:
-			if !running {
-				a.crashed(ctx, in)
-			}
-		case store.StateCrashed:
-			max, ok := a.restartPolicy(ctx, in.App)
-			backoff := time.Duration(min(1<<min(in.Restarts, 6), 60)) * time.Second
-			switch {
-			case !ok || (max >= 0 && in.Restarts >= max):
-				a.Log.Warn("not restarting instance (restart policy)", "app", in.App, "process", in.Name(), "restarts", in.Restarts)
-				a.Store.SetInstanceState(ctx, in.ID, store.StateFailed)
-			case now.Sub(in.StartedAt) >= backoff:
-				a.start(ctx, in, releases, true)
-			}
-		case store.StateFailed:
-			if running {
-				a.stopAsync(in.ID, false)
-			}
+		before := l.state
+		a.step(ctx, spec, l, units, now)
+		if l.state != before {
+			changed = true
 		}
 	}
 
-	// VMs the store no longer knows about (destroyed apps, lost rows).
+	// Running VMs this node should no longer hold.
 	for id := range units {
-		if !known[id] {
-			if _, busy := a.stopping.Load(id); !busy {
-				a.stopAsync(id, true)
+		if _, want := specs[id]; !want {
+			a.stopAsync(id, true)
+		}
+	}
+	// Forget instances that are gone and stopped.
+	for id, l := range a.local {
+		if _, want := specs[id]; want {
+			continue
+		}
+		if _, running := units[id]; running {
+			continue
+		}
+		if _, busy := a.stopping.Load(id); busy {
+			continue
+		}
+		if !l.removed {
+			if err := a.Runtime.Remove(ctx, id); err != nil {
+				a.Log.Error("removing instance files", "id", id, "err", err)
+				continue
 			}
 		}
+		delete(a.local, id)
+		changed = true
 	}
-	return a.syncProxy(ctx, insts)
+	a.sampleUsage(ctx, units, now)
+	if a.GCArtifacts && now.Sub(a.lastGC) > 10*time.Minute {
+		a.lastGC = now
+		a.gcArtifacts(st)
+	}
+	if changed {
+		a.reportSoon()
+	}
+	return nil
 }
 
-// shouldRun: wanted, or retiring but still inside its wait-to-retire window.
-func shouldRun(in store.Instance, appStopped bool, now time.Time) bool {
-	if appStopped {
-		return false
-	}
-	if in.Desired == store.DesiredRunning {
-		return true
-	}
-	return in.RetireAt != nil && now.Before(*in.RetireAt)
-}
-
-func healthy(in store.Instance) bool {
-	if in.ProcessType == "web" {
-		return vm.CheckTCP(fmt.Sprintf("%s:%d", in.IP, in.Port))
-	}
-	return time.Since(in.StartedAt) >= 5*time.Second
-}
-
-func (a *Agent) crashed(ctx context.Context, in store.Instance) {
-	a.Log.Warn("instance exited", "app", in.App, "process", in.Name())
-	a.Store.SetInstanceState(ctx, in.ID, store.StateCrashed)
-}
-
-// restartPolicy returns the maximum restarts (-1 for unlimited) and whether
-// crashed instances are restarted at all.
-func (a *Agent) restartPolicy(ctx context.Context, app string) (int, bool) {
-	global, _ := a.Store.Properties(ctx, "", "ps")
-	appProps, _ := a.Store.Properties(ctx, app, "ps")
-	p, _ := props.Lookup("ps")
-	policy := props.Compute(p, appProps, global)["restart-policy"]
-	switch {
-	case policy == "no":
-		return 0, false
-	case policy == "always" || policy == "unless-stopped" || policy == "on-failure":
-		return -1, true
-	}
-	if n, ok := strings.CutPrefix(policy, "on-failure:"); ok {
-		if max, err := strconv.Atoi(n); err == nil {
-			return max, true
-		}
-	}
-	return 10, true
-}
-
-func (a *Agent) start(ctx context.Context, in store.Instance, releases map[int64]*store.Release, restart bool) {
-	rel := releases[in.ReleaseID]
-	if rel == nil {
-		var err error
-		if rel, err = a.Store.Release(ctx, in.ReleaseID); err != nil {
-			a.Log.Error("loading release", "app", in.App, "err", err)
-			return
-		}
-		releases[in.ReleaseID] = rel
-	}
-	argv := rel.Processes[in.ProcessType]
-	if len(argv) == 0 {
-		a.Log.Error("release has no such process type", "app", in.App, "process", in.ProcessType)
-		a.Store.SetInstanceState(ctx, in.ID, store.StateFailed)
+// step advances one instance's state machine.
+func (a *Agent) step(ctx context.Context, spec types.InstanceSpec, l *local, units map[string]string, now time.Time) {
+	_, running := units[spec.ID]
+	if _, busy := a.stopping.Load(spec.ID); busy {
 		return
 	}
-	spec := vm.Spec{
-		ID: in.ID, App: in.App, Process: in.Name(), Artifact: rel.Artifact,
-		IP: in.IP, CPUs: in.CPUs, MemoryMB: in.MemoryMB,
+	if !spec.Run {
+		if running {
+			a.stopAsync(spec.ID, false)
+		}
+		l.state = "stopped"
+		return
+	}
+	if l.state == "stopped" {
+		l.state = "pending" // the app was started again
+	}
+	if !a.haveArtifact(spec) {
+		l.state = "pulling"
+		a.pull(spec)
+		return
+	}
+	if l.state == "pulling" {
+		l.state = "pending"
+	}
+
+	switch l.state {
+	case "pending":
+		a.start(ctx, spec, l, false)
+	case "starting":
+		switch {
+		case !running && l.healthyOnce:
+			a.Log.Warn("instance exited", "app", spec.App, "process", spec.Process)
+			l.state = "crashed"
+		case !running:
+			a.Log.Warn("instance exited before passing checks", "app", spec.App, "process", spec.Process)
+			l.state = "failed"
+		case a.healthy(spec, l, now):
+			l.state, l.healthyOnce = "healthy", true
+		}
+	case "healthy":
+		if !running {
+			a.Log.Warn("instance exited", "app", spec.App, "process", spec.Process)
+			l.state = "crashed"
+		}
+	case "crashed":
+		backoff := time.Duration(min(1<<min(l.restarts, 6), 60)) * time.Second
+		switch {
+		case spec.MaxRestarts == 0 || (spec.MaxRestarts > 0 && l.restarts >= spec.MaxRestarts):
+			a.Log.Warn("not restarting instance (restart policy)", "app", spec.App, "process", spec.Process, "restarts", l.restarts)
+			l.state = "failed"
+		case now.Sub(l.startedAt) >= backoff:
+			a.start(ctx, spec, l, true)
+		}
+	case "failed":
+		if running {
+			a.stopAsync(spec.ID, false)
+		}
+	}
+}
+
+func (a *Agent) healthy(spec types.InstanceSpec, l *local, now time.Time) bool {
+	if spec.ProcessType == "web" {
+		return a.Runtime.CheckTCP(fmt.Sprintf("%s:%d", spec.IP, spec.Port))
+	}
+	return now.Sub(l.startedAt) >= 5*time.Second
+}
+
+func (a *Agent) start(ctx context.Context, spec types.InstanceSpec, l *local, restart bool) {
+	if len(spec.Argv) == 0 {
+		a.Log.Error("instance has no command", "app", spec.App, "process", spec.Process)
+		l.state = "failed"
+		return
+	}
+	err := a.Runtime.Start(ctx, vm.Spec{
+		ID: spec.ID, App: spec.App, Process: spec.Process, Artifact: a.artifactPath(spec.Artifact),
+		IP: spec.IP, CPUs: spec.CPUs, MemoryMB: spec.MemoryMB,
 		Guest: guest.Config{
-			Argv:        argv,
-			Env:         Env(rel, in),
-			User:        rel.Image.User,
-			WorkDir:     rel.Image.WorkingDir,
-			Hostname:    Hostname(in),
-			IP:          in.IP,
-			DNS:         a.DNS,
-			StopTimeout: int(stopGrace / time.Second),
+			Argv: spec.Argv, Env: spec.Env, User: spec.User, WorkDir: spec.WorkDir,
+			Hostname: spec.Hostname, IP: spec.IP, DNS: a.DNS, StopTimeout: int(stopGrace / time.Second),
 		},
-	}
-	if err := a.Host.Start(ctx, spec); err != nil {
-		a.Log.Error("starting instance", "app", in.App, "process", in.Name(), "err", err)
-		a.Store.SetInstanceState(ctx, in.ID, store.StateFailed)
+	})
+	if err != nil {
+		a.Log.Error("starting instance", "app", spec.App, "process", spec.Process, "err", err)
+		l.state = "failed"
 		return
 	}
-	a.Store.InstanceStarted(ctx, in.ID, restart)
+	if restart {
+		l.restarts++
+	}
+	l.state, l.startedAt, l.removed = "starting", time.Now(), false
+	l.cpuNanos, l.cpuAt = 0, time.Time{}
 }
 
-// Env is the process environment: the image's, then config vars, then what
-// Jokku sets.
-func Env(rel *store.Release, in store.Instance) []string {
-	env := append([]string(nil), rel.Image.Env...)
-	keys := make([]string, 0, len(rel.ConfigVars))
-	for k := range rel.ConfigVars {
-		keys = append(keys, k)
-	}
-	sortStrings(keys)
-	for _, k := range keys {
-		env = append(env, k+"="+rel.ConfigVars[k])
-	}
-	return append(env,
-		"PORT="+strconv.Itoa(in.Port),
-		"DYNO="+in.Name(),
-		"JOKKU_APP_NAME="+in.App,
-		"JOKKU_PROCESS_TYPE="+in.ProcessType,
-	)
-}
-
-// Hostname is <app>-<type>-<n>, a valid DNS label.
-func Hostname(in store.Instance) string {
-	h := strings.ToLower(fmt.Sprintf("%s-%s-%d", in.App, in.ProcessType, in.Index))
-	h = strings.Map(func(r rune) rune {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' {
-			return r
-		}
-		return '-'
-	}, h)
-	if len(h) > 63 {
-		h = h[:63]
-	}
-	return strings.Trim(h, "-")
-}
-
-// stopAsync stops a VM gracefully in the background, then removes its files
-// and (when remove) its row.
+// stopAsync stops a VM gracefully in the background, then (when remove)
+// deletes its files.
 func (a *Agent) stopAsync(id string, remove bool) {
 	if _, loaded := a.stopping.LoadOrStore(id, struct{}{}); loaded {
 		return
@@ -304,139 +453,221 @@ func (a *Agent) stopAsync(id string, remove bool) {
 	go func() {
 		defer a.stopping.Delete(id)
 		ctx := context.Background()
-		if err := a.Host.Stop(ctx, id, stopGrace); err != nil {
+		if err := a.Runtime.Stop(ctx, id, stopGrace); err != nil {
 			a.Log.Error("stopping instance", "id", id, "err", err)
 			return
 		}
 		if remove {
-			a.remove(ctx, id)
+			if err := a.Runtime.Remove(ctx, id); err != nil {
+				a.Log.Error("removing instance files", "id", id, "err", err)
+			} else {
+				a.mu.Lock()
+				if l := a.local[id]; l != nil {
+					l.removed = true
+				}
+				a.mu.Unlock()
+			}
 		}
 		a.Kick()
 	}()
 }
 
-func (a *Agent) remove(ctx context.Context, id string) {
-	if err := a.Host.Remove(ctx, id); err != nil {
-		a.Log.Error("removing instance files", "id", id, "err", err)
-	}
-	a.Store.DeleteInstance(ctx, id)
+// Artifacts
+
+func (a *Agent) artifactPath(name string) string {
+	return filepath.Join(a.DataDir, "artifacts", filepath.Base(name))
 }
 
-// syncProxy loads routes for every deployed app into the proxy when they
-// changed: its domains to the healthy web instances of its current release.
-func (a *Agent) syncProxy(ctx context.Context, insts []store.Instance) error {
-	apps, err := a.Store.Apps(ctx)
-	if err != nil {
-		return err
-	}
-	le, _ := props.Lookup("letsencrypt")
-	px, _ := props.Lookup("proxy")
-	globalLE, _ := a.Store.Properties(ctx, "", "letsencrypt")
-	globalProxy, _ := a.Store.Properties(ctx, "", "proxy")
-	now := time.Now()
+func (a *Agent) haveArtifact(spec types.InstanceSpec) bool {
+	_, err := os.Stat(a.artifactPath(spec.Artifact))
+	return err == nil
+}
 
-	var routes []proxy.Route
-	for _, app := range apps {
-		if app.CurrentRelease == 0 {
-			continue
-		}
-		appProxy, _ := a.Store.Properties(ctx, app.Name, "proxy")
-		if props.Compute(px, appProxy, globalProxy)["enabled"] != "true" {
-			continue
-		}
-		cur, err := a.Store.CurrentRelease(ctx, app.Name)
-		if err != nil || cur == nil {
-			continue
-		}
-		domains, err := a.Store.Domains(ctx, app.Name)
-		if err != nil {
-			return err
-		}
-		var upstreams []string
-		for _, in := range insts {
-			if in.App == app.Name && in.ReleaseID == cur.ID && in.ProcessType == "web" &&
-				in.State == store.StateHealthy && shouldRun(in, app.Stopped, now) {
-				upstreams = append(upstreams, fmt.Sprintf("%s:%d", in.IP, in.Port))
-			}
-		}
-		appLE, _ := a.Store.Properties(ctx, app.Name, "letsencrypt")
-		tlsOn := props.Compute(le, appLE, globalLE)["enabled"] == "true"
-		plain, secure := proxy.Route{App: app.Name, Upstreams: upstreams}, proxy.Route{App: app.Name, Upstreams: upstreams, TLS: true}
-		for _, d := range domains {
-			if tlsOn && proxy.PublicHost(d) {
-				secure.Hosts = append(secure.Hosts, d)
-			} else {
-				plain.Hosts = append(plain.Hosts, d)
-			}
-		}
-		routes = append(routes, plain, secure)
+// pull downloads a root filesystem in the background and verifies it before
+// it can be used.
+func (a *Agent) pull(spec types.InstanceSpec) {
+	name := filepath.Base(spec.Artifact)
+	if _, loaded := a.pulling.LoadOrStore(name, struct{}{}); loaded {
+		return
 	}
-	cfg, err := proxy.Config(proxy.Settings{
-		Routes: routes, Email: globalLE["email"], DataDir: a.DataDir, HTTPPort: 80, HTTPSPort: 443,
-	})
+	go func() {
+		defer a.pulling.Delete(name)
+		if err := a.download(name, spec.ArtifactSHA256); err != nil {
+			a.logOnce("pull "+name, err)
+			time.Sleep(10 * time.Second) // don't hammer the control node
+			return
+		}
+		a.clearErr("pull " + name)
+		a.Log.Info("downloaded root filesystem", "artifact", name)
+		a.Kick()
+	}()
+}
+
+func (a *Agent) download(name, wantSHA string) error {
+	dst := a.artifactPath(name)
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".pull-*")
 	if err != nil {
 		return err
 	}
-	if bytes.Equal(cfg, a.lastProxy) {
+	defer os.Remove(tmp.Name())
+	h := sha256.New()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	err = a.Control.Artifact(ctx, name, io.MultiWriter(tmp, h))
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return fmt.Errorf("downloading %s: %w", name, err)
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); wantSHA != "" && got != wantSHA {
+		return fmt.Errorf("downloaded %s is corrupt (sha256 %s, want %s)", name, got, wantSHA)
+	}
+	if err := os.Chmod(tmp.Name(), 0o444); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), dst)
+}
+
+func (a *Agent) gcArtifacts(st *types.NodeState) {
+	keep := map[string]bool{}
+	for _, s := range st.Instances {
+		keep[filepath.Base(s.Artifact)] = true
+	}
+	dir := filepath.Join(a.DataDir, "artifacts")
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) == ".ext4" && !keep[e.Name()] {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+// Mesh and proxy
+
+func (a *Agent) syncMesh(ctx context.Context, st *types.NodeState) error {
+	b, _ := json.Marshal([]any{st.Node, st.Peers})
+	sum := sha256.Sum256(b)
+	key := hex.EncodeToString(sum[:])
+	// Re-apply every minute even without changes, to repair drift.
+	if key == a.lastMesh && time.Since(a.lastSync) < time.Minute {
 		return nil
 	}
-	if err := proxy.Load(ctx, proxy.AdminSocket, a.DataDir, cfg); err != nil {
+	if err := a.Mesh.Sync(ctx, st.Node, st.Peers); err != nil {
 		return err
 	}
-	a.lastProxy = cfg
+	a.lastMesh, a.lastSync = key, time.Now()
 	return nil
 }
 
-// logOnce logs an error unless it is the same as last time, so a persistent
-// problem doesn't flood the journal every two seconds.
+func (a *Agent) syncProxy(ctx context.Context, ps *types.ProxyState) error {
+	b, _ := json.Marshal(ps)
+	sum := sha256.Sum256(b)
+	key := hex.EncodeToString(sum[:])
+	if key == a.lastProx {
+		return nil
+	}
+	if err := a.Proxy.Apply(ctx, ps); err != nil {
+		return err
+	}
+	a.lastProx = key
+	return nil
+}
+
+// Reporting
+
+func (a *Agent) reportLoop(ctx context.Context) {
+	t := time.NewTicker(a.ReportEvery)
+	defer t.Stop()
+	for {
+		if err := a.Control.Report(ctx, a.Status()); err != nil {
+			if ctx.Err() == nil && !errors.Is(err, ErrRemoved) {
+				a.logOnce("report", err)
+			}
+		} else {
+			a.clearErr("report")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		case <-a.report:
+		}
+	}
+}
+
+// Status is the report sent to the control node.
+func (a *Agent) Status() *types.NodeStatus {
+	st := &types.NodeStatus{Protocol: types.ProtocolVersion, Version: a.Version, CanRun: a.canRun, Instances: []types.InstanceStatus{}}
+	if d := a.Desired(); d != nil {
+		st.ETag = d.ETag
+	}
+	if a.Metrics != nil {
+		st.Metrics = a.Metrics()
+	} else {
+		st.Metrics = a.host.sample(a.DataDir)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for id, l := range a.local {
+		st.Instances = append(st.Instances, types.InstanceStatus{
+			ID: id, State: l.state, HealthyOnce: l.healthyOnce, Restarts: l.restarts, StartedAt: l.startedAt,
+			CPUPercent: l.cpuPercent, MemoryMB: l.memoryMB,
+		})
+	}
+	return st
+}
+
+func (a *Agent) sampleUsage(ctx context.Context, units map[string]string, now time.Time) {
+	var ids []string
+	for id := range a.local {
+		if _, running := units[id]; running {
+			ids = append(ids, id)
+		}
+	}
+	usage, err := a.Runtime.Usage(ctx, ids)
+	if err != nil {
+		return
+	}
+	for id, l := range a.local {
+		u, ok := usage[id]
+		if !ok {
+			l.cpuPercent, l.memoryMB = 0, 0
+			continue
+		}
+		if !l.cpuAt.IsZero() && u.CPUNanos >= l.cpuNanos {
+			l.cpuPercent = float64(u.CPUNanos-l.cpuNanos) / float64(now.Sub(l.cpuAt).Nanoseconds()) * 100
+		}
+		l.cpuNanos, l.cpuAt, l.memoryMB = u.CPUNanos, now, int(u.MemoryBytes>>20)
+	}
+}
+
+// logOnce logs an error unless it is the same as last time for what, so a
+// persistent problem doesn't flood the journal.
 func (a *Agent) logOnce(what string, err error) {
-	if msg := err.Error(); msg != a.lastErr {
-		a.lastErr = msg
+	a.errMu.Lock()
+	defer a.errMu.Unlock()
+	if msg := err.Error(); msg != a.lastErr[what] {
+		a.lastErr[what] = msg
 		a.Log.Error(what, "err", err)
 	}
 }
 
-// Logs streams an app's log lines, formatted the way "dokku logs" prints them.
-func Logs(ctx context.Context, app string, o types.LogOptions, line func(string)) error {
-	// _TRANSPORT=stdout keeps only what the VM printed, not systemd's own
-	// messages about the unit.
-	args := []string{"--no-pager", "--output=json", "--lines=" + strconv.Itoa(o.Tail), "JOKKU_APP=" + app, "_TRANSPORT=stdout"}
-	if o.Follow {
-		args = append(args, "--follow")
+func (a *Agent) clearErr(what string) {
+	a.errMu.Lock()
+	defer a.errMu.Unlock()
+	if a.lastErr[what] != "" {
+		a.Log.Info(what + " recovered")
+		delete(a.lastErr, what)
 	}
-	switch {
-	case strings.Contains(o.Process, "."):
-		args = append(args, "JOKKU_PROCESS="+o.Process)
-	case o.Process != "":
-		args = append(args, "JOKKU_PROCESS_TYPE="+o.Process)
-	}
-	cmd := exec.CommandContext(ctx, "journalctl", args...)
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	err = forEachEntry(out, func(e journalEntry) {
-		line(e.format())
-	})
-	cmd.Wait()
-	if ctx.Err() != nil {
-		return nil // the client went away while following
-	}
-	return err
 }
 
-// InstanceLogs returns the last n lines an instance printed, for deploy
-// failure messages.
-func InstanceLogs(ctx context.Context, id string, n int) []string {
-	out, _ := exec.CommandContext(ctx, "journalctl", "--no-pager", "--output=cat", "--lines="+strconv.Itoa(n), "JOKKU_INSTANCE="+id, "_TRANSPORT=stdout").Output()
-	var lines []string
-	for _, l := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-		if l = strings.TrimRight(l, "\r"); l != "" {
-			lines = append(lines, l)
-		}
+func sleep(ctx context.Context, d time.Duration) {
+	select {
+	case <-ctx.Done():
+	case <-time.After(d):
 	}
-	return lines
 }

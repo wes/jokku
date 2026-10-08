@@ -14,15 +14,14 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/wes/jokku/internal/agent"
 	"github.com/wes/jokku/internal/build"
+	"github.com/wes/jokku/internal/cluster"
 	"github.com/wes/jokku/internal/props"
 	"github.com/wes/jokku/internal/proxy"
 	"github.com/wes/jokku/internal/store"
@@ -32,9 +31,7 @@ import (
 type Pipeline struct {
 	Store   *store.Store
 	Builder *build.Builder
-	Agent   *agent.Agent
-	Node    string
-	Subnet  netip.Prefix // this node's instance network
+	Cluster *cluster.Controller
 	DataDir string
 	Log     *slog.Logger
 }
@@ -44,16 +41,27 @@ type Pipeline struct {
 const keepReleases = 3
 
 func (p *Pipeline) Deploy(ctx context.Context, d *types.Deploy, sourcePath string, log func(string)) error {
+	p.Store.AddEvent(ctx, "deploy", d.App, "", "deploy started (%s)", d.Source)
+	version, err := p.deploy(ctx, d, sourcePath, log)
+	if err != nil {
+		p.Store.AddEvent(ctx, "deploy", d.App, "", "deploy failed: %v", err)
+		return err
+	}
+	p.Store.AddEvent(ctx, "deploy", d.App, "", "deployed v%d", version)
+	return nil
+}
+
+func (p *Pipeline) deploy(ctx context.Context, d *types.Deploy, sourcePath string, log func(string)) (int, error) {
 	settings, err := p.settings(ctx, d.App)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	src, err := Inspect(sourcePath, settings)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if err := p.Agent.Available(); err != nil {
-		return err
+	if err := p.Cluster.CanSchedule(ctx); err != nil {
+		return 0, err
 	}
 	p.Store.SetDeployStatus(ctx, d.ID, "building", "")
 	log("-----> Building " + d.App + " from " + src.Dockerfile)
@@ -62,41 +70,42 @@ func (p *Pipeline) Deploy(ctx context.Context, d *types.Deploy, sourcePath strin
 		BuildDir: settings.BuildDir, DockerfilePath: settings.DockerfilePath,
 	}, log)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	procs, err := Processes(src.Procfile, res.Entrypoint, res.Cmd)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if len(src.Procfile) > 0 {
 		log("-----> Process types from " + settings.ProcfilePath + ": " + strings.Join(sortedProcessTypes(src.Procfile), ", "))
 	}
 	vars, err := p.configVars(ctx, d.App)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	description := "Deploy"
 	if d.SourceRef != "" {
 		description += " " + shortRef(d.SourceRef)
 	}
 	rel := &store.Release{
-		App: d.App, Artifact: res.Artifact, Processes: procs, ConfigVars: vars, Description: description,
+		App: d.App, Artifact: res.Artifact, ArtifactSHA: res.SHA256, ArtifactLen: res.Size,
+		Processes: procs, ConfigVars: vars, Description: description,
 		Image: store.ImageConfig{Env: res.Env, WorkingDir: res.WorkingDir, User: res.User, Port: res.Port},
 	}
 	if err := p.Store.CreateRelease(ctx, rel); err != nil {
-		return err
+		return 0, err
 	}
 	p.Store.SetDeployRelease(ctx, d.ID, rel.ID)
 	if err := p.defaultDomains(ctx, d.App); err != nil {
-		return err
+		return 0, err
 	}
 
 	p.Store.SetDeployStatus(ctx, d.ID, "deploying", "")
 	if err := p.rollout(ctx, rel, log); err != nil {
-		return err
+		return 0, err
 	}
 	p.cleanup(ctx, d)
-	return p.printURLs(ctx, d.App, log)
+	return rel.Version, p.printURLs(ctx, d.App, log)
 }
 
 // Processes maps each process type to its argv. Without a Procfile, the app
@@ -129,7 +138,7 @@ func (p *Pipeline) PS(ctx context.Context, app, action, actor string, log func(s
 	case "rebuild":
 		return p.rebuild(ctx, app, actor, log)
 	case "start", "restart":
-		if err := p.Agent.Available(); err != nil {
+		if err := p.Cluster.CanSchedule(ctx); err != nil {
 			return err
 		}
 		return p.restart(ctx, app, log)
@@ -162,8 +171,10 @@ func (p *Pipeline) restart(ctx context.Context, app string, log func(string)) er
 	}
 	log(fmt.Sprintf("-----> Restarting %s (v%d)", app, rel.Version))
 	if err := p.rollout(ctx, rel, log); err != nil {
+		p.Store.AddEvent(ctx, "deploy", app, "", "restart failed: %v", err)
 		return err
 	}
+	p.Store.AddEvent(ctx, "deploy", app, "", "restarted (v%d)", rel.Version)
 	return p.printURLs(ctx, app, log)
 }
 
@@ -172,20 +183,21 @@ func (p *Pipeline) stop(ctx context.Context, app string, log func(string)) error
 	if err := p.Store.SetAppStopped(ctx, app, true); err != nil {
 		return err
 	}
-	p.Agent.Kick()
+	p.Store.AddEvent(ctx, "deploy", app, "", "stopped")
+	p.Cluster.Changed()
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		insts, err := p.Store.Instances(ctx, app)
 		if err != nil {
 			return err
 		}
-		running, err := p.Agent.Host.Units(ctx)
+		nodes, err := p.readyNodes(ctx)
 		if err != nil {
 			return err
 		}
 		left := 0
 		for _, in := range insts {
-			if _, ok := running[in.ID]; ok {
+			if in.State != store.StateStopped && nodes[in.Node] && in.Desired == store.DesiredRunning {
 				left++
 			}
 		}
@@ -196,6 +208,19 @@ func (p *Pipeline) stop(ctx context.Context, app string, log func(string)) error
 		time.Sleep(500 * time.Millisecond)
 	}
 	return errors.New("some instances are still stopping; check jokku ps:report " + app)
+}
+
+func (p *Pipeline) readyNodes(ctx context.Context) (map[string]bool, error) {
+	nodes, err := p.Store.Nodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	ready := map[string]bool{}
+	for _, n := range nodes {
+		ready[n.Name] = n.Ready(now)
+	}
+	return ready, nil
 }
 
 // rebuild deploys the most recently deployed source again.
@@ -282,27 +307,30 @@ func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, log func(str
 		}
 		size := sizes.Effective(proc)
 		for i := 1; i <= n; i++ {
+			node, subnet, err := p.Cluster.Place(ctx, cluster.Placement{
+				App: app, ProcessType: proc, CPUs: size.CPUs, MemoryMB: size.MemoryMB,
+			})
+			if err != nil {
+				p.abandon(ctx, created)
+				return err
+			}
 			in := store.Instance{
-				App: app, ReleaseID: rel.ID, ProcessType: proc, Index: i, Node: p.Node, Port: rel.Image.Port,
+				App: app, ReleaseID: rel.ID, ProcessType: proc, Index: i, Node: node, Port: rel.Image.Port,
 				CPUs: size.CPUs, MemoryMB: size.MemoryMB, Desired: store.DesiredRunning,
 			}
-			if err := p.Store.CreateInstance(ctx, &in, p.Subnet); err != nil {
+			if err := p.Store.CreateInstance(ctx, &in, subnet); err != nil {
+				p.abandon(ctx, created)
 				return err
 			}
 			created = append(created, in)
-			names = append(names, fmt.Sprintf("%s (%d vCPU, %s)", in.Name(), in.CPUs, formatMB(in.MemoryMB)))
+			names = append(names, fmt.Sprintf("%s on %s (%d vCPU, %s)", in.Name(), node, in.CPUs, formatMB(in.MemoryMB)))
 		}
 	}
 	if len(created) > 0 {
 		log("-----> Starting " + strings.Join(names, ", "))
-		p.Agent.Kick()
+		p.Cluster.Changed()
 		if err := p.waitHealthy(ctx, app, created, log); err != nil {
-			ids := make([]string, len(created))
-			for i, in := range created {
-				ids[i] = in.ID
-			}
-			p.Store.StopInstances(context.WithoutCancel(ctx), ids, nil)
-			p.Agent.Kick()
+			p.abandon(ctx, created)
 			return err
 		}
 	} else {
@@ -321,7 +349,7 @@ func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, log func(str
 	if err := p.Store.StopInstances(ctx, serving, &retireAt); err != nil {
 		return err
 	}
-	p.Agent.Reconcile(ctx) // switch the proxy to the new instances now
+	p.Cluster.Changed() // switch every proxy to the new instances now
 	if len(serving) > 0 {
 		log(fmt.Sprintf("-----> Old instances will shut down in %d seconds", wait))
 	}
@@ -380,12 +408,21 @@ func (p *Pipeline) waitHealthy(ctx context.Context, app string, created []store.
 			return p.failed(ctx, *waiting, fmt.Sprintf("did not %s within %ds", what, secs), log)
 		}
 		time.Sleep(300 * time.Millisecond)
-		p.Agent.Kick()
 	}
 }
 
+// abandon stops instances a failed rollout created.
+func (p *Pipeline) abandon(ctx context.Context, created []store.Instance) {
+	ids := make([]string, len(created))
+	for i, in := range created {
+		ids[i] = in.ID
+	}
+	p.Store.StopInstances(context.WithoutCancel(ctx), ids, nil)
+	p.Cluster.Changed()
+}
+
 func (p *Pipeline) failed(ctx context.Context, in store.Instance, why string, log func(string)) error {
-	if lines := agent.InstanceLogs(ctx, in.ID, 25); len(lines) > 0 {
+	if lines := p.Cluster.InstanceLogs(ctx, in, 25); len(lines) > 0 {
 		log("-----> Last output from " + in.Name() + ":")
 		for _, l := range lines {
 			log("       " + l)
@@ -495,11 +532,11 @@ func (p *Pipeline) Logs(ctx context.Context, app string, o types.LogOptions, lin
 	if _, err := p.Store.App(ctx, app); err != nil {
 		return err
 	}
-	return agent.Logs(ctx, app, o, line)
+	return p.Cluster.Logs(ctx, app, o, line)
 }
 
 // RoutesChanged applies domain and proxy setting changes right away.
-func (p *Pipeline) RoutesChanged() { p.Agent.Kick() }
+func (p *Pipeline) RoutesChanged() { p.Cluster.Changed() }
 
 func shortRef(ref string) string {
 	if len(ref) > 7 {

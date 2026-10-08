@@ -10,10 +10,12 @@ package setup
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
@@ -25,9 +27,12 @@ import (
 
 	"github.com/wes/jokku/internal/build"
 	"github.com/wes/jokku/internal/client"
+	"github.com/wes/jokku/internal/cluster"
 	"github.com/wes/jokku/internal/daemon"
 	"github.com/wes/jokku/internal/deps"
+	"github.com/wes/jokku/internal/mesh"
 	"github.com/wes/jokku/internal/proxy"
+	"github.com/wes/jokku/internal/store"
 	"github.com/wes/jokku/internal/types"
 	"github.com/wes/jokku/internal/version"
 	"github.com/wes/jokku/internal/vm"
@@ -35,9 +40,24 @@ import (
 
 const home = "/home/" + daemon.DefaultUser
 
+// Options select what setup does beyond bringing the server up to date.
+type Options struct {
+	// Join makes this server a worker in the cluster whose control node is at
+	// this address (host or host:port), using Token from
+	// "jokku cluster:join-command".
+	Join  string
+	Token string
+	// Name is this node's name in the cluster (default: the hostname).
+	Name string
+	// Advertise is the address other nodes reach this one at (default: the
+	// address used to reach the internet).
+	Advertise string
+}
+
 // Run brings the server to the state this version of jokku needs and leaves
-// its services running this binary.
-func Run(ctx context.Context, out io.Writer) error {
+// its services running this binary. A control node (the default) gets
+// everything; a worker gets only what running microVMs needs.
+func Run(ctx context.Context, out io.Writer, o Options) error {
 	if runtime.GOOS != "linux" {
 		return errors.New("jokku setup prepares Linux servers")
 	}
@@ -54,9 +74,16 @@ func Run(ctx context.Context, out io.Writer) error {
 	if exe, err = filepath.EvalSymlinks(exe); err != nil {
 		return err
 	}
-	s := &setup{out: out, exe: exe}
-	steps := []func(context.Context) error{
-		s.packages, s.user, s.dirs, s.deps, s.sysctl, s.units, s.start, s.defaultDomain,
+	_, joined := joinedCluster()
+	worker := joined || o.Join != ""
+	if o.Join != "" && !joined && exists(filepath.Join(daemon.DefaultDataDir, "jokku.db")) {
+		return errors.New("this server already runs Jokku as its own cluster, so it cannot join another; " +
+			"use a fresh server, or remove /var/lib/jokku to start over")
+	}
+	s := &setup{out: out, exe: exe, opts: o, worker: worker}
+	steps := []func(context.Context) error{s.packages, s.user, s.dirs, s.deps, s.sysctl, s.units, s.start, s.defaultDomain}
+	if worker {
+		steps = []func(context.Context) error{s.packages, s.wireguard, s.dirs, s.deps, s.join, s.sysctl, s.units, s.start}
 	}
 	for _, step := range steps {
 		if err := step(ctx); err != nil {
@@ -69,9 +96,17 @@ func Run(ctx context.Context, out io.Writer) error {
 	return nil
 }
 
+// joinedCluster reports whether this server is a worker in a cluster.
+func joinedCluster() (*daemon.NodeFile, bool) {
+	nf, err := daemon.LoadNodeFile(daemon.DefaultDataDir)
+	return nf, err == nil && nf.Role == store.RoleWorker
+}
+
 type setup struct {
 	out          io.Writer
 	exe          string
+	opts         Options
+	worker       bool
 	uid, gid     int
 	changedUnits map[string]bool
 }
@@ -84,12 +119,15 @@ func (s *setup) step(format string, args ...any) {
 // networking, e2fsprogs to build root filesystems.
 func (s *setup) packages(ctx context.Context) error {
 	var missing []string
-	for pkg, present := range map[string]bool{
-		"git":            have("git"),
-		"openssh-server": exists("/usr/sbin/sshd"),
-		"iptables":       have("iptables"),
-		"e2fsprogs":      have("mkfs.ext4"),
-	} {
+	need := map[string]bool{
+		"iptables":  have("iptables"),
+		"e2fsprogs": have("mkfs.ext4"),
+	}
+	if !s.worker { // pushes land on the control node
+		need["git"] = have("git")
+		need["openssh-server"] = exists("/usr/sbin/sshd")
+	}
+	for pkg, present := range need {
 		if !present {
 			missing = append(missing, pkg)
 		}
@@ -147,6 +185,9 @@ func (s *setup) user(ctx context.Context) error {
 }
 
 func (s *setup) dirs(context.Context) error {
+	if s.worker {
+		return os.MkdirAll(daemon.DefaultDataDir, 0o755)
+	}
 	for _, d := range []struct {
 		path  string
 		mode  os.FileMode
@@ -177,8 +218,8 @@ func (s *setup) dirs(context.Context) error {
 // deps installs the pinned Firecracker, guest kernel and BuildKit.
 func (s *setup) deps(context.Context) error {
 	for _, d := range deps.All {
-		if d.Installed() {
-			continue
+		if d.Installed() || (s.worker && d.Name == deps.BuildKit.Name) {
+			continue // workers don't build
 		}
 		s.step("Installing %s %s", d.Name, d.Version)
 		if err := d.Install(); err != nil {
@@ -205,6 +246,9 @@ func (s *setup) units(ctx context.Context) error {
 				" --oci-worker-net host --containerd-worker=false",
 			"jokku-buildkit", "Environment=PATH="+bk.Dir()+":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"),
 		"jokku-proxy": unit("Jokku proxy (Caddy)", s.exe+" proxy", "jokku-proxy", "LimitNOFILE=1048576\n"),
+	}
+	if s.worker {
+		delete(units, "jokku-buildkitd")
 	}
 	for name, content := range units {
 		changed, err := writeFileIfChanged("/etc/systemd/system/"+name+".service", content, 0o644)
@@ -259,7 +303,11 @@ func (s *setup) start(ctx context.Context) error {
 		"jokku-buildkitd": s.changedUnits["jokku-buildkitd"],
 		"jokku-proxy":     s.changedUnits["jokku-proxy"] || string(marker) != proxy.Version,
 	}
-	for _, svc := range []string{"jokku-buildkitd", "jokku-proxy"} {
+	services := []string{"jokku-buildkitd", "jokku-proxy"}
+	if s.worker {
+		services = services[1:]
+	}
+	for _, svc := range services {
 		active := run(ctx, "systemctl", "is-active", "--quiet", svc) == nil
 		if active && !restart[svc] {
 			continue
@@ -282,6 +330,99 @@ func (s *setup) start(ctx context.Context) error {
 		fmt.Fprintln(s.out, " !     jokku-proxy is not running. Is another web server using ports 80 or 443? See: journalctl -u jokku-proxy -n 20")
 	}
 	return nil
+}
+
+// wireguard checks the kernel can build the mesh before joining.
+func (s *setup) wireguard(ctx context.Context) error {
+	if _, joined := joinedCluster(); joined {
+		return nil
+	}
+	return mesh.Check(ctx)
+}
+
+// join asks the control node to admit this server and saves the identity it
+// gets back. A server that already joined keeps its identity.
+func (s *setup) join(ctx context.Context) error {
+	if nf, joined := joinedCluster(); joined {
+		if s.opts.Join != "" {
+			s.step("Already part of the cluster at %s as %s", nf.Control, nf.Node.Name)
+		}
+		return nil
+	}
+	o := s.opts
+	addr := o.Join
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		addr = net.JoinHostPort(addr, strconv.Itoa(cluster.APIPort))
+	}
+	pin, _, err := cluster.ParseJoinToken(o.Token)
+	if err != nil {
+		return err
+	}
+	pub, err := mesh.PublicKey(filepath.Join(daemon.DefaultDataDir, "wireguard.key"))
+	if err != nil {
+		return err
+	}
+	name := o.Name
+	if name == "" {
+		host, _ := os.Hostname()
+		name = nodeName(host)
+	}
+	advertise := o.Advertise
+	if advertise == "" {
+		advertise = daemon.OutboundIP()
+	}
+	s.step("Joining the cluster at %s as %s", addr, name)
+	req := types.JoinRequest{
+		Protocol: types.ProtocolVersion, Version: version.Version, Token: o.Token, Name: name, PublicKey: pub,
+		Endpoint: net.JoinHostPort(advertise, strconv.Itoa(mesh.Port)), Arch: runtime.GOARCH,
+		CPUs: runtime.NumCPU(), MemoryMB: daemon.TotalMemoryMB(),
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: cluster.PinnedTLS(pin)}}
+	resp, err := client.Post("https://"+addr+"/v1/cluster/join", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("reaching the control node at %s (is port %d open?): %w", addr, cluster.APIPort, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		var e types.Error
+		json.NewDecoder(resp.Body).Decode(&e)
+		return fmt.Errorf("the control node refused: %s", e.Error)
+	}
+	var res types.JoinResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return err
+	}
+	err = daemon.SaveNodeFile(daemon.DefaultDataDir, &daemon.NodeFile{
+		Role: store.RoleWorker, Control: addr, Pin: pin,
+		NodeToken: res.NodeToken, AgentToken: res.AgentToken, Node: res.Node,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(s.out, "       %s joined with subnet %s\n", res.Node.Name, res.Node.Subnet)
+	return nil
+}
+
+// nodeName turns a hostname into a valid node name.
+func nodeName(host string) string {
+	host, _, _ = strings.Cut(strings.ToLower(host), ".")
+	n := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' {
+			return r
+		}
+		return '-'
+	}, host)
+	if n = strings.Trim(n, "-"); n == "" {
+		n = "node"
+	}
+	if len(n) > 63 {
+		n = n[:63]
+	}
+	return n
 }
 
 func waitForVersion(ctx context.Context, out io.Writer) error {

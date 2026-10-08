@@ -5,10 +5,13 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
 	"time"
+
+	"github.com/wes/jokku/internal/types"
 )
 
 // Instance is one microVM: a process of a release, placed on a node.
@@ -31,6 +34,11 @@ type Instance struct {
 	RetireAt    *time.Time
 	StartedAt   time.Time
 	CreatedAt   time.Time
+
+	Replaces     string // ID of the instance this one is taking over from
+	CPUPercent   float64
+	MemoryUsedMB int
+	ReportedAt   time.Time
 }
 
 const (
@@ -42,6 +50,8 @@ const (
 	StateHealthy  = "healthy"  // passing checks
 	StateCrashed  = "crashed"  // exited; will be restarted
 	StateFailed   = "failed"   // exited and will not be restarted
+	StatePulling  = "pulling"  // its node is downloading the root filesystem
+	StateStopped  = "stopped"  // kept off while the app is stopped
 )
 
 // Name is how Dokku names processes: web.1, worker.2.
@@ -85,16 +95,17 @@ func (s *Store) CreateInstance(ctx context.Context, in *Instance, subnet netip.P
 			return fmt.Errorf("no free addresses left in %s", subnet)
 		}
 		_, err = tx.ExecContext(ctx, `
-INSERT INTO instances (id, app_id, release_id, process_type, idx, node, ip, port, cpus, memory_mb, desired, state, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			in.ID, id, in.ReleaseID, in.ProcessType, in.Index, in.Node, in.IP, in.Port, in.CPUs, in.MemoryMB, in.Desired, in.State, unix(in.CreatedAt))
+INSERT INTO instances (id, app_id, release_id, process_type, idx, node, ip, port, cpus, memory_mb, desired, state, replaces, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			in.ID, id, in.ReleaseID, in.ProcessType, in.Index, in.Node, in.IP, in.Port, in.CPUs, in.MemoryMB, in.Desired, in.State, in.Replaces, unix(in.CreatedAt))
 		return err
 	})
 }
 
 const instanceSelect = `
 SELECT i.id, a.name, i.release_id, r.version, i.process_type, i.idx, i.node, i.ip, i.port, i.cpus, i.memory_mb,
-	i.desired, i.state, i.healthy_once, i.restarts, i.retire_at, COALESCE(i.started_at, 0), i.created_at
+	i.desired, i.state, i.healthy_once, i.restarts, i.retire_at, COALESCE(i.started_at, 0), i.created_at,
+	i.replaces, i.cpu_percent, i.memory_used_mb, i.reported_at
 FROM instances i JOIN apps a ON a.id = i.app_id JOIN releases r ON r.id = i.release_id`
 
 // Instances lists an app's instances, or every instance for app "".
@@ -115,9 +126,10 @@ func (s *Store) Instances(ctx context.Context, app string) ([]Instance, error) {
 	for rows.Next() {
 		var in Instance
 		var retire sql.NullInt64
-		var started, created int64
+		var started, created, reported int64
 		err := rows.Scan(&in.ID, &in.App, &in.ReleaseID, &in.Release, &in.ProcessType, &in.Index, &in.Node, &in.IP, &in.Port,
-			&in.CPUs, &in.MemoryMB, &in.Desired, &in.State, &in.HealthyOnce, &in.Restarts, &retire, &started, &created)
+			&in.CPUs, &in.MemoryMB, &in.Desired, &in.State, &in.HealthyOnce, &in.Restarts, &retire, &started, &created,
+			&in.Replaces, &in.CPUPercent, &in.MemoryUsedMB, &reported)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +137,7 @@ func (s *Store) Instances(ctx context.Context, app string) ([]Instance, error) {
 			t := fromUnix(retire.Int64)
 			in.RetireAt = &t
 		}
-		in.StartedAt, in.CreatedAt = fromUnix(started), fromUnix(created)
+		in.StartedAt, in.CreatedAt, in.ReportedAt = fromUnix(started), fromUnix(created), fromUnix(reported)
 		out = append(out, in)
 	}
 	return out, rows.Err()
@@ -142,6 +154,29 @@ func (s *Store) Instance(ctx context.Context, id string) (*Instance, error) {
 		}
 	}
 	return nil, &NotFoundError{What: "Instance " + id}
+}
+
+// ReportInstance stores what a node's agent observed about one of its
+// instances and returns the state it had before ("" if the instance is
+// unknown or not that node's).
+func (s *Store) ReportInstance(ctx context.Context, node string, st types.InstanceStatus) (before string, err error) {
+	err = s.db.QueryRowContext(ctx, "SELECT state FROM instances WHERE id = ? AND node = ?", st.ID, node).Scan(&before)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var started any
+	if !st.StartedAt.IsZero() {
+		started = unix(st.StartedAt)
+	}
+	_, err = s.db.ExecContext(ctx, `
+UPDATE instances SET state = ?, healthy_once = ?, restarts = ?, started_at = COALESCE(?, started_at),
+	cpu_percent = ?, memory_used_mb = ?, reported_at = ?
+WHERE id = ? AND node = ?`,
+		st.State, st.HealthyOnce, st.Restarts, started, st.CPUPercent, st.MemoryMB, unix(s.now()), st.ID, node)
+	return before, err
 }
 
 // InstanceStarted records a (re)start: the instance is booting again.

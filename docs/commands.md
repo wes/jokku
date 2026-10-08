@@ -75,8 +75,15 @@ tracks what exists today. Milestones are described in
 
 | Command | Status |
 | --- | --- |
-| `nodes:list`, `nodes:report`, `nodes:set` (`schedulable`, `ingress`), `nodes:drain`, `nodes:undrain` | ➕ ✅ (control node only until M2) |
-| `cluster:join-command` (prints an `install.sh --join` one-liner), `nodes:remove` | ➕ 🔜 M2 |
+| `cluster:join-command [--ttl 1h] [--reusable]` (prints an `install.sh --join` one-liner) | ➕ ✅ |
+| `cluster:report` | ➕ ✅ |
+| `nodes:list`, `nodes:report`, `nodes:set` (`schedulable`, `ingress`) | ➕ ✅ |
+| `nodes:drain`, `nodes:undrain` (moves instances off with no downtime) | ➕ ✅ |
+| `nodes:remove [--force]` | ➕ ✅ |
+| `events [<app>] [-n N]` | ➕ ✅ |
+| `top` (live terminal dashboard of nodes, apps, instances, events) | ➕ ✅ |
+| Rolling update of every node from the control node | 🔜 (for now: `sudo jokku update` on each node) |
+| Replicated control node | 🔜 later |
 
 ## Storage and services
 

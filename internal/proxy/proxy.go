@@ -24,6 +24,8 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	_ "github.com/caddyserver/caddy/v2/modules/standard"
+
+	"github.com/wes/jokku/internal/types"
 )
 
 const (
@@ -50,6 +52,9 @@ type Settings struct {
 	HTTPPort    int
 	HTTPSPort   int
 	AdminSocket string // default AdminSocket
+	// Storage keeps certificates on the control node (shared by every
+	// ingress node); nil keeps them on local disk.
+	Storage *ClusterStorage
 }
 
 // ConfigPath is where the last loaded config is saved.
@@ -141,11 +146,42 @@ func Config(s Settings) ([]byte, error) {
 			"listen": "unix/" + admin,
 			"config": map[string]any{"persist": false},
 		},
-		"storage": map[string]any{"module": "file_system", "root": filepath.Join(s.DataDir, "proxy", "data")},
+		"storage": storageConfig(s),
 		"logging": map[string]any{"logs": map[string]any{"default": map[string]any{"level": "WARN"}}},
 		"apps":    apps,
 	}
 	return json.MarshalIndent(cfg, "", "  ")
+}
+
+func storageConfig(s Settings) map[string]any {
+	local := filepath.Join(s.DataDir, "proxy", "data")
+	if s.Storage == nil {
+		return map[string]any{"module": "file_system", "root": local}
+	}
+	return map[string]any{"module": "jokku", "url": s.Storage.URL, "token": s.Storage.Token, "pin": s.Storage.Pin,
+		"cache": filepath.Join(s.DataDir, "proxy", "mirror"), "legacy": local}
+}
+
+// Applier loads routes from the control node into this node's proxy.
+type Applier struct {
+	DataDir     string
+	AdminSocket string
+	Storage     *ClusterStorage
+}
+
+func (a *Applier) Apply(ctx context.Context, ps *types.ProxyState) error {
+	routes := make([]Route, len(ps.Routes))
+	for i, r := range ps.Routes {
+		routes[i] = Route{App: r.App, Hosts: r.Hosts, Upstreams: r.Upstreams, TLS: r.TLS}
+	}
+	cfg, err := Config(Settings{
+		Routes: routes, Email: ps.Email, DataDir: a.DataDir, HTTPPort: 80, HTTPSPort: 443,
+		AdminSocket: a.AdminSocket, Storage: a.Storage,
+	})
+	if err != nil {
+		return err
+	}
+	return Load(ctx, a.AdminSocket, a.DataDir, cfg)
 }
 
 func handler(r Route) map[string]any {
@@ -159,11 +195,20 @@ func handler(r Route) map[string]any {
 	for i, u := range r.Upstreams {
 		upstreams[i] = map[string]any{"dial": u}
 	}
+	// An instance on a node that just died stops answering before the
+	// control node notices (up to 30s). Failing the dial fast and retrying
+	// on another instance turns that into latency instead of errors, and
+	// passive health checks then skip it until routes catch up.
 	return map[string]any{
-		"handler":        "reverse_proxy",
-		"upstreams":      upstreams,
-		"load_balancing": map[string]any{"selection_policy": map[string]any{"policy": "round_robin"}},
-		"health_checks":  map[string]any{"passive": map[string]any{"fail_duration": "10s"}},
+		"handler":   "reverse_proxy",
+		"upstreams": upstreams,
+		"load_balancing": map[string]any{
+			"selection_policy": map[string]any{"policy": "round_robin"},
+			"try_duration":     "5s",
+			"try_interval":     "250ms",
+		},
+		"health_checks": map[string]any{"passive": map[string]any{"fail_duration": "30s", "max_fails": 1}},
+		"transport":     map[string]any{"protocol": "http", "dial_timeout": "2s"},
 	}
 }
 

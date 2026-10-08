@@ -34,12 +34,27 @@ var serverCommands = []*Command{
 		{Name: "authorized-keys", Value: "PATH", Help: "authorized_keys to manage (default ~<git-user>/.ssh/authorized_keys; - to disable)"},
 		{Name: "cluster-cidr", Value: "CIDR", Help: "Cluster network, an IPv4 /16 (default 10.210.0.0/16)"},
 		{Name: "node-name", Value: "NAME", Help: "This node's name (default the hostname)"},
+		{Name: "advertise-address", Value: "IP", Help: "Address other nodes reach this one at (default the outbound address)"},
+		{Name: "api-listen", Value: "ADDR", Help: "TLS listener for joining nodes and agents (default :7443; - to disable)"},
 	}, Run: runDaemon},
 	{Name: "proxy", Help: "Run the HTTP proxy (started by systemd as jokku-proxy)", Local: true, serverOnly: true,
 		Flags: []Flag{{Name: "data-dir", Value: "DIR", Help: "State directory (default /var/lib/jokku)"}},
 		Run:   runProxy},
 	{Name: "setup", Help: "Prepare this server for jokku and (re)start it; run by install.sh and update.sh", Local: true, serverOnly: true,
-		Run: func(c *Context) error { return setup.Run(c, c.Stdout) }},
+		Flags: []Flag{
+			{Name: "join", Value: "ADDRESS", Help: "Join the cluster whose control node is at this address, as a worker"},
+			{Name: "token", Value: "TOKEN", Help: "Join token from jokku cluster:join-command"},
+			{Name: "name", Value: "NAME", Help: "This node's name in the cluster (default the hostname)"},
+			{Name: "advertise-address", Value: "IP", Help: "Address other nodes reach this one at"},
+		},
+		Run: func(c *Context) error {
+			if c.Bool("join") != c.Bool("token") {
+				return usageErr("--join and --token go together")
+			}
+			return setup.Run(c, c.Stdout, setup.Options{
+				Join: c.String("join"), Token: c.String("token"), Name: c.String("name"), Advertise: c.String("advertise-address"),
+			})
+		}},
 	{Name: "ssh-command", Hidden: true, Local: true, serverOnly: true,
 		Flags: []Flag{{Name: "key-name", Value: "NAME", Help: "Name of the SSH key that authenticated"}}, Run: runSSHCommand},
 	{Name: "git-hook", Hidden: true, Local: true, serverOnly: true, Args: "<app>", MinArgs: 1, Run: runGitHook},
@@ -62,6 +77,8 @@ func runDaemon(c *Context) error {
 		GitDir:         c.String("git-dir"),
 		AuthorizedKeys: c.String("authorized-keys"),
 		NodeName:       c.String("node-name"),
+		Advertise:      c.String("advertise-address"),
+		APIListen:      c.String("api-listen"),
 	}
 	for flag, dst := range map[string]*string{"data-dir": &cfg.DataDir, "socket": &cfg.Socket, "cluster-cidr": &cfg.ClusterCIDR} {
 		if c.Bool(flag) {

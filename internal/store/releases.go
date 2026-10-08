@@ -15,7 +15,9 @@ type Release struct {
 	ID          int64
 	App         string
 	Version     int
-	Artifact    string              // path of the read-only rootfs image
+	Artifact    string // path of the read-only rootfs image
+	ArtifactSHA string // hex SHA-256, for nodes that download it
+	ArtifactLen int64
 	Processes   map[string][]string // process type -> argv
 	Image       ImageConfig
 	ConfigVars  map[string]string // global and app vars, merged
@@ -56,8 +58,8 @@ func (s *Store) CreateRelease(ctx context.Context, r *Release) error {
 		}
 		r.CreatedAt = s.now().UTC().Truncate(time.Second)
 		res, err := tx.ExecContext(ctx,
-			"INSERT INTO releases (app_id, version, artifact, processes, image_config, config_vars, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-			id, r.Version, r.Artifact, procs, image, vars, r.Description, unix(r.CreatedAt))
+			"INSERT INTO releases (app_id, version, artifact, artifact_sha256, artifact_size, processes, image_config, config_vars, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			id, r.Version, r.Artifact, r.ArtifactSHA, r.ArtifactLen, procs, image, vars, r.Description, unix(r.CreatedAt))
 		if err != nil {
 			return err
 		}
@@ -67,7 +69,7 @@ func (s *Store) CreateRelease(ctx context.Context, r *Release) error {
 }
 
 const releaseSelect = `
-SELECT r.id, a.name, r.version, r.artifact, r.processes, r.image_config, r.config_vars, r.description, r.created_at
+SELECT r.id, a.name, r.version, r.artifact, r.artifact_sha256, r.artifact_size, r.processes, r.image_config, r.config_vars, r.description, r.created_at
 FROM releases r JOIN apps a ON a.id = r.app_id`
 
 func (s *Store) Release(ctx context.Context, id int64) (*Release, error) {
@@ -112,7 +114,7 @@ func scanRelease(row scanner) (*Release, error) {
 	var r Release
 	var procs, image, vars []byte
 	var created int64
-	if err := row.Scan(&r.ID, &r.App, &r.Version, &r.Artifact, &procs, &image, &vars, &r.Description, &created); err != nil {
+	if err := row.Scan(&r.ID, &r.App, &r.Version, &r.Artifact, &r.ArtifactSHA, &r.ArtifactLen, &procs, &image, &vars, &r.Description, &created); err != nil {
 		return nil, err
 	}
 	r.CreatedAt = fromUnix(created)
@@ -125,6 +127,13 @@ func scanRelease(row scanner) (*Release, error) {
 		}
 	}
 	return &r, nil
+}
+
+// SetArtifactSum records a rootfs artifact's checksum and size on every
+// release that uses it (releases from before clusters lack them).
+func (s *Store) SetArtifactSum(ctx context.Context, artifact, sha string, size int64) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE releases SET artifact_sha256 = ?, artifact_size = ? WHERE artifact = ?", sha, size, artifact)
+	return err
 }
 
 func (s *Store) SetCurrentRelease(ctx context.Context, app string, releaseID int64) error {

@@ -11,6 +11,9 @@
 #   JOKKU_VERSION=v0.0.2   install a specific release (default: latest)
 #   JOKKU_IMPORT_KEYS=0    don't give your SSH keys access to jokku
 #   JOKKU_DOWNLOAD_URL=... fetch binaries from elsewhere (a mirror, file:///dist)
+#
+# To add this server to a cluster, run the command "jokku cluster:join-command"
+# prints on the control node; it passes --join ADDRESS --token TOKEN.
 set -eu
 
 REPO=wes/jokku
@@ -22,11 +25,24 @@ info() { printf '       %s\n' "$*"; }
 warn() { printf ' !     %s\n' "$*" >&2; }
 die()  { warn "$*"; exit 1; }
 
-case "${1:-}" in
-  "") ;;
-  --join) die "Joining a cluster is not available yet (milestone 2). Run without --join to install a standalone server." ;;
-  *) die "Unknown option: $1" ;;
-esac
+# Options: --join ADDRESS --token TOKEN [--name NAME] adds this server to an
+# existing cluster as a worker (get the command from jokku cluster:join-command).
+JOIN="" TOKEN="" NAME=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --join | --token | --name)
+      [ $# -ge 2 ] || die "$1 needs a value"
+      case "$1" in
+        --join) JOIN=$2 ;;
+        --token) TOKEN=$2 ;;
+        --name) NAME=$2 ;;
+      esac
+      shift 2
+      ;;
+    *) die "Unknown option: $1" ;;
+  esac
+done
+if [ -n "$JOIN" ] && [ -z "$TOKEN" ]; then die "--join needs --token"; fi
 
 [ "$(id -u)" -eq 0 ] || die "Run as root: curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | sudo sh"
 [ "$(uname -s)" = Linux ] || die "Jokku runs on Linux servers (this is $(uname -s))"
@@ -36,7 +52,7 @@ case "$(uname -m)" in
   *) die "Unsupported CPU architecture: $(uname -m)" ;;
 esac
 
-if [ -x "$BIN" ] && systemctl is-active --quiet jokku 2>/dev/null; then
+if [ -z "$JOIN" ] && [ -x "$BIN" ] && systemctl is-active --quiet jokku 2>/dev/null; then
   say "Jokku is already installed ($("$BIN" version 2>/dev/null | head -n 1 | cut -d' ' -f3))"
   info "To update: curl -fsSL https://raw.githubusercontent.com/$REPO/main/update.sh | sudo sh"
   exit 0
@@ -56,6 +72,17 @@ curl -fsSL "$URL/jokku-linux-$ARCH" -o "$tmp/jokku-linux-$ARCH" || die "Download
 curl -fsSL "$URL/checksums.txt" -o "$tmp/checksums.txt" || die "Download failed: $URL/checksums.txt"
 (cd "$tmp" && grep " jokku-linux-$ARCH\$" checksums.txt | sha256sum -c - >/dev/null) || die "Checksum mismatch for jokku-linux-$ARCH"
 install -m 0755 "$tmp/jokku-linux-$ARCH" "$BIN"
+
+if [ -n "$JOIN" ]; then
+  if [ -n "$NAME" ]; then
+    "$BIN" setup --join "$JOIN" --token "$TOKEN" --name "$NAME" || die "Joining failed. Fix the problem above and run this again."
+  else
+    "$BIN" setup --join "$JOIN" --token "$TOKEN" || die "Joining failed. Fix the problem above and run this again."
+  fi
+  printf '\n=====> This server joined the cluster\n'
+  info "See it from the control node: jokku nodes:list"
+  exit 0
+fi
 
 "$BIN" setup || die "Setup failed. Fix the problem above, then run: sudo jokku setup"
 

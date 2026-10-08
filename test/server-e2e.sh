@@ -118,6 +118,15 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $domain" http://127.0.0.
 jssh ps:start hello
 get | grep -q "hello world" || fail "app did not come back after ps:start"
 
+step "cluster commands on a single server"
+sudo jokku nodes:list | grep -q "control" || fail "nodes:list does not show the control node"
+sudo jokku events | grep -q "deployed v" || fail "no deploy events"
+sudo jokku cluster:join-command | grep -q -- "--join .* --token JOKKU1\." || fail "cluster:join-command"
+sudo jokku cluster:report | grep -q "Cluster nodes: *1 (1 ready)" || fail "cluster:report"
+sudo grep -q '"module": "jokku"' /var/lib/jokku/proxy/config.json || fail "the proxy does not use the shared certificate store"
+if out=$(sudo jokku top 2>&1 </dev/null); then fail "top without a terminal should fail: $out"; fi
+grep -q "needs a terminal" <<<"$out" || fail "top: $out"
+
 step "push to a new app creates and deploys it"
 git push "jokku@$host:fresh" main >/dev/null 2>&1 || fail "deploying a new app failed"
 jssh apps:list | grep -qx fresh || fail "push did not create the app"

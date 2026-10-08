@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/wes/jokku/internal/api"
+	"github.com/wes/jokku/internal/cluster"
 	"github.com/wes/jokku/internal/gitrepo"
 	"github.com/wes/jokku/internal/store"
 	"github.com/wes/jokku/internal/types"
@@ -47,12 +48,14 @@ func startAPI(t *testing.T) {
 	t.Cleanup(func() { st.Close() })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := api.New(api.Config{
-		Store:       st,
-		Git:         &gitrepo.Manager{Dir: filepath.Join(dir, "git"), Exe: "/usr/local/bin/jokku"},
-		Deployer:    stubDeployer{},
-		Log:         log,
-		DataDir:     dir,
-		ClusterCIDR: netip.MustParsePrefix("10.210.0.0/16"),
+		Store:    st,
+		Git:      &gitrepo.Manager{Dir: filepath.Join(dir, "git"), Exe: "/usr/local/bin/jokku"},
+		Deployer: stubDeployer{},
+		Log:      log,
+		DataDir:  dir,
+		Cluster: cluster.New(&cluster.Controller{
+			Store: st, Log: log, Self: "test", ClusterCIDR: netip.MustParsePrefix("10.210.0.0/16"),
+		}),
 	})
 	sock := filepath.Join(dir, "s.sock")
 	ln, err := net.Listen("unix", sock)

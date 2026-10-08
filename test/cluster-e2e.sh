@@ -103,7 +103,7 @@ mkdir -p "$work/app" && cd "$work/app"
 export GIT_AUTHOR_NAME=e2e GIT_AUTHOR_EMAIL=e2e@example.com GIT_COMMITTER_NAME=e2e GIT_COMMITTER_EMAIL=e2e@example.com
 git init -q -b main
 printf 'FROM public.ecr.aws/docker/library/busybox:1.36\nRUN mkdir /www\n' >Dockerfile
-printf 'web: echo "served by $(hostname)" > /www/index.html && exec httpd -f -p "$PORT" -h /www\n' >Procfile
+printf 'web: echo "served by $(hostname)" > /www/index.html && echo "listening on $PORT" && exec httpd -f -p "$PORT" -h /www\n' >Procfile
 git add -A && git commit -qm init
 sudo jokku apps:create hello
 sudo git -c safe.directory='*' archive --format=tar HEAD >"$work/app.tar"
@@ -120,7 +120,7 @@ eventually 30 "worker1 routes to the app" curl -fsS --max-time 5 -H "Host: $doma
 curl -fsS -H "Host: $domain" "http://$worker_ip/" | grep -q "served by hello-web-1" || fail "unexpected answer from the worker's proxy"
 
 step "logs and events cover the cluster"
-sudo jokku logs hello -n 20 | grep -q "app\[web.1\]" || fail "no logs"
+eventually 20 "app output in jokku logs" bash -c "sudo jokku logs hello -n 50 | grep -q 'app\[web.1\]: listening on'"
 sudo jokku events | grep -q "worker1 joined" || fail "no join event"
 
 step "the control node notices the worker going down and coming back"

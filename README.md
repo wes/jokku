@@ -164,14 +164,15 @@ Then scale each one: `jokku ps:scale myapp web=3 worker=1`.
 ### Deploy a compose file
 
 An app can also be a whole compose file: each service runs as one of the
-app's process types, with its own image.
+app's process types, with its own image. You deploy it the same way, with
+`git push`.
 
-```sh
-jokku apps:create shop
-jokku builder:set shop selected compose
-jokku config:set --no-restart shop DB_PASSWORD=s3cret   # fills in ${DB_PASSWORD} in the file
-git push jokku main
-```
+**1. Put the compose file in your repo**
+
+Jokku reads the first of `compose.yaml`, `compose.yml`,
+`docker-compose.yaml` or `docker-compose.yml` at the root of the repo. Commit
+it along with whatever its `build:` services need, such as their Dockerfiles.
+For example:
 
 ```yaml
 services:
@@ -192,12 +193,62 @@ volumes:
   pgdata:
 ```
 
-Services reach each other by name (`db`), named volumes become Jokku
-volumes, and `ps:scale shop web=3` or `logs shop -p db` work per service.
-Deploys and `config:set` only restart the services they change, so the
-database keeps running when the web service changes. Jokku says what it
-can't run (privileged containers, host paths, secrets) instead of guessing;
-see [Compose apps](docs/architecture.md#compose-apps).
+To deploy a different file, for example a production one next to the
+`docker-compose.yml` you use locally, point Jokku at it:
+
+```sh
+jokku builder-compose:set shop compose-file docker-compose.prod.yml
+```
+
+Only that one file is read. A `docker-compose.override.yml` is not merged
+in, so local development overrides stay out of production.
+
+**2. Create the app and switch it to compose**
+
+```sh
+jokku apps:create shop
+jokku builder:set shop selected compose
+```
+
+Jokku never guesses this from the files, since many repos keep a compose
+file around just for local development. Without it, the app is built from
+its Dockerfile.
+
+**3. Set the values your file uses**
+
+`${VAR}` in the compose file is filled in from the app's config vars, which
+act like docker compose's `.env` file (a committed `.env` works too, and
+config vars win over it):
+
+```sh
+jokku config:set --no-restart shop DB_PASSWORD=s3cret
+```
+
+Services only get the environment the file gives them; a config var reaches
+a service through `${VAR}`.
+
+**4. Push it**
+
+```sh
+git remote add jokku jokku@your-server:shop
+git push jokku main
+```
+
+Jokku builds each `build:` service, pulls each `image:` service, creates
+the named volumes and starts the services in `depends_on` order. The service
+named `web`, or the only one with `ports:`, gets the app's domains and
+HTTPS, on the port its `ports:` entry points to (3000 above).
+
+Once deployed:
+- Services reach each other by name (`db`).
+- Each service is a process type: `ps:scale shop web=3`, `logs shop -p db`
+  and `storage:list shop` work per service.
+- Deploys and `config:set` only restart the services they change, so the
+  database keeps running when the web service changes.
+
+Jokku tells you what it can't run (privileged containers, host paths,
+secrets) instead of guessing; see
+[Compose apps](docs/architecture.md#compose-apps).
 
 ### Deploy an image
 

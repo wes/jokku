@@ -213,10 +213,17 @@ jssh logs keep -p web -n 50 | grep -q "app\[web.1\]: stderr reopened as app" || 
 [ "$(kget boots | wc -l)" -eq 1 ] || fail "expected one boot recorded: $(kget boots)"
 jssh ps:restart keep >/dev/null
 [ "$(kget boots | wc -l)" -eq 2 ] || fail "the volume lost data on restart: $(kget boots)"
-git commit -q --allow-empty -m again
+# A deploy that changes the image restarts web (an unchanged one leaves it
+# running), stopping the old instance before the new one takes the disk.
+echo 'ENV VERSION=2' >>Dockerfile
+git commit -qam v2
 out=$(git push "jokku@$host:keep" main 2>&1) || fail "redeploying failed: $out"
 grep -q "Stopping web.1 first" <<<"$out" || fail "the deploy did not stop the old instance first: $out"
 [ "$(kget boots | wc -l)" -eq 3 ] || fail "the volume lost data on deploy: $(kget boots)"
+git commit -q --allow-empty -m again
+out=$(git push "jokku@$host:keep" main 2>&1) || fail "redeploying failed: $out"
+grep -q "Unchanged, left running: web" <<<"$out" || fail "a deploy that changes nothing restarted web: $out"
+[ "$(kget boots | wc -l)" -eq 3 ] || fail "a deploy that changes nothing rebooted web: $(kget boots)"
 jssh storage:list keep | grep -E "^data +local +1g .* ready +web:/data" || fail "storage:list: $(jssh storage:list keep)"
 if jssh ps:scale keep web=2 2>/dev/null; then fail "scaled a process with a local volume past one"; fi
 sudo sh -c 'ls /var/lib/jokku/volumes/*.ext4' >/dev/null || fail "no volume disk on the server"

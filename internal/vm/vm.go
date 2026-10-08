@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -148,6 +149,10 @@ func (h *Host) EnsureNetwork(ctx context.Context) error {
 		{"nat", "POSTROUTING", false, []string{"-s", subnet, "!", "-d", h.Cluster.String(), "-j", "MASQUERADE"}},
 		{"filter", "FORWARD", true, []string{"-i", h.Bridge, "-j", "ACCEPT"}},
 		{"filter", "FORWARD", true, []string{"-o", h.Bridge, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"}},
+		// Traffic from other nodes (over the WireGuard mesh) to local VMs.
+		{"filter", "FORWARD", true, []string{"-i", "jokku-wg", "-j", "ACCEPT"}},
+		// VMs may not reach jokku's own APIs on their host.
+		{"filter", "INPUT", true, []string{"-i", h.Bridge, "-p", "tcp", "-m", "multiport", "--dports", "7443,7444", "-j", "DROP"}},
 	}
 	for _, r := range rules {
 		check := append([]string{"-w", "-t", r.table, "-C", r.chain}, r.rule...)
@@ -225,6 +230,8 @@ func (h *Host) Start(ctx context.Context, s Spec) error {
 		"--property=LogExtraFields=JOKKU_PROCESS_TYPE=" + process,
 		"--property=LogExtraFields=JOKKU_INSTANCE=" + s.ID,
 		"--property=TimeoutStopSec=5",
+		"--property=CPUAccounting=yes",
+		"--property=MemoryAccounting=yes",
 		"--",
 		deps.Firecracker.Path("firecracker"),
 		"--api-sock", sock,
@@ -291,6 +298,54 @@ func (h *Host) Units(ctx context.Context) (map[string]string, error) {
 	}
 	return units, sc.Err()
 }
+
+// Usage is a VM's resource use as systemd accounts it.
+type Usage struct {
+	CPUNanos    uint64 // total CPU time used so far
+	MemoryBytes uint64
+}
+
+// Usage reads CPU time and memory for running VMs in one systemctl call.
+func (h *Host) Usage(ctx context.Context, ids []string) (map[string]Usage, error) {
+	out := map[string]Usage{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := []string{"show", "-p", "Id", "-p", "CPUUsageNSec", "-p", "MemoryCurrent"}
+	for _, id := range ids {
+		args = append(args, unit(id))
+	}
+	b, err := exec.CommandContext(ctx, "systemctl", args...).Output()
+	if err != nil {
+		return nil, err
+	}
+	for _, block := range strings.Split(string(b), "\n\n") {
+		var id string
+		var u Usage
+		for _, line := range strings.Split(block, "\n") {
+			k, v, _ := strings.Cut(line, "=")
+			n, _ := strconv.ParseUint(v, 10, 64)
+			if n == ^uint64(0) { // "not set"
+				n = 0
+			}
+			switch k {
+			case "Id":
+				id = strings.TrimSuffix(strings.TrimPrefix(v, unitPrefix), ".service")
+			case "CPUUsageNSec":
+				u.CPUNanos = n
+			case "MemoryCurrent":
+				u.MemoryBytes = n
+			}
+		}
+		if id != "" {
+			out[id] = u
+		}
+	}
+	return out, nil
+}
+
+// CheckTCP reports whether something accepts connections at addr.
+func (h *Host) CheckTCP(addr string) bool { return CheckTCP(addr) }
 
 // Stop asks the guest to shut down (SIGTERM to the app) and waits up to
 // grace before stopping the VM outright.

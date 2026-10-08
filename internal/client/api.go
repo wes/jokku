@@ -223,3 +223,32 @@ func (c *Client) streamCall(ctx context.Context, method, path string, onEvent fu
 	defer resp.Body.Close()
 	return stream(resp.Body, onEvent)
 }
+
+// Cluster
+
+func (c *Client) CreateJoinToken(ctx context.Context, req types.CreateJoinTokenRequest) (*types.JoinToken, error) {
+	var t types.JoinToken
+	return &t, c.call(ctx, http.MethodPost, "/v1/cluster/join-tokens", req, &t)
+}
+
+func (c *Client) ClusterStatus(ctx context.Context) (*types.ClusterStatus, error) {
+	var st types.ClusterStatus
+	return &st, c.call(ctx, http.MethodGet, "/v1/cluster/status", nil, &st)
+}
+
+func (c *Client) Events(ctx context.Context, app string, limit int) ([]types.ClusterEvent, error) {
+	q := url.Values{"limit": {strconv.Itoa(limit)}}
+	if app != "" {
+		q.Set("app", app)
+	}
+	var out []types.ClusterEvent
+	return out, c.call(ctx, http.MethodGet, "/v1/events?"+q.Encode(), nil, &out)
+}
+
+func (c *Client) RemoveNode(ctx context.Context, name string, force bool) error {
+	path := "/v1/nodes/" + url.PathEscape(name)
+	if force {
+		path += "?force=true"
+	}
+	return c.call(ctx, http.MethodDelete, path, nil, nil)
+}

@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/netip"
 	"sync"
 
+	"github.com/wes/jokku/internal/cluster"
 	"github.com/wes/jokku/internal/gitrepo"
 	"github.com/wes/jokku/internal/sshkeys"
 	"github.com/wes/jokku/internal/store"
@@ -33,22 +33,29 @@ type Config struct {
 	AuthorizedKeys string
 	// Owner owns AuthorizedKeys; nil leaves ownership alone.
 	Owner *sshkeys.Owner
-	// ClusterCIDR is the network node subnets are carved from.
-	ClusterCIDR netip.Prefix
+	// Cluster is the control plane: nodes, placement, agents.
+	Cluster *cluster.Controller
 }
 
+// Server serves two listeners: the unix socket gets the whole API (whoever
+// can open it is an admin), and the TLS port (Public) only joining and the
+// agent endpoints, each authenticated with a token.
 type Server struct {
 	Config
-	mux *http.ServeMux
+	mux    *http.ServeMux
+	public *http.ServeMux
 
 	keysMu sync.Mutex // serializes authorized_keys rewrites
 }
 
 func New(cfg Config) *Server {
-	s := &Server{Config: cfg, mux: http.NewServeMux()}
+	s := &Server{Config: cfg, mux: http.NewServeMux(), public: http.NewServeMux()}
 	s.routes()
 	return s
 }
+
+// Public is the handler for the TLS port.
+func (s *Server) Public() http.Handler { return s.public }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
@@ -102,10 +109,31 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /v1/nodes", s.listNodes)
 	m.HandleFunc("GET /v1/nodes/{name}", s.getNode)
 	m.HandleFunc("PATCH /v1/nodes/{name}", s.patchNode)
+	m.HandleFunc("DELETE /v1/nodes/{name}", s.removeNode)
 
-	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	m.HandleFunc("POST /v1/cluster/join-tokens", s.createJoinToken)
+	m.HandleFunc("GET /v1/cluster/status", s.clusterStatus)
+	m.HandleFunc("GET /v1/events", s.listEvents)
+
+	notFound := func(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, httpErrorf(http.StatusNotFound, "no such endpoint: %s %s", r.Method, r.URL.Path))
-	})
+	}
+	m.HandleFunc("/", notFound)
+
+	p := s.public
+	p.HandleFunc("GET /v1/version", s.version)
+	p.HandleFunc("POST /v1/cluster/join", s.join)
+	p.HandleFunc("GET /v1/agent/state", s.agentAuth(s.agentState))
+	p.HandleFunc("POST /v1/agent/status", s.agentAuth(s.agentStatus))
+	p.HandleFunc("GET /v1/agent/artifacts/{name}", s.agentAuth(s.agentArtifact))
+	p.HandleFunc("GET /v1/agent/certs", s.agentAuth(s.certGet))
+	p.HandleFunc("PUT /v1/agent/certs", s.agentAuth(s.certPut))
+	p.HandleFunc("DELETE /v1/agent/certs", s.agentAuth(s.certDelete))
+	p.HandleFunc("GET /v1/agent/certs/list", s.agentAuth(s.certList))
+	p.HandleFunc("GET /v1/agent/certs/stat", s.agentAuth(s.certStat))
+	p.HandleFunc("POST /v1/agent/certs/lock", s.agentAuth(s.certLock))
+	p.HandleFunc("DELETE /v1/agent/certs/lock", s.agentAuth(s.certUnlock))
+	p.HandleFunc("/", notFound)
 }
 
 func (s *Server) version(w http.ResponseWriter, r *http.Request) {

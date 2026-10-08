@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"net/netip"
 	"time"
 
 	"github.com/wes/jokku/internal/store"
@@ -15,9 +14,10 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	now := time.Now()
 	out := make([]types.Node, 0, len(nodes))
 	for _, n := range nodes {
-		out = append(out, s.node(n))
+		out = append(out, s.Cluster.NodeInfo(n, now))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -28,7 +28,7 @@ func (s *Server) getNode(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.node(*n))
+	writeJSON(w, http.StatusOK, s.Cluster.NodeInfo(*n, time.Now()))
 }
 
 type nodePatch struct {
@@ -38,6 +38,7 @@ type nodePatch struct {
 }
 
 func (s *Server) patchNode(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	name := r.PathValue("name")
 	var p nodePatch
 	if err := decode(r, &p); err != nil {
@@ -48,40 +49,59 @@ func (s *Server) patchNode(w http.ResponseWriter, r *http.Request) {
 		if v == nil {
 			continue
 		}
-		if err := s.Store.SetNodeFlag(r.Context(), name, flag, *v); err != nil {
+		if err := s.Store.SetNodeFlag(ctx, name, flag, *v); err != nil {
 			s.fail(w, r, err)
 			return
 		}
 	}
+	switch {
+	case p.Draining != nil && *p.Draining:
+		s.Store.AddEvent(ctx, "node", "", name, "draining %s: moving its instances to other nodes", name)
+	case p.Draining != nil:
+		s.Store.AddEvent(ctx, "node", "", name, "%s accepts instances again", name)
+	}
+	s.Cluster.Changed()
 	s.getNode(w, r)
 }
 
-func (s *Server) node(n store.Node) types.Node {
-	subnet, meshIP := NodeSubnet(s.ClusterCIDR, n.SubnetIndex)
-	return types.Node{
-		Name:        n.Name,
-		Role:        n.Role,
-		Status:      n.Status(time.Now()),
-		Address:     n.Address,
-		MeshIP:      meshIP.String(),
-		Subnet:      subnet.String(),
-		Arch:        n.Arch,
-		CPUs:        n.CPUs,
-		MemoryMB:    n.MemoryMB,
-		Schedulable: n.Schedulable,
-		Ingress:     n.Ingress,
-		LastSeen:    n.LastSeen,
-		CreatedAt:   n.CreatedAt,
+// removeNode takes a worker out of the cluster. Its instances must have
+// been moved off first (nodes:drain) unless force is set, in which case they
+// are rescheduled like a dead node's.
+func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	name := r.PathValue("name")
+	n, err := s.Store.Node(ctx, name)
+	if err != nil {
+		s.fail(w, r, err)
+		return
 	}
-}
-
-// NodeSubnet returns node index's /24 inside a /16 cluster network and the
-// node's own address (.1) in it: index 3 in 10.210.0.0/16 is 10.210.3.0/24
-// and 10.210.3.1.
-func NodeSubnet(cluster netip.Prefix, index int) (netip.Prefix, netip.Addr) {
-	b := cluster.Masked().Addr().As4()
-	b[2] = byte(index)
-	subnet := netip.PrefixFrom(netip.AddrFrom4(b), 24)
-	b[3] = 1
-	return subnet, netip.AddrFrom4(b)
+	if n.Role == store.RoleControl {
+		s.fail(w, r, badRequest("The control node cannot be removed"))
+		return
+	}
+	if r.URL.Query().Get("force") != "true" {
+		insts, err := s.Store.Instances(ctx, "")
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		running := 0
+		for _, in := range insts {
+			if in.Node == name && in.Desired == store.DesiredRunning {
+				running++
+			}
+		}
+		if running > 0 {
+			s.fail(w, r, httpErrorf(http.StatusConflict,
+				"%s still runs %d instances. Move them first with: jokku nodes:drain %s (or remove it anyway with --force)", name, running, name))
+			return
+		}
+	}
+	if err := s.Store.DeleteNode(ctx, name); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.Store.AddEvent(ctx, "node", "", name, "%s was removed from the cluster", name)
+	s.Cluster.Changed()
+	w.WriteHeader(http.StatusNoContent)
 }

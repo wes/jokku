@@ -8,6 +8,8 @@ package build
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
@@ -49,6 +51,8 @@ type Options struct {
 // Result describes a built artifact.
 type Result struct {
 	Artifact   string
+	SHA256     string // hex, for nodes that download it
+	Size       int64
 	Entrypoint []string
 	Cmd        []string
 	Env        []string
@@ -121,7 +125,7 @@ func (b *Builder) Build(ctx context.Context, o Options, log func(string)) (*Resu
 	res.Artifact = filepath.Join(artifacts, digest.Hex[:20]+"-"+version.Version+".ext4")
 	if _, err := os.Stat(res.Artifact); err == nil {
 		log("-----> Image unchanged, reusing its root filesystem")
-		return res, nil
+		return res, res.checksum()
 	}
 	log("-----> Creating the microVM root filesystem")
 	if err := os.MkdirAll(artifacts, 0o755); err != nil {
@@ -135,7 +139,28 @@ func (b *Builder) Build(ctx context.Context, o Options, log func(string)) (*Resu
 	if err := makeExt4(ctx, rootfs, res.Artifact); err != nil {
 		return nil, err
 	}
-	return res, nil
+	return res, res.checksum()
+}
+
+func (r *Result) checksum() error {
+	sum, size, err := FileSHA256(r.Artifact)
+	r.SHA256, r.Size = sum, size
+	return err
+}
+
+// FileSHA256 returns a file's hex SHA-256 and size.
+func FileSHA256(path string) (string, int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", 0, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.Copy(h, f)
+	if err != nil {
+		return "", 0, err
+	}
+	return hex.EncodeToString(h.Sum(nil)), n, nil
 }
 
 // unpack writes the image's flattened filesystem (whiteouts applied) to dir

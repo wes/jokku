@@ -131,4 +131,49 @@ CREATE INDEX instances_app ON instances (app_id);
 
 ALTER TABLE apps ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0;
 `,
+
+	// 3: clusters: node credentials and metrics, join tokens, events, artifact
+	// checksums for distribution, observed instance usage, shared TLS storage
+	`
+ALTER TABLE nodes ADD COLUMN version TEXT NOT NULL DEFAULT '';
+ALTER TABLE nodes ADD COLUMN agent_token TEXT NOT NULL DEFAULT '';
+ALTER TABLE nodes ADD COLUMN can_run TEXT NOT NULL DEFAULT '';
+ALTER TABLE nodes ADD COLUMN metrics TEXT NOT NULL DEFAULT '{}';
+
+ALTER TABLE releases ADD COLUMN artifact_sha256 TEXT NOT NULL DEFAULT '';
+ALTER TABLE releases ADD COLUMN artifact_size INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE instances ADD COLUMN replaces TEXT NOT NULL DEFAULT '';
+ALTER TABLE instances ADD COLUMN cpu_percent REAL NOT NULL DEFAULT 0;
+ALTER TABLE instances ADD COLUMN memory_used_mb INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE instances ADD COLUMN reported_at INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE join_tokens (
+	hash       TEXT    PRIMARY KEY,
+	reusable   INTEGER NOT NULL DEFAULT 0,
+	expires_at INTEGER NOT NULL,
+	created_at INTEGER NOT NULL
+);
+
+CREATE TABLE events (
+	id      INTEGER PRIMARY KEY,
+	at      INTEGER NOT NULL,
+	kind    TEXT    NOT NULL,
+	app     TEXT    NOT NULL DEFAULT '',
+	node    TEXT    NOT NULL DEFAULT '',
+	message TEXT    NOT NULL
+);
+
+CREATE TABLE certstore (
+	key      TEXT    PRIMARY KEY,
+	value    BLOB    NOT NULL,
+	modified INTEGER NOT NULL
+);
+
+CREATE TABLE certlocks (
+	key        TEXT    PRIMARY KEY,
+	owner      TEXT    NOT NULL,
+	expires_at INTEGER NOT NULL
+);
+`,
 }

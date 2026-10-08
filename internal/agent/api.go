@@ -17,7 +17,7 @@ import (
 // the agent token. The firewall keeps VMs away from the port as well.
 func Serve(ctx context.Context, addr, token string, log *slog.Logger) {
 	mux := http.NewServeMux()
-	for _, path := range []string{"/v1/logs", "/v1/instance-logs"} {
+	for _, path := range []string{"/v1/logs", "/v1/instance-logs", "/v1/requests"} {
 		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
 			if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)

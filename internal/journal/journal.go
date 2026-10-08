@@ -124,6 +124,13 @@ func Serve(ctx context.Context, path string, q url.Values, line func(string)) er
 			line(l)
 		}
 		return nil
+	case "/v1/requests":
+		// One JSON-encoded Request per line.
+		return Requests(ctx, q.Get("app"), tail, q.Get("follow") == "true", func(r types.Request) {
+			if b, err := json.Marshal(r); err == nil {
+				line(string(b))
+			}
+		})
 	}
 	return fmt.Errorf("unknown log request %s", path)
 }

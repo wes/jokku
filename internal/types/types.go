@@ -185,15 +185,17 @@ type Deploy struct {
 
 // Event is one line of a streamed (application/x-ndjson) response.
 type Event struct {
-	Type    string `json:"type"` // log | done
-	Message string `json:"message,omitempty"`
-	Status  string `json:"status,omitempty"` // on done: succeeded | failed
-	Error   string `json:"error,omitempty"`
+	Type    string   `json:"type"` // log | request | done
+	Message string   `json:"message,omitempty"`
+	Request *Request `json:"request,omitempty"`
+	Status  string   `json:"status,omitempty"` // on done: succeeded | failed
+	Error   string   `json:"error,omitempty"`
 }
 
 const (
-	EventLog  = "log"
-	EventDone = "done"
+	EventLog     = "log"
+	EventRequest = "request"
+	EventDone    = "done"
 
 	StatusSucceeded = "succeeded"
 	StatusFailed    = "failed"

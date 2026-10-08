@@ -102,6 +102,20 @@ grep -q "app\[web.1\]: listening on port" <<<"$logs" || fail "web output missing
 grep -q "app\[worker.1\]: worker tick" <<<"$logs" || fail "worker output missing from logs"
 [ "$(jssh logs hello -p worker -q -n 1)" = "worker tick" ] || fail "logs -p worker -q"
 
+step "router lines: one per request, naming the instance that answered"
+for _ in 1 2 3; do get >/dev/null; done
+eventually_router() {
+  for _ in $(seq 1 20); do
+    jssh logs hello -p router -n 20 | grep -qE 'app\[router\]: method=GET path="/" host=[^ ]+ status=200 duration=[0-9.]+ms bytes=[0-9]+ instance=web\.[12]@' && return 0
+    sleep 1
+  done
+  return 1
+}
+eventually_router || fail "no router lines: $(jssh logs hello -p router -n 5)"
+jssh logs hello -p router -n 20 | grep -v "app\[router\]" && fail "-p router shows other lines"
+jssh logs hello -n 100 | grep -q "app\[web" || fail "app lines missing next to router lines"
+sudo curl -fsS --unix-socket /run/jokku/jokku.sock "http://jokku/v1/requests?app=hello&tail=3" | grep -q '"type":"request"' || fail "request stream API"
+
 step "a failing deploy keeps the old release serving"
 printf 'web: echo "crashing" && exit 3\n' >Procfile
 git commit -qam broken

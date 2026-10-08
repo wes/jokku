@@ -83,8 +83,11 @@ jokku top
 ```
 
 A live view of the machines, apps, instances and recent events, with CPU and
-memory for each. Over SSH it needs a terminal, so use `ssh -t jokku@your-server
-top` (or put `-t` in your alias).
+memory for each. Press `6` for **Traffic**: every request flies across its
+app's lane as a dot (green, yellow for 4xx, red for 5xx) and lands on the
+instance and server that answered, with requests per second, latency and error
+rate updating live. Over SSH it needs a terminal, so use `ssh -t
+jokku@your-server top` (or put `-t` in your alias).
 
 ## Deploy an app
 
@@ -125,7 +128,8 @@ automatically.
 ### Watch it
 
 ```sh
-jokku logs myapp -t        # follow output from every instance
+jokku logs myapp -t        # follow output from every instance, plus a router line per request
+jokku logs myapp -p router # just the requests
 jokku ps:report myapp      # what's running, where, and how big
 jokku ps:restart myapp     # also: ps:stop, ps:start, ps:rebuild
 ```

@@ -252,3 +252,20 @@ func (c *Client) RemoveNode(ctx context.Context, name string, force bool) error 
 	}
 	return c.call(ctx, http.MethodDelete, path, nil, nil)
 }
+
+// Requests streams the HTTP requests the cluster's proxies handle (all apps
+// when app is ""): the last tail, then new ones while following.
+func (c *Client) Requests(ctx context.Context, app string, tail int, follow bool, fn func(types.Request)) error {
+	q := url.Values{"tail": {strconv.Itoa(tail)}}
+	if app != "" {
+		q.Set("app", app)
+	}
+	if follow {
+		q.Set("follow", "true")
+	}
+	return c.streamCall(ctx, http.MethodGet, "/v1/requests?"+q.Encode(), func(e types.Event) {
+		if e.Request != nil {
+			fn(*e.Request)
+		}
+	})
+}

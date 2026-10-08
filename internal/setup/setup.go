@@ -245,7 +245,8 @@ func (s *setup) units(ctx context.Context) error {
 			bk.Path("buildkitd")+" --addr unix://"+build.BuildKitSocket+" --root "+daemon.DefaultDataDir+"/buildkit"+
 				" --oci-worker-net host --containerd-worker=false",
 			"jokku-buildkit", "Environment=PATH="+bk.Dir()+":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"),
-		"jokku-proxy": unit("Jokku proxy (Caddy)", s.exe+" proxy", "jokku-proxy", "LimitNOFILE=1048576\n"),
+		// Every request is a journal line (router logs); never rate-limit it.
+		"jokku-proxy": unit("Jokku proxy (Caddy)", s.exe+" proxy", "jokku-proxy", "LimitNOFILE=1048576\nLogRateLimitIntervalSec=0\n"),
 	}
 	if s.worker {
 		delete(units, "jokku-buildkitd")

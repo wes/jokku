@@ -119,6 +119,9 @@ sudo jokku ps:report hello
 eventually 30 "worker1 routes to the app" curl -fsS --max-time 5 -H "Host: $domain" "http://$worker_ip/"
 curl -fsS -H "Host: $domain" "http://$worker_ip/" | grep -q "served by hello-web-1" || fail "unexpected answer from the worker's proxy"
 
+step "requests through the worker show up as router lines on the control node"
+eventually 20 "a router line via worker1" bash -c "sudo jokku logs hello -p router -n 50 | grep -q 'via=worker1'"
+
 step "logs and events cover the cluster"
 eventually 20 "app output in jokku logs" bash -c "sudo jokku logs hello -n 50 | grep -q 'app\[web.1\]: listening on'"
 sudo jokku events | grep -q "worker1 joined" || fail "no join event"

@@ -53,7 +53,9 @@ func init() {
 	cluster.RescheduleAfter = 2 * time.Second
 	cluster.RetryAfter = time.Second
 	cluster.DrainGrace = 0
-	cluster.PollTimeout = 2 * time.Second
+	// Well under agent.FenceAfter, as in production (25s against 2m): an
+	// idle node hears from the control node at least once per poll.
+	cluster.PollTimeout = 300 * time.Millisecond
 	cluster.PollRecheck = 200 * time.Millisecond
 	cluster.FailoverAfter = 4 * time.Second
 	cluster.RetryFailoverAfter = time.Second

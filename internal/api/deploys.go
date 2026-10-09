@@ -86,6 +86,10 @@ func (s *Server) createDeploy(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, badRequest("Unknown deploy source %q", source))
 		return
 	}
+	if app.Kind != "" {
+		s.fail(w, r, httpErrorf(http.StatusConflict, "%s is a %s database, run by Jokku from its official image; manage it with jokku db:%s:*", name, app.Kind, app.Kind))
+		return
+	}
 	builder, err := s.computedProperties(ctx, name, "builder")
 	if err != nil {
 		s.fail(w, r, err)

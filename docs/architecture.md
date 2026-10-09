@@ -650,6 +650,33 @@ starts jokku again. Workers reconnect if the server has the old address;
 volumes on the control node are found missing and restored, and those on
 nodes that are gone are restored elsewhere once the nodes are removed.
 
+## Databases
+
+`db:<engine>:create <name>` (Postgres, MySQL, Redis) creates an app named
+`<engine>-<name>` of that kind and deploys it from a compose file Jokku
+writes (`internal/database`): one service, the engine's official image, a
+`data` volume, and memory set in the file. Its config vars hold its image,
+its name and generated passwords, and fill in the file. Services get only
+the environment the file gives them, so nothing else leaks into the VM. With
+no published ports, there is no HTTP route; other apps reach it at
+`<engine>-<name>.internal`, where it is the app's only process.
+
+- Postgres keeps its data in `pgdata` inside the volume and MySQL in `data`,
+  since both refuse a volume's own root, which holds `lost+found`. Redis
+  runs with append-only persistence and a password.
+- Linking (`database_links`) sets the engine's variable (`DATABASE_URL`,
+  `REDIS_URL`, or `<ALIAS>_URL`) on the app and restarts it; a linked
+  database can't be destroyed.
+- `connect`, `export` and `import` are `jokku enter` sessions in the
+  database's VM: psql, pg_dump and pg_restore; mysql and mysqldump; and
+  redis-cli. Passwords go in the session's environment, not its arguments,
+  so `jokku events` never shows them.
+- With a backup destination, the new volume is backed up at once, to where
+  the cluster is backed up, with the defaults. Snapshots taken with writes
+  frozen are crash-consistent, which all three recover from.
+- A database's app is left out of `apps:list` (`?all=true` lists it), and
+  can't be pushed to, renamed or cloned.
+
 ## Compose apps
 
 `builder:compose app [<path>]` deploys the app from a compose file instead

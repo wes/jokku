@@ -491,15 +491,27 @@ func (c *Client) RunBackup(ctx context.Context, app, name string, onEvent func(t
 
 // RestoreVolume restores a volume from a backup, streaming its progress.
 func (c *Client) RestoreVolume(ctx context.Context, app, name string, req types.RestoreVolumeRequest, onEvent func(types.Event)) error {
-	b, err := json.Marshal(req)
+	return c.streamJSON(ctx, http.MethodPost, volumePath(app, name, "backups/restore"), req, onEvent)
+}
+
+// streamJSON sends a JSON request (in may be nil) and follows the events
+// the server streams back.
+func (c *Client) streamJSON(ctx context.Context, method, path string, in any, onEvent func(types.Event)) error {
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(b)
+	}
+	hreq, err := c.newRequest(ctx, method, path, body)
 	if err != nil {
 		return err
 	}
-	hreq, err := c.newRequest(ctx, http.MethodPost, volumePath(app, name, "backups/restore"), bytes.NewReader(b))
-	if err != nil {
-		return err
+	if in != nil {
+		hreq.Header.Set("Content-Type", "application/json")
 	}
-	hreq.Header.Set("Content-Type", "application/json")
 	resp, err := c.do(hreq)
 	if err != nil {
 		return err
@@ -540,4 +552,49 @@ func (c *Client) RunClusterBackup(ctx context.Context, onEvent func(types.Event)
 func (c *Client) BackupsOverview(ctx context.Context) (*types.BackupsOverview, error) {
 	var out types.BackupsOverview
 	return &out, c.call(ctx, http.MethodGet, "/v1/backups/overview", nil, &out)
+}
+
+// Databases
+
+func databasePath(engine, name string) string {
+	return "/v1/databases/" + url.PathEscape(engine) + "/" + url.PathEscape(name)
+}
+
+// Databases lists the databases of one engine, or all for engine "".
+func (c *Client) Databases(ctx context.Context, engine string) ([]types.Database, error) {
+	path := "/v1/databases"
+	if engine != "" {
+		path += "?engine=" + url.QueryEscape(engine)
+	}
+	var out []types.Database
+	return out, c.call(ctx, http.MethodGet, path, nil, &out)
+}
+
+// Database describes one database, with its config vars.
+func (c *Client) Database(ctx context.Context, engine, name string) (*types.Database, error) {
+	var out types.Database
+	return &out, c.call(ctx, http.MethodGet, databasePath(engine, name), nil, &out)
+}
+
+// CreateDatabase creates and deploys a database, streaming the deploy.
+func (c *Client) CreateDatabase(ctx context.Context, engine string, req types.CreateDatabaseRequest, onEvent func(types.Event)) error {
+	return c.streamJSON(ctx, http.MethodPost, "/v1/databases/"+url.PathEscape(engine), req, onEvent)
+}
+
+func (c *Client) DestroyDatabase(ctx context.Context, engine, name string) error {
+	return c.call(ctx, http.MethodDelete, databasePath(engine, name), nil, nil)
+}
+
+// LinkDatabase links a database to an app, streaming the app's restart.
+func (c *Client) LinkDatabase(ctx context.Context, engine, name string, req types.LinkDatabaseRequest, onEvent func(types.Event)) error {
+	return c.streamJSON(ctx, http.MethodPost, databasePath(engine, name)+"/links", req, onEvent)
+}
+
+// UnlinkDatabase unlinks a database from an app, streaming its restart.
+func (c *Client) UnlinkDatabase(ctx context.Context, engine, name, app string, noRestart bool, onEvent func(types.Event)) error {
+	path := databasePath(engine, name) + "/links/" + url.PathEscape(app)
+	if noRestart {
+		path += "?no_restart=true"
+	}
+	return c.streamJSON(ctx, http.MethodDelete, path, nil, onEvent)
 }

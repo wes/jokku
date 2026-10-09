@@ -15,12 +15,63 @@ type Error struct {
 }
 
 type App struct {
-	Name           string    `json:"name"`
+	Name string `json:"name"`
+	// Kind is "" for an app deployed from code, or the engine of a
+	// database (postgres, mysql, redis), which the db: commands manage.
+	Kind           string    `json:"kind,omitempty"`
 	Locked         bool      `json:"locked"`
 	Stopped        bool      `json:"stopped"` // ps:stop
 	CreatedAt      time.Time `json:"created_at"`
 	CurrentRelease int       `json:"current_release,omitempty"`
 	DeploySource   string    `json:"deploy_source,omitempty"`
+}
+
+// Database is a database Jokku runs (db:<engine>:info).
+type Database struct {
+	Engine    string    `json:"engine"`
+	Name      string    `json:"name"`
+	App       string    `json:"app"`    // the app it runs as
+	Image     string    `json:"image"`  // e.g. postgres:17
+	Status    string    `json:"status"` // running, starting, crashed, stopped, deploying or none
+	Node      string    `json:"node,omitempty"`
+	MemoryMB  int       `json:"memory_mb,omitempty"`
+	Host      string    `json:"host"` // where apps reach it, host:port
+	URL       string    `json:"url"`  // with its password
+	CreatedAt time.Time `json:"created_at"`
+
+	Links   []DatabaseLink `json:"links"`
+	Volume  *Volume        `json:"volume,omitempty"`
+	Backups *VolumeBackups `json:"backups,omitempty"`
+	// Vars are its config vars (passwords among them), for connecting from
+	// the CLI; only a single database's info has them.
+	Vars map[string]string `json:"vars,omitempty"`
+}
+
+// DatabaseLink is an app a database is linked to, and the config var on it
+// that holds the database's URL.
+type DatabaseLink struct {
+	App string `json:"app"`
+	Var string `json:"var"`
+}
+
+// CreateDatabaseRequest creates a database: Image (default the engine's
+// official one) at ImageVersion (default its current major version), with
+// a SizeMB volume and MemoryMB of memory (defaults when 0).
+type CreateDatabaseRequest struct {
+	Name         string `json:"name"`
+	Image        string `json:"image,omitempty"`
+	ImageVersion string `json:"image_version,omitempty"`
+	SizeMB       int    `json:"size_mb,omitempty"`
+	MemoryMB     int    `json:"memory_mb,omitempty"`
+}
+
+// LinkDatabaseRequest links a database to App, setting <Alias>_URL (default
+// the engine's DATABASE_URL or REDIS_URL) on it, and restarting it unless
+// NoRestart.
+type LinkDatabaseRequest struct {
+	App       string `json:"app"`
+	Alias     string `json:"alias,omitempty"`
+	NoRestart bool   `json:"no_restart,omitempty"`
 }
 
 type CreateAppRequest struct {

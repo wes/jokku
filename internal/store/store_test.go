@@ -355,7 +355,8 @@ func TestBuilderSettingsMigration(t *testing.T) {
 	}
 	db.ExecContext(ctx, "PRAGMA user_version = 6")
 	for _, app := range []string{"web", "shop", "cache", "plain"} {
-		if _, err := old.CreateApp(ctx, app); err != nil {
+		// As that schema had them: CreateApp writes today's columns.
+		if _, err := db.ExecContext(ctx, "INSERT INTO apps (name, created_at) VALUES (?, 0)", app); err != nil {
 			t.Fatal(err)
 		}
 	}

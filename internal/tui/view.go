@@ -198,6 +198,9 @@ func (m *model) apps() string {
 	}
 	for i, a := range m.st.Apps {
 		domains := strings.Join(a.Domains, " ")
+		if a.Kind != "" {
+			domains = sDim.Render(a.Kind + " database (jokku db:" + a.Kind + ":info " + strings.TrimPrefix(a.Name, a.Kind+"-") + ")")
+		}
 		line := fmt.Sprintf("  %s %-20s %-10s %s %-6s %-26s %s", appDot(a), trunc(a.Name, 20), appStatus(a),
 			pad(dots(a.Healthy, a.Wanted), 14), fmt.Sprintf("v%d", a.Release), trunc(deploySummary(a.Deploy), 26), domains)
 		b.WriteString(m.selectable(appsView, i, line) + "\n")

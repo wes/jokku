@@ -112,8 +112,9 @@ func (c *Controller) volumeBackup(ctx context.Context, app, name string) (*store
 }
 
 // BackupVolume backs up an app's volume now, on the node that holds its
-// disk, and records the backup. log is told the node's progress.
-func (c *Controller) BackupVolume(ctx context.Context, app, name, actor string, log func(string)) (*types.BackupResult, error) {
+// disk, and records the backup. Retention then keeps keep (when given),
+// whatever its rules say. log is told the node's progress.
+func (c *Controller) BackupVolume(ctx context.Context, app, name, actor, keep string, log func(string)) (*types.BackupResult, error) {
 	v, set, dest, err := c.volumeBackup(ctx, app, name)
 	if err != nil {
 		return nil, err
@@ -163,6 +164,10 @@ func (c *Controller) BackupVolume(ctx context.Context, app, name, actor string, 
 		job.Backup = last.Add(time.Second).Format(backup.NameFormat)
 	}
 
+	// Scheduled backups only make events when something changes: the first
+	// failure, and the first success after failures.
+	prev, _ := c.Store.BackupRuns(ctx, v.ID, 1)
+	wasFailing := len(prev) > 0 && prev[0].Status == types.StatusFailed
 	id, err := c.Store.StartBackupRun(ctx, v.ID, job.Backup, actor)
 	if err != nil {
 		return nil, err
@@ -171,15 +176,78 @@ func (c *Controller) BackupVolume(ctx context.Context, app, name, actor string, 
 	run := store.BackupRun{ID: id, Status: types.StatusSucceeded}
 	if err != nil {
 		run.Status, run.Error = types.StatusFailed, err.Error()
-		c.Store.AddEvent(context.WithoutCancel(ctx), "volume", app, v.Node, "backing up volume %s failed: %v", name, err)
+		if actor != ScheduleActor || !wasFailing {
+			c.Store.AddEvent(context.WithoutCancel(ctx), "volume", app, v.Node, "backing up volume %s failed: %v", name, err)
+		}
 	} else {
 		run.SizeBytes, run.Blocks, run.NewBlocks, run.NewBytes = res.Size, res.Blocks, res.NewBlocks, res.NewBytes
-		c.Store.AddEvent(ctx, "volume", app, v.Node, "%s backed up volume %s as %s (%s new)", actor, name, res.Name, humanBytes(res.NewBytes))
+		switch {
+		case actor != ScheduleActor:
+			c.Store.AddEvent(ctx, "volume", app, v.Node, "%s backed up volume %s as %s (%s new)", actor, name, res.Name, humanBytes(res.NewBytes))
+		case wasFailing:
+			c.Store.AddEvent(ctx, "volume", app, v.Node, "backing up volume %s works again", name)
+		}
 	}
 	if ferr := c.Store.FinishBackupRun(context.WithoutCancel(ctx), run); ferr != nil && err == nil {
 		err = ferr
 	}
+	if err == nil {
+		c.retain(context.WithoutCancel(ctx), v, set, dest, key, keep, res, log)
+	}
 	return res, err
+}
+
+// CollectEvery is how often a volume's unused blocks are deleted from its
+// bucket, after a backup. Reading every backup file to find them costs
+// more than pruning, which follows every backup.
+var CollectEvery = 6 * time.Hour
+
+// retain deletes the backups a volume's retention no longer keeps, and now
+// and then the blocks no backup uses. Called with the volume's backup lock
+// held: a backup running at the same time would lose its new blocks.
+func (c *Controller) retain(ctx context.Context, v *store.Volume, set *store.VolumeBackup, dest *types.BackupDestination, key, keep string,
+	res *types.BackupResult, log func(string)) {
+	warn := func(err error) {
+		log("Warning: " + err.Error())
+		c.Log.Warn("backup retention", "app", v.App, "volume", v.Name, "err", err)
+	}
+	st, err := backup.Open(*dest)
+	if err != nil {
+		warn(err)
+		return
+	}
+	r := backup.Retention{Recent: set.KeepRecent, Daily: set.KeepDaily}
+	if keep != "" {
+		r.Also = []string{keep}
+	}
+	deleted, left, err := backup.Prune(ctx, st, set.Path, r, time.Now())
+	if err != nil {
+		warn(fmt.Errorf("removing old backups: %w", err))
+		return
+	}
+	if len(deleted) > 0 {
+		log(fmt.Sprintf("Removed %d old backups; %d kept", len(deleted), left))
+	}
+	c.Store.AddBackupUsage(ctx, v.ID, res.NewBytes, left)
+	if time.Since(set.CollectedAt) < CollectEvery {
+		return
+	}
+	var k *backup.Key
+	if key != "" {
+		if k, err = backup.ParseKey(key); err != nil {
+			warn(err)
+			return
+		}
+	}
+	u, n, freed, err := backup.Collect(ctx, st, k, set.Path)
+	if err != nil {
+		warn(fmt.Errorf("deleting unused blocks: %w", err))
+		return
+	}
+	if n > 0 {
+		log(fmt.Sprintf("Deleted %d blocks no backup uses, %s", n, humanBytes(freed)))
+	}
+	c.Store.SetBackupUsage(ctx, v.ID, u.Bytes, u.Backups)
 }
 
 // runBackup asks a node to run a backup job and follows its progress.
@@ -229,15 +297,13 @@ func (c *Controller) ListBackups(ctx context.Context, app, name string) (*types.
 	if err != nil {
 		return nil, err
 	}
-	out := &types.VolumeBackups{App: app, Volume: name, Destination: set.Destination, Path: set.Path, Backups: []types.BackupInfo{}}
 	runs, err := c.Store.BackupRuns(ctx, v.ID, 1000)
 	if err != nil {
 		return nil, err
 	}
-	if len(runs) > 0 {
-		r := runs[0]
-		out.Last = &types.BackupRun{Name: r.Name, Status: r.Status, Error: r.Error, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt}
-	}
+	status := BackupStatus(*set, runs)
+	out := &status
+	out.Backups = []types.BackupInfo{}
 	made := map[string]store.BackupRun{}
 	for _, r := range runs {
 		if r.Status == types.StatusSucceeded {

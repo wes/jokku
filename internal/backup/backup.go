@@ -139,13 +139,13 @@ func checkKey(info *Info, key *Key, p string) error {
 
 // List returns the names of the backups in a path, oldest first.
 func List(ctx context.Context, st Store, p string) ([]string, error) {
-	keys, err := st.List(ctx, prefix(p)+backupsDir)
+	objs, err := st.List(ctx, prefix(p)+backupsDir)
 	if err != nil {
 		return nil, err
 	}
 	var names []string
-	for _, k := range keys {
-		if name, ok := strings.CutSuffix(strings.TrimPrefix(k, prefix(p)+backupsDir), backupExt); ok && !strings.Contains(name, "/") {
+	for _, o := range objs {
+		if name, ok := strings.CutSuffix(strings.TrimPrefix(o.Key, prefix(p)+backupsDir), backupExt); ok && !strings.Contains(name, "/") {
 			names = append(names, name)
 		}
 	}

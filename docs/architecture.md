@@ -465,7 +465,8 @@ everything. Process types start in dependency order (a compose file's
   updates don't shuffle anything) its instances are started on other nodes.
   When it comes back, its desired state no longer includes them and it stops
   them. Instances with volumes on it stay put and wait for it: their data is
-  there (an event says so).
+  there (an event says so). Volumes that are backed up are restored onto
+  another node after five minutes instead (see [Backups](#backups)).
 - **Requests while a node dies:** the proxy gives up on an unreachable
   instance after 2s and retries the request on another for up to 5s, and
   passive health checks skip the dead one. Requests already in flight to a
@@ -586,10 +587,68 @@ from the owner, and the current data is backed up first unless
   committed like a move, and they start. The old node's disk is kept when it
   comes back, and its instance is stopped.
 
-Next: schedules and retention (with deleting blocks no backup uses), and
-restoring onto another node automatically when a node dies, with nodes
-stopping their volume apps when cut off from the cluster so two copies
-never write at once.
+**Schedules** run on the control node: every few seconds its loop starts
+the backups that are due (every 15 minutes by default), at most two at a
+time, since each reads a whole disk. A failed one is tried again after five
+minutes, or its schedule if sooner; a volume whose node is down, or that is
+moving or being restored, is waited for. Scheduled backups make an event
+only when they start failing or work again.
+
+**Retention** follows every backup: it deletes the backup files no longer
+kept (every backup from the last `--keep-recent`, the last one of each of
+the last `--keep-daily` days in UTC, and always the newest). Every six hours,
+also after a backup, it reads the kept backup files and deletes the blocks
+none of them uses, counting what is left. Both run under the volume's backup
+lock: a backup running meanwhile would have new blocks no backup file names
+yet.
+
+**Automatic restore.** Once a volume's node has been silent for five
+minutes (or was removed), a volume with `--auto-restore on` (the default)
+and at least one backup is restored onto another node from its latest
+backup, as `backups:restore --node` would, and the instances using it start
+there. Writes after that backup are lost, unless the node comes back: it
+then renames its disk `<id>.ext4.stale` and keeps it, never used again
+(`storage:report` shows it; `storage:discard-old-copy` deletes it).
+
+**Fencing** keeps a node that is only cut off, not dead, from running its
+copy of the app alongside the restored one:
+- An agent has heard from the control node when it has applied its latest
+  state (long polls return at least every 25 seconds). After two minutes
+  without, it asks the other nodes' agents (`GET /v1/contact`, on the mesh)
+  how long since they heard.
+- It keeps running instances with auto-restored volumes only if none of the
+  nodes it reaches hears from the control node and, with them, it is a
+  strict majority of the cluster: then the control node is down, or cut off
+  from most nodes. Otherwise it stops them. Until it has heard or asked
+  (just after starting, say), it doesn't start them.
+- The control node restores only while it sees at least half of the nodes,
+  itself included. So when it is cut off from most of the cluster, it
+  restores nothing, and the rest carry on; in a two-node cluster it breaks
+  the tie, and the worker stops its apps whenever it can't reach it.
+- When a fenced node is back in touch, it applies the latest state before
+  starting anything, so it never restarts an app that has moved.
+
+A volume whose disk is **missing** on a node that is up is restored there
+from its latest backup the same way, in place.
+
+**The cluster's own backups** run on the control node, hourly by default and
+on as soon as a destination exists, under `jokku/cluster` in its bucket:
+- `state/`: a consistent snapshot of the database (`VACUUM INTO`) and the
+  control node's identity (`tls/control.{key,crt}`, `wireguard.key`, its
+  tokens), as one tar, backed up block by block like a disk.
+- `artifacts/`: the root filesystem of each app's three latest releases, one
+  backup per image named by its digest, sharing blocks. Each is uploaded
+  once; images no longer kept are deleted when blocks are collected, so an
+  old state backup may name releases whose images are gone (those apps are
+  deployed again).
+
+`jokku restore-cluster`, run as root on a new server, downloads a state
+backup, checks it is this server's (the control node's name) and that the
+server holds no cluster yet, downloads the release images, then stops
+jokku, keeps the server's own state aside, puts the backup's in place and
+starts jokku again. Workers reconnect if the server has the old address;
+volumes on the control node are found missing and restored, and those on
+nodes that are gone are restored elsewhere once the nodes are removed.
 
 ## Compose apps
 
@@ -792,6 +851,6 @@ stays the stable entry point, including for versions that predate the command.
   `builder:image` and `registry:login` (*done*), `git:from-archive`.
 - **M4 – depth.** The Firecracker `jailer`, `run`, `enter` via vsock (*done*, with
   `storage:export`/`storage:import`), volumes (local disks that move with their instance:
-  *done*; object storage next), backups to S3 (*manual backups and restores done*;
-  schedules and automatic restores next), `releases:rollback`, app.json health checks,
+  *done*; object storage next), backups to S3 (*done*: schedules, restores, and automatic restores with
+  fencing), `releases:rollback`, app.json health checks,
   log drains, services.

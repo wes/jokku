@@ -304,4 +304,48 @@ CREATE INDEX backup_runs_volume ON backup_runs (volume_id, id);
 ALTER TABLE volumes ADD COLUMN restore TEXT NOT NULL DEFAULT '';
 ALTER TABLE volumes ADD COLUMN restore_result TEXT NOT NULL DEFAULT '';
 `,
+
+	// 9: scheduled backups (every_s 0 is manual only) and retention, what a
+	// volume's backups take up in the bucket, restoring automatically when
+	// a volume's node is down, and the old copy of a disk a node keeps
+	// after its volume was restored elsewhere
+	`
+ALTER TABLE volume_backups ADD COLUMN every_s INTEGER NOT NULL DEFAULT 900;
+ALTER TABLE volume_backups ADD COLUMN keep_recent_s INTEGER NOT NULL DEFAULT 86400;
+ALTER TABLE volume_backups ADD COLUMN keep_daily INTEGER NOT NULL DEFAULT 30;
+ALTER TABLE volume_backups ADD COLUMN stored_bytes INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE volume_backups ADD COLUMN stored_backups INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE volume_backups ADD COLUMN collected_at INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE volume_backups ADD COLUMN auto_restore INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE volumes ADD COLUMN stale_node TEXT NOT NULL DEFAULT '';
+ALTER TABLE volumes ADD COLUMN discard_stale INTEGER NOT NULL DEFAULT 0;
+
+-- Backups of the control node itself: its database and identity, and the
+-- root filesystems of recent releases.
+CREATE TABLE cluster_backup (
+	id             INTEGER PRIMARY KEY CHECK (id = 1),
+	destination    TEXT    NOT NULL REFERENCES backup_destinations (name),
+	path           TEXT    NOT NULL,
+	every_s        INTEGER NOT NULL DEFAULT 3600,
+	keep_recent_s  INTEGER NOT NULL DEFAULT 86400,
+	keep_daily     INTEGER NOT NULL DEFAULT 30,
+	stored_bytes   INTEGER NOT NULL DEFAULT 0,
+	stored_backups INTEGER NOT NULL DEFAULT 0,
+	collected_at   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE cluster_backup_runs (
+	id          INTEGER PRIMARY KEY,
+	name        TEXT    NOT NULL,
+	status      TEXT    NOT NULL,
+	error       TEXT    NOT NULL DEFAULT '',
+	size_bytes  INTEGER NOT NULL DEFAULT 0,
+	blocks      INTEGER NOT NULL DEFAULT 0,
+	new_blocks  INTEGER NOT NULL DEFAULT 0,
+	new_bytes   INTEGER NOT NULL DEFAULT 0,
+	actor       TEXT    NOT NULL DEFAULT '',
+	started_at  INTEGER NOT NULL,
+	finished_at INTEGER
+);
+`,
 }

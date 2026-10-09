@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/wes/jokku/internal/backup"
+	"github.com/wes/jokku/internal/cluster"
 	"github.com/wes/jokku/internal/store"
 	"github.com/wes/jokku/internal/types"
 )
@@ -75,6 +77,14 @@ func (s *Server) createBackupDestination(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.Store.AddEvent(ctx, "backups", "", "", "%s added backup destination %s (bucket %s at %s)", actor(r), d.Name, d.Bucket, d.Endpoint)
+	if _, err := s.Store.ClusterBackup(ctx); errors.Is(err, store.ErrNotFound) {
+		// Nothing backs the cluster itself up yet: now this does.
+		set := store.VolumeBackup{Destination: d.Name, Path: cluster.DefaultClusterBackupPath, Every: store.DefaultClusterBackupEvery,
+			KeepRecent: store.DefaultKeepRecent, KeepDaily: store.DefaultKeepDaily}
+		if err := s.Store.SetClusterBackup(ctx, set); err == nil {
+			d.BacksUpCluster = true
+		}
+	}
 	d.SecretAccessKey = ""
 	writeJSON(w, http.StatusCreated, d)
 }
@@ -93,6 +103,10 @@ func (s *Server) deleteBackupDestination(w http.ResponseWriter, r *http.Request)
 			vols = append(vols, b.App+" "+b.Volume)
 		}
 		s.fail(w, r, httpErrorf(http.StatusConflict, "volumes are backed up to %s: %s; stop that first with jokku backups:unset <app> <volume>", name, strings.Join(vols, ", ")))
+		return
+	}
+	if set, err := s.Store.ClusterBackup(ctx); err == nil && set.Destination == name {
+		s.fail(w, r, httpErrorf(http.StatusConflict, "the cluster is backed up to %s; back it up elsewhere first (jokku backups:cluster <destination>), or stop with jokku backups:cluster-unset", name))
 		return
 	}
 	if err := s.Store.DeleteBackupDestination(ctx, name); err != nil {
@@ -171,20 +185,46 @@ func (s *Server) setVolumeBackup(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if req.Path == "" {
-		req.Path = "jokku/" + app + "/" + name
-	}
-	req.Path = strings.Trim(req.Path, "/")
-	if err := backup.CheckPath(req.Path); err != nil {
-		s.fail(w, r, badRequest("%v", err))
-		return
-	}
-	if err := s.Store.SetVolumeBackup(ctx, store.VolumeBackup{VolumeID: v.ID, Destination: req.Destination, Path: req.Path}); err != nil {
+	set := store.VolumeBackup{VolumeID: v.ID, Every: store.DefaultBackupEvery, KeepRecent: store.DefaultKeepRecent, KeepDaily: store.DefaultKeepDaily,
+		AutoRestore: true}
+	if cur, err := s.Store.VolumeBackupFor(ctx, v.ID); err == nil {
+		set = *cur
+	} else if !errors.Is(err, store.ErrNotFound) {
 		s.fail(w, r, err)
 		return
 	}
-	s.Store.AddEvent(ctx, "volume", app, "", "%s set volume %s to back up to %s %s", actor(r), name, req.Destination, req.Path)
-	writeJSON(w, http.StatusOK, types.VolumeBackups{App: app, Volume: name, Destination: req.Destination, Path: req.Path})
+	if err := applyBackupRequest(&set, req, "jokku/"+app+"/"+name); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := s.Store.SetVolumeBackup(ctx, set); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.Store.AddEvent(ctx, "volume", app, "", "%s set volume %s to back up to %s %s", actor(r), name, set.Destination, set.Path)
+	set.App, set.Volume = app, name
+	runs, _ := s.Store.BackupRuns(ctx, v.ID, 100)
+	writeJSON(w, http.StatusOK, cluster.BackupStatus(set, runs))
+}
+
+// parseDays reads a duration that may be in days (7d), or "off" for none.
+func parseDays(s string) (time.Duration, error) {
+	switch s {
+	case "off", "never", "0":
+		return 0, nil
+	}
+	if n, ok := strings.CutSuffix(s, "d"); ok {
+		days, err := strconv.Atoi(n)
+		if err != nil || days < 0 {
+			return 0, fmt.Errorf("%q is not a duration, like 15m, 6h or 7d", s)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("%q is not a duration, like 15m, 6h or 7d", s)
+	}
+	return d, nil
 }
 
 func (s *Server) unsetVolumeBackup(w http.ResponseWriter, r *http.Request) {
@@ -229,24 +269,26 @@ func (s *Server) backupReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := []types.VolumeBackups{}
+	if set, err := s.Store.ClusterBackup(ctx); err == nil && app == "" {
+		runs, err := s.Store.ClusterBackupRuns(ctx, 100)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		status := cluster.BackupStatus(*set, runs)
+		status.Cluster = true
+		out = append(out, status)
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.fail(w, r, err)
+		return
+	}
 	for _, b := range sets {
-		vb := types.VolumeBackups{App: b.App, Volume: b.Volume, Destination: b.Destination, Path: b.Path}
 		runs, err := s.Store.BackupRuns(ctx, b.VolumeID, 100)
 		if err != nil {
 			s.fail(w, r, err)
 			return
 		}
-		for i, run := range runs {
-			info := &types.BackupRun{Name: run.Name, Status: run.Status, Error: run.Error, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt}
-			if i == 0 {
-				vb.Last = info
-			}
-			if run.Status == types.StatusSucceeded {
-				vb.Succeeded = info
-				break
-			}
-		}
-		out = append(out, vb)
+		out = append(out, cluster.BackupStatus(b, runs))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -256,12 +298,12 @@ func (s *Server) runVolumeBackup(w http.ResponseWriter, r *http.Request) {
 	app, name := r.PathValue("app"), r.PathValue("name")
 	st := newStream(w)
 	st.Log(fmt.Sprintf("-----> Backing up volume %s of %s", name, app))
-	_, err := s.backUp(context.WithoutCancel(r.Context()), app, name, actor(r), st)
+	_, err := s.backUp(context.WithoutCancel(r.Context()), app, name, actor(r), "", st)
 	st.Done(err)
 }
 
-func (s *Server) backUp(ctx context.Context, app, name, who string, st *stream) (*types.BackupResult, error) {
-	res, err := s.Cluster.BackupVolume(ctx, app, name, who, func(line string) { st.Log("       " + line) })
+func (s *Server) backUp(ctx context.Context, app, name, who, keep string, st *stream) (*types.BackupResult, error) {
+	res, err := s.Cluster.BackupVolume(ctx, app, name, who, keep, func(line string) { st.Log("       " + line) })
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +346,7 @@ func (s *Server) restoreVolume(w http.ResponseWriter, r *http.Request) {
 		node, err := s.Store.Node(ctx, v.Node)
 		if err == nil && node.Ready(time.Now()) {
 			st.Log("-----> Backing up the current data first, so this restore can be undone")
-			if _, err := s.backUp(bctx, app, name, actor(r), st); err != nil {
+			if _, err := s.backUp(bctx, app, name, actor(r), req.Backup, st); err != nil {
 				st.Done(fmt.Errorf("%w (to restore without backing up first, pass --skip-backup)", err))
 				return
 			}
@@ -361,4 +403,213 @@ func clusterErr(err error) error {
 		return err
 	}
 	return httpErrorf(http.StatusConflict, "%v", err)
+}
+
+// discardOldCopy deletes the copy of a volume's disk that a node kept after
+// the volume was restored elsewhere while it was down.
+func (s *Server) discardOldCopy(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	app, name := r.PathValue("app"), r.PathValue("name")
+	v, err := s.Store.Volume(ctx, app, name)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := s.Store.DiscardStaleCopy(ctx, v.ID); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.Store.AddEvent(ctx, "volume", app, v.StaleNode, "%s discarded the old copy of volume %s on %s", actor(r), name, v.StaleNode)
+	s.Cluster.Changed()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// applyBackupRequest changes a volume's (or the cluster's) backup settings
+// as asked, leaving alone what the request doesn't say.
+func applyBackupRequest(set *store.VolumeBackup, req types.SetVolumeBackupRequest, defaultPath string) error {
+	set.Destination = req.Destination
+	if req.Path != "" || set.Path == "" {
+		set.Path = req.Path
+	}
+	if set.Path == "" {
+		set.Path = defaultPath
+	}
+	set.Path = strings.Trim(set.Path, "/")
+	if err := backup.CheckPath(set.Path); err != nil {
+		return badRequest("%v", err)
+	}
+	if req.Every != "" {
+		every, err := parseDays(req.Every)
+		switch {
+		case err != nil:
+			return badRequest("--every: %v", err)
+		case every > 0 && every < 5*time.Minute:
+			return badRequest("--every: back up at most every 5 minutes")
+		}
+		set.Every = every
+	}
+	if req.KeepRecent != "" {
+		recent, err := parseDays(req.KeepRecent)
+		if err != nil {
+			return badRequest("--keep-recent: %v", err)
+		}
+		set.KeepRecent = recent
+	}
+	switch req.AutoRestore {
+	case "":
+	case "on":
+		set.AutoRestore = true
+	case "off":
+		set.AutoRestore = false
+	default:
+		return badRequest("--auto-restore is on or off")
+	}
+	if req.KeepDaily != nil {
+		if *req.KeepDaily < 0 {
+			return badRequest("--keep-daily: a number of days")
+		}
+		set.KeepDaily = *req.KeepDaily
+	}
+	return nil
+}
+
+// The cluster's own backups
+
+func (s *Server) setClusterBackup(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var req types.SetVolumeBackupRequest
+	if err := decode(r, &req); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if req.AutoRestore != "" {
+		s.fail(w, r, badRequest("--auto-restore is for volumes; a lost control node is restored with jokku restore-cluster"))
+		return
+	}
+	if _, err := s.Store.BackupDestination(ctx, req.Destination); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	set := store.VolumeBackup{Every: store.DefaultClusterBackupEvery, KeepRecent: store.DefaultKeepRecent, KeepDaily: store.DefaultKeepDaily}
+	if cur, err := s.Store.ClusterBackup(ctx); err == nil {
+		set = *cur
+	} else if !errors.Is(err, store.ErrNotFound) {
+		s.fail(w, r, err)
+		return
+	}
+	if err := applyBackupRequest(&set, req, cluster.DefaultClusterBackupPath); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := s.Store.SetClusterBackup(ctx, set); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.Store.AddEvent(ctx, "backups", "", "", "%s set the cluster to back up to %s %s", actor(r), set.Destination, set.Path)
+	runs, _ := s.Store.ClusterBackupRuns(ctx, 100)
+	status := cluster.BackupStatus(set, runs)
+	status.Cluster = true
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) unsetClusterBackup(w http.ResponseWriter, r *http.Request) {
+	if err := s.Store.DeleteClusterBackup(r.Context()); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.Store.AddEvent(r.Context(), "backups", "", "", "%s stopped backing up the cluster; its backups stay in the bucket", actor(r))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listClusterBackups(w http.ResponseWriter, r *http.Request) {
+	out, err := s.Cluster.ListClusterBackups(r.Context())
+	if err != nil {
+		s.fail(w, r, clusterErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) runClusterBackup(w http.ResponseWriter, r *http.Request) {
+	st := newStream(w)
+	st.Log("-----> Backing up the cluster: the control node's database and identity, and recent releases")
+	res, err := s.Cluster.BackupCluster(context.WithoutCancel(r.Context()), actor(r), func(line string) { st.Log("       " + line) })
+	if err == nil {
+		st.Log(fmt.Sprintf("=====> Backed up as %s; %s uploaded", res.Name, humanBytes(res.NewBytes)))
+	}
+	st.Done(err)
+}
+
+// recentPoints is how many backups jokku top charts per volume.
+const recentPoints = 24
+
+// backupsOverview gathers everything about backups for jokku top.
+func (s *Server) backupsOverview(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	out := types.BackupsOverview{Volumes: []types.VolumeProtection{}}
+	var err error
+	if out.Destinations, err = s.Store.BackupDestinations(ctx); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	for i := range out.Destinations {
+		out.Destinations[i].SecretAccessKey = ""
+	}
+	if key, saved, err := s.Store.BackupKey(ctx); err == nil {
+		if k, err := backup.ParseKey(key); err == nil {
+			out.Key = &types.BackupKeyStatus{ID: k.ID(), Saved: saved}
+		}
+	}
+	if set, err := s.Store.ClusterBackup(ctx); err == nil {
+		runs, err := s.Store.ClusterBackupRuns(ctx, recentPoints)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		status := cluster.BackupStatus(*set, runs)
+		status.Cluster = true
+		out.Cluster, out.ClusterRecent = &status, points(runs)
+	}
+	sets, err := s.Store.VolumeBackups(ctx, "", "")
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	byVolume := map[string]store.VolumeBackup{}
+	for _, b := range sets {
+		byVolume[b.VolumeID] = b
+	}
+	vols, err := s.Store.Volumes(ctx, "")
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	for _, v := range vols {
+		if v.App == "" || v.State == store.VolumeDestroying {
+			continue
+		}
+		info := s.volumeInfo(v)
+		p := types.VolumeProtection{App: v.App, Volume: v.Name, Node: v.Node, SizeMB: v.SizeMB, UsedMB: v.UsedMB,
+			Status: info.Status, Mounts: v.Mounts, OldCopy: info.OldCopy}
+		if b, ok := byVolume[v.ID]; ok {
+			runs, err := s.Store.BackupRuns(ctx, v.ID, recentPoints)
+			if err != nil {
+				s.fail(w, r, err)
+				return
+			}
+			status := cluster.BackupStatus(b, runs)
+			p.Backups, p.Recent = &status, points(runs)
+		}
+		out.Volumes = append(out.Volumes, p)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// points turns backup runs (newest first) into chart points, oldest first.
+func points(runs []store.BackupRun) []types.BackupPoint {
+	out := make([]types.BackupPoint, 0, len(runs))
+	for i := len(runs) - 1; i >= 0; i-- {
+		out = append(out, types.BackupPoint{At: runs[i].StartedAt, Status: runs[i].Status, NewBytes: runs[i].NewBytes})
+	}
+	return out
 }

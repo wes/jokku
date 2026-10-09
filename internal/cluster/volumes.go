@@ -38,6 +38,10 @@ func (c *Controller) volumeSpecs(ctx context.Context, node string, nodes []store
 	if err != nil {
 		return nil, err
 	}
+	auto, err := c.Store.AutoRestoreVolumes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	byName := map[string]store.Node{}
 	for _, n := range nodes {
 		byName[n.Name] = n
@@ -47,8 +51,12 @@ func (c *Controller) volumeSpecs(ctx context.Context, node string, nodes []store
 		if v.Type != types.VolumeLocal {
 			continue
 		}
-		spec := types.VolumeSpec{ID: v.ID, App: v.App, Name: v.Name, SizeMB: v.SizeMB}
+		spec := types.VolumeSpec{ID: v.ID, App: v.App, Name: v.Name, SizeMB: v.SizeMB, AutoRestore: auto[v.ID]}
 		switch {
+		case v.StaleNode == node && v.Node != node && (v.DiscardStale || v.State == store.VolumeDestroying):
+			spec.Role = types.VolumeDiscard
+		case v.StaleNode == node && v.Node != node:
+			spec.Role = types.VolumeStale
 		case v.State == store.VolumeDestroying:
 			if v.Node != node {
 				continue
@@ -102,11 +110,23 @@ func (c *Controller) tickVolumes(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	auto, err := c.Store.AutoRestoreVolumes(ctx)
+	if err != nil {
+		return false, err
+	}
 	now := time.Now()
 	byName := map[string]store.Node{}
+	ready := 0
 	for _, n := range nodes {
 		byName[n.Name] = n
+		if n.Ready(now) {
+			ready++
+		}
 	}
+	// Restoring a volume elsewhere needs at least half of the nodes in
+	// view: a control node cut off from most of the cluster can't tell its
+	// nodes are down, and they keep running (see agent/fence.go).
+	quorum := ready*2 >= len(nodes)
 	byID := map[string]store.Instance{}
 	for _, in := range insts {
 		byID[in.ID] = in
@@ -115,9 +135,16 @@ func (c *Controller) tickVolumes(ctx context.Context) (bool, error) {
 	changed := false
 	for _, v := range vols {
 		src, srcOK := byName[v.Node]
+		if _, ok := byName[v.StaleNode]; v.StaleNode != "" && !ok {
+			// The node keeping the old copy was removed, and the copy with it.
+			if err := c.Store.ForgetStaleCopy(ctx, v.ID); err != nil {
+				return changed, err
+			}
+		}
 		switch {
 		case v.State == store.VolumeDestroying:
-			if !srcOK {
+			_, staleOK := byName[v.StaleNode]
+			if !srcOK && (v.StaleNode == "" || !staleOK) {
 				if err := c.Store.DeleteVolume(ctx, v.ID); err != nil {
 					return changed, err
 				}
@@ -130,6 +157,16 @@ func (c *Controller) tickVolumes(ctx context.Context) (bool, error) {
 				return changed, err
 			}
 			changed = changed || ch
+
+		case auto[v.ID] && quorum && v.Node != "" && !v.Moving() && (!srcOK || now.Sub(src.LastSeen) >= FailoverAfter) && wanted(insts, v.ID):
+			why := v.Node + " is down"
+			if !srcOK {
+				why = v.Node + " was removed"
+			}
+			c.autoRestore(v, why)
+
+		case auto[v.ID] && v.Status == types.VolumeMissing && srcOK && src.Ready(now) && !v.Moving() && wanted(insts, v.ID):
+			c.autoRestore(v, "its disk is missing on "+v.Node)
 
 		case v.Moving():
 			dest, destOK := byName[v.MovingTo]
@@ -402,4 +439,14 @@ func (c *Controller) warnPinned(ctx context.Context, in store.Instance, vols []s
 	}
 	c.Store.AddEvent(ctx, "instance", in.App, in.Node, "%s stays on %s (%s): its volume %s is there",
 		in.Name(), in.Node, reason, strings.Join(names, ", "))
+}
+
+// wanted reports whether an instance that should run mounts the volume.
+func wanted(insts []store.Instance, id string) bool {
+	for _, in := range insts {
+		if in.Desired == store.DesiredRunning && usesVolume(in, id) {
+			return true
+		}
+	}
+	return false
 }

@@ -27,9 +27,15 @@ type Store interface {
 	Put(ctx context.Context, key string, data []byte) error
 	// Get returns ErrNotFound for a key that isn't there.
 	Get(ctx context.Context, key string) ([]byte, error)
-	// List returns the keys under prefix, sorted.
-	List(ctx context.Context, prefix string) ([]string, error)
+	// List returns the objects under prefix, sorted by key.
+	List(ctx context.Context, prefix string) ([]Object, error)
 	Delete(ctx context.Context, key string) error
+}
+
+// Object is a listed object.
+type Object struct {
+	Key  string
+	Size int64
 }
 
 // ErrNotFound is a key the store doesn't have.
@@ -101,16 +107,16 @@ func (s *s3Store) Get(ctx context.Context, key string) ([]byte, error) {
 	return b, s3Err(err)
 }
 
-func (s *s3Store) List(ctx context.Context, prefix string) ([]string, error) {
-	var keys []string
+func (s *s3Store) List(ctx context.Context, prefix string) ([]Object, error) {
+	var objs []Object
 	for obj := range s.c.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true}) {
 		if obj.Err != nil {
 			return nil, obj.Err
 		}
-		keys = append(keys, obj.Key)
+		objs = append(objs, Object{Key: obj.Key, Size: obj.Size})
 	}
-	sort.Strings(keys)
-	return keys, nil
+	sort.Slice(objs, func(i, j int) bool { return objs[i].Key < objs[j].Key })
+	return objs, nil
 }
 
 func (s *s3Store) Delete(ctx context.Context, key string) error {
@@ -154,23 +160,27 @@ func (d Dir) Get(_ context.Context, key string) ([]byte, error) {
 	return b, err
 }
 
-func (d Dir) List(_ context.Context, prefix string) ([]string, error) {
-	var keys []string
+func (d Dir) List(_ context.Context, prefix string) ([]Object, error) {
+	var objs []Object
 	err := filepath.WalkDir(string(d), func(p string, e fs.DirEntry, err error) error {
 		if err != nil || e.IsDir() || strings.HasSuffix(p, ".tmp") {
 			return err
 		}
 		rel, err := filepath.Rel(string(d), p)
 		if key := filepath.ToSlash(rel); err == nil && strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
+			info, err := e.Info()
+			if err != nil {
+				return err
+			}
+			objs = append(objs, Object{Key: key, Size: info.Size()})
 		}
 		return err
 	})
 	if errors.Is(err, fs.ErrNotExist) {
 		err = nil
 	}
-	sort.Strings(keys)
-	return keys, err
+	sort.Slice(objs, func(i, j int) bool { return objs[i].Key < objs[j].Key })
+	return objs, err
 }
 
 func (d Dir) Delete(_ context.Context, key string) error {

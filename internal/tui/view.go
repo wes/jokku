@@ -39,6 +39,8 @@ func (m *model) View() string {
 			body = m.eventList(m.height - 6)
 		case trafficView:
 			body = m.trafficView()
+		case backupsView:
+			body = m.backupsView()
 		case logsView:
 			body = m.logView()
 		}
@@ -97,9 +99,15 @@ func (m *model) tabs() string {
 }
 
 func (m *model) footer() string {
-	keys := "1-6/tab views  ↑↓ move  enter drill in  l logs  esc back  r refresh  ? help  q quit"
-	if m.view == trafficView {
-		keys = "1-6/tab views  p pause  c clear  ? help  q quit"
+	keys := "1-7/tab views  ↑↓ move  enter drill in  l logs  esc back  r refresh  ? help  q quit"
+	switch m.view {
+	case trafficView:
+		keys = "1-7/tab views  p pause  c clear  ? help  q quit"
+	case backupsView:
+		keys = "space on/off  b back up now  s schedule  a auto-restore  ↑↓ move  1-7 views  ? help  q quit"
+		if m.width < 100 {
+			keys = "space on/off  b back up  s schedule  a auto-restore  ? help  q quit"
+		}
 	}
 	if m.filterApp != "" || m.filterNode != "" {
 		keys = "filtered: " + m.filterApp + m.filterNode + " (esc clears)  ·  " + keys
@@ -116,6 +124,10 @@ const helpText = `jokku top shows the cluster live, refreshed every two seconds.
   5 Events      deploys, crashes, nodes coming and going
   6 Traffic     every request live: dots fly across each app's lane, colored
                 by status, and land on the instance and node that answered
+  7 Backups     what is backed up and what isn't: every volume and the cluster
+                itself, their last and next backups, and what they keep. space
+                turns backups on or off, b backs up now, s changes how often,
+                a turns automatic restore on or off
 
   enter on a node or app shows its instances; l shows an app's logs;
   esc goes back. Press any key to close this help.`
@@ -138,6 +150,9 @@ func (m *model) overview() string {
 	for i, a := range m.st.Apps {
 		line := fmt.Sprintf("  %s %-20s %s v%-4d %s", appDot(a), trunc(a.Name, 20), pad(dots(a.Healthy, a.Wanted), 12), a.Release, deploySummary(a.Deploy))
 		b.WriteString(m.selectable(overview, i, line) + "\n")
+	}
+	if line := m.backupsLine(); line != "" {
+		b.WriteString(sSection.Render("Backups") + "\n" + line)
 	}
 	b.WriteString(sSection.Render("Recent events") + "\n")
 	b.WriteString(m.eventList(8))

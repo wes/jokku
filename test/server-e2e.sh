@@ -278,7 +278,8 @@ else
   out=$(printf 'ci-secret-key\n' | jssh backups:destination-add ci --endpoint http://127.0.0.1:9000 --bucket jokku --access-key-id jokkuci --force 2>&1) ||
     fail "backups:destination-add failed: $out $(cat "$s3.log")"
   grep -q "jbk1_" <<<"$out" || fail "the backup key was not shown: $out"
-  jssh backups:set keep data ci
+  # Manual backups only, so a scheduled one doesn't start in the middle.
+  jssh backups:set keep data ci --every off
   jssh "enter keep web sh -c 'echo backed-up >/data/boots'"
   out=$(jssh backups:run keep data 2>&1) || fail "backups:run failed: $out"
   printf '%s\n' "$out"
@@ -299,6 +300,30 @@ else
   # Two backups: the one restored, and the one of the data it replaced.
   [ "$(jssh backups:list keep data | grep -c '^20')" -eq 2 ] || fail "backups:list: $(jssh backups:list keep data)"
   [[ "$(jssh backups:report keep --backups-last)" == 20* ]] || fail "backups:report: $(jssh backups:report keep)"
+
+  step "the control node backs itself up, and is rebuilt from it"
+  key=$(grep -o 'jbk1_[A-Za-z0-9_-]*' <<<"$(jssh backups:key)" | head -n 1)
+  [ -n "$key" ] || fail "backups:key showed no key"
+  # Adding the destination turned on cluster backups, and the first may be
+  # running already.
+  for _ in $(seq 1 30); do
+    out=$(jssh backups:cluster-run 2>&1) && break
+    grep -q "already running" <<<"$out" || fail "backups:cluster-run failed: $out"
+    sleep 1
+  done
+  compgen -G "$s3/jokku/jokku/cluster/state/backups/*.backup" >/dev/null || fail "no cluster backup in the bucket: $(find "$s3/jokku/jokku/cluster" -maxdepth 3)"
+  compgen -G "$s3/jokku/jokku/cluster/artifacts/backups/*.backup" >/dev/null || fail "no release in the cluster backup"
+  out=$(printf 'ci-secret-key\n%s\n' "$key" | sudo jokku restore-cluster --endpoint http://127.0.0.1:9000 --bucket jokku \
+    --access-key-id jokkuci --force 2>&1) || fail "restore-cluster failed: $out"
+  printf '%s\n' "$out"
+  for _ in $(seq 1 30); do jssh apps:list >/dev/null 2>&1 && break; sleep 1; done
+  jssh apps:list | grep -qx keep || fail "the restored cluster lacks keep: $(jssh apps:list 2>&1)"
+  serving=""
+  for _ in $(seq 1 30); do
+    b=$(kget boots 2>/dev/null) && [ "$(head -n 1 <<<"$b")" = backed-up ] && serving=yes && break
+    sleep 1
+  done
+  [ -n "$serving" ] || fail "keep is not serving its data after the cluster was restored: $(kget boots 2>&1)"
   kill "$s3pid"
 fi
 jssh apps:destroy keep --force

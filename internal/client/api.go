@@ -507,3 +507,37 @@ func (c *Client) RestoreVolume(ctx context.Context, app, name string, req types.
 	defer resp.Body.Close()
 	return stream(resp.Body, onEvent)
 }
+
+// DiscardOldCopy deletes the copy of a volume's disk a node kept after the
+// volume was restored elsewhere.
+func (c *Client) DiscardOldCopy(ctx context.Context, app, name string) error {
+	return c.call(ctx, http.MethodDelete, volumePath(app, name, "old-copy"), nil, nil)
+}
+
+// Cluster backups
+
+func (c *Client) SetClusterBackup(ctx context.Context, req types.SetVolumeBackupRequest) (*types.VolumeBackups, error) {
+	var out types.VolumeBackups
+	return &out, c.call(ctx, http.MethodPut, "/v1/backups/cluster", req, &out)
+}
+
+func (c *Client) UnsetClusterBackup(ctx context.Context) error {
+	return c.call(ctx, http.MethodDelete, "/v1/backups/cluster", nil, nil)
+}
+
+// ClusterBackups lists the cluster's own backups, newest first.
+func (c *Client) ClusterBackups(ctx context.Context) (*types.VolumeBackups, error) {
+	var out types.VolumeBackups
+	return &out, c.call(ctx, http.MethodGet, "/v1/backups/cluster", nil, &out)
+}
+
+// RunClusterBackup backs the cluster up now, streaming its progress.
+func (c *Client) RunClusterBackup(ctx context.Context, onEvent func(types.Event)) error {
+	return c.streamCall(ctx, http.MethodPost, "/v1/backups/cluster/run", onEvent)
+}
+
+// BackupsOverview is everything about backups at once, for jokku top.
+func (c *Client) BackupsOverview(ctx context.Context) (*types.BackupsOverview, error) {
+	var out types.BackupsOverview
+	return &out, c.call(ctx, http.MethodGet, "/v1/backups/overview", nil, &out)
+}

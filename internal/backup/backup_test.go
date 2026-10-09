@@ -100,9 +100,10 @@ func TestBackupsAreIncrementalAndRestore(t *testing.T) {
 
 			// Encrypted blocks give nothing away: not their contents, and not
 			// their SHA-256 either.
-			keys, _ := st.List(context.Background(), "jokku/shop/data/blocks/")
+			objs, _ := st.List(context.Background(), "jokku/shop/data/blocks/")
 			plainName := newCodec(nil).name(a)
-			for _, k := range keys {
+			for _, o := range objs {
+				k := o.Key
 				data := must(st.Get(context.Background(), k))
 				if encrypted && (strings.HasSuffix(k, plainName) || bytes.Contains(data, a[:64])) {
 					t.Errorf("%s gives away its contents", k)
@@ -158,10 +159,10 @@ func TestBackupsRefuseWhatTheyCannotRead(t *testing.T) {
 	}
 
 	// A changed block is caught.
-	keys, _ := st.List(ctx, "jokku/shop/data/blocks/")
-	data := must(st.Get(ctx, keys[0]))
+	objs, _ := st.List(ctx, "jokku/shop/data/blocks/")
+	data := must(st.Get(ctx, objs[0].Key))
 	data[len(data)-1] ^= 1
-	st.Put(ctx, keys[0], data)
+	st.Put(ctx, objs[0].Key, data)
 	if _, err := Restore(ctx, st, key, "jokku/shop/data", "2026-10-09T10-00-00Z", dst, nil); err == nil || !strings.Contains(err.Error(), "damaged") {
 		t.Errorf("restore of a changed block: %v", err)
 	}

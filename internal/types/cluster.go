@@ -36,6 +36,17 @@ type Peer struct {
 	Endpoint  string `json:"endpoint"` // host:port
 	Subnet    string `json:"subnet"`
 	MeshIP    string `json:"mesh_ip"`
+	// AgentAddr is its agent API, host:port, where nodes ask each other
+	// whether they still hear from the control node.
+	AgentAddr string `json:"agent_addr,omitempty"`
+}
+
+// Contact is what a node's agent says about its contact with the control
+// node.
+type Contact struct {
+	// HeardAgo is how long since it last heard from the control node; -1 if
+	// it hasn't since it started.
+	HeardAgoSeconds float64 `json:"heard_ago_seconds"`
 }
 
 // InstanceSpec is one microVM this node should hold. Run is false while the
@@ -115,6 +126,10 @@ type VolumeSpec struct {
 	// Restore, with role incoming, or owner when the disk is restored on
 	// its own node, says to make the disk from a backup instead.
 	Restore *RestoreSpec `json:"restore,omitempty"`
+	// AutoRestore says the volume would be restored onto another node if
+	// this one were cut off for long: so this node stops the instances
+	// using it when it is, rather than let two copies of the app write.
+	AutoRestore bool `json:"auto_restore,omitempty"`
 }
 
 // RestoreSpec is a backup to make a volume's disk from.
@@ -149,6 +164,11 @@ const (
 	VolumeIncoming = "incoming" // copy the disk from From
 	VolumePrevious = "previous" // moved away; keep the old copy until the new node has the disk
 	VolumeDestroy  = "destroy"  // delete the disk
+	// VolumeStale: the volume was restored onto another node while this one
+	// was down. Its disk here may hold newer writes, so it is kept aside
+	// (.stale), never used.
+	VolumeStale   = "stale"
+	VolumeDiscard = "discard" // delete the copy kept aside
 )
 
 // VolumeStatus is what a node reports about a volume it holds.
@@ -176,6 +196,8 @@ const (
 	VolumeRestored  = "restored"
 	VolumeFailed    = "failed" // a restore that could not download its backup
 	VolumeDestroyed = "destroyed"
+	VolumeKept      = "kept"      // the old copy is kept aside
+	VolumeDiscarded = "discarded" // the old copy is gone
 )
 
 // FeatureVolumes is reported by agents that can hold volumes. Instances with

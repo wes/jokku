@@ -396,7 +396,7 @@ grep -q kept <<<"$(sql 'SELECT v FROM t;')" || fail "the import didn't bring the
 # Linked, the app gets its URL and finds it by name.
 jssh db:postgres:link shopdb hello >/dev/null || fail "db:postgres:link failed"
 [[ "$(jssh config:get hello DATABASE_URL)" == postgres://postgres:*@postgres-shopdb.internal:5432/shopdb ]] || fail "DATABASE_URL: $(jssh config:get hello DATABASE_URL)"
-jssh enter hello nslookup postgres-shopdb.internal >/dev/null || fail "hello can't resolve postgres-shopdb.internal"
+jssh enter hello web nslookup postgres-shopdb.internal >/dev/null || fail "hello can't resolve postgres-shopdb.internal"
 
 out=$(jssh db:redis:create cache --image "$ecr/redis" --image-version 7-alpine 2>&1) || fail "db:redis:create failed: $out"
 for _ in $(seq 1 30); do res=$(printf 'SET greeting hi\nGET greeting\n' | jssh db:redis:connect cache 2>&1) && grep -qx hi <<<"$res" && break; sleep 1; done

@@ -103,6 +103,9 @@ several namespaces. In Jokku it is one command, `builder:dockerfile`,
 | `storage:create [--size] [--type]`, `storage:resize`, `storage:move <app> <name> <node>`, `storage:destroy [--force]` | ➕ ✅ |
 | `storage:export <app> <name> [--live] > file.tar.gz`, `storage:import <app> <name> [--clear] [--keep-owners] < file.tar.gz` | ➕ ✅ |
 | `storage:ensure-directory` | ✖ volumes are disks, created by `storage:mount` |
+| `backups:destination-add <name> --endpoint --bucket [--region] --access-key-id [--no-encrypt]`, `backups:destinations`, `backups:destination-remove`, `backups:key` | ➕ ✅ S3-compatible buckets; encrypted with a key you keep |
+| `backups:set <app> <volume> <destination> [<path>]`, `backups:unset`, `backups:run`, `backups:list`, `backups:restore <app> <volume> [<backup>] [--node] [--skip-backup]`, `backups:report` | ➕ ✅ incremental, block by block |
+| Scheduled backups, and restoring onto another node automatically when one dies | ➕ 🔜 next |
 | Object-storage volumes (`--type s3`), shared by many instances | 🔜 later |
 | `postgres:*`, `redis:*`, ... | 🔜 later, as apps plus volumes plus `*:link` |
 | `plugin:*` | ✖ |

@@ -1,7 +1,9 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -421,4 +423,87 @@ func (c *Client) SetRegistryLogin(ctx context.Context, server, username, passwor
 
 func (c *Client) DeleteRegistryLogin(ctx context.Context, server string) error {
 	return c.call(ctx, http.MethodDelete, "/v1/registries/"+url.PathEscape(server), nil, nil)
+}
+
+// Backups
+
+func (c *Client) BackupDestinations(ctx context.Context) ([]types.BackupDestination, error) {
+	var out []types.BackupDestination
+	return out, c.call(ctx, http.MethodGet, "/v1/backups/destinations", nil, &out)
+}
+
+func (c *Client) CreateBackupDestination(ctx context.Context, req types.CreateBackupDestinationRequest) (*types.BackupDestination, error) {
+	var d types.BackupDestination
+	return &d, c.call(ctx, http.MethodPost, "/v1/backups/destinations", req, &d)
+}
+
+func (c *Client) DeleteBackupDestination(ctx context.Context, name string) error {
+	return c.call(ctx, http.MethodDelete, "/v1/backups/destinations/"+url.PathEscape(name), nil, nil)
+}
+
+// BackupKey returns the cluster's backup key; IsNotFound until one is made.
+func (c *Client) BackupKey(ctx context.Context) (*types.BackupKey, error) {
+	var k types.BackupKey
+	return &k, c.call(ctx, http.MethodGet, "/v1/backups/key", nil, &k)
+}
+
+// CreateBackupKey makes the cluster's backup key, or returns the one it has.
+func (c *Client) CreateBackupKey(ctx context.Context) (*types.BackupKey, error) {
+	var k types.BackupKey
+	return &k, c.call(ctx, http.MethodPost, "/v1/backups/key", nil, &k)
+}
+
+// SaveBackupKey records that the user saved the backup key.
+func (c *Client) SaveBackupKey(ctx context.Context) error {
+	return c.call(ctx, http.MethodPost, "/v1/backups/key/saved", nil, nil)
+}
+
+func (c *Client) SetVolumeBackup(ctx context.Context, app, name string, req types.SetVolumeBackupRequest) (*types.VolumeBackups, error) {
+	var out types.VolumeBackups
+	return &out, c.call(ctx, http.MethodPut, volumePath(app, name, "backups"), req, &out)
+}
+
+func (c *Client) UnsetVolumeBackup(ctx context.Context, app, name string) error {
+	return c.call(ctx, http.MethodDelete, volumePath(app, name, "backups"), nil, nil)
+}
+
+// VolumeBackups lists a volume's backups, newest first.
+func (c *Client) VolumeBackups(ctx context.Context, app, name string) (*types.VolumeBackups, error) {
+	var out types.VolumeBackups
+	return &out, c.call(ctx, http.MethodGet, volumePath(app, name, "backups"), nil, &out)
+}
+
+// BackupReport says where volumes are backed up and how their backups went:
+// one app's, or every app's for app "".
+func (c *Client) BackupReport(ctx context.Context, app string) ([]types.VolumeBackups, error) {
+	path := "/v1/backups"
+	if app != "" {
+		path += "?app=" + url.QueryEscape(app)
+	}
+	var out []types.VolumeBackups
+	return out, c.call(ctx, http.MethodGet, path, nil, &out)
+}
+
+// RunBackup backs a volume up now, streaming its progress.
+func (c *Client) RunBackup(ctx context.Context, app, name string, onEvent func(types.Event)) error {
+	return c.streamCall(ctx, http.MethodPost, volumePath(app, name, "backups/run"), onEvent)
+}
+
+// RestoreVolume restores a volume from a backup, streaming its progress.
+func (c *Client) RestoreVolume(ctx context.Context, app, name string, req types.RestoreVolumeRequest, onEvent func(types.Event)) error {
+	b, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	hreq, err := c.newRequest(ctx, http.MethodPost, volumePath(app, name, "backups/restore"), bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	resp, err := c.do(hreq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return stream(resp.Body, onEvent)
 }

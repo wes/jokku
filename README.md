@@ -325,8 +325,9 @@ written.
   copy and starts on the new server. Move one yourself with
   `jokku storage:move myapp data server-2`.
 - **If a server dies,** apps with volumes on it wait for it to come back
-  instead of starting elsewhere, because their data is there. Keep backups of
-  anything that matters.
+  instead of starting elsewhere, because their data is there. Keep
+  [backups](#back-up-volumes) of anything that matters: they can be
+  restored onto another server.
 
 To see a volume's files, `jokku enter myapp web ls /app/data`. To copy them
 out or back in, as a backup or to move data between servers:
@@ -350,6 +351,49 @@ image is.
 
 `storage:unmount` detaches a volume and keeps its data. `storage:resize` grows
 it, and `storage:destroy` deletes it.
+
+### Back up volumes
+
+Volumes back up to any S3-compatible bucket: Tigris, AWS S3, Cloudflare R2,
+Backblaze B2 and the like. Add the bucket once, as a destination, then say
+which volumes go there:
+
+```sh
+jokku backups:destination-add tigris --endpoint https://fly.storage.tigris.dev \
+  --bucket my-backups --access-key-id tid_xxx      # asks for the secret key
+jokku backups:set myapp data tigris                # under jokku/myapp/data in the bucket
+jokku backups:run myapp data                       # back it up now
+jokku backups:list myapp data
+```
+
+Backups are encrypted with a key Jokku makes the first time you add a
+destination. **Save the key somewhere safe, away from your servers:** a
+backup can't be restored without it, by Jokku or anyone else. Jokku shows it
+once and asks you to confirm you saved it; `jokku backups:key` shows it
+again. Pass `--no-encrypt` to `destination-add` for a destination that
+stores backups unencrypted.
+
+Each backup is complete on its own, but only uploads what changed since the
+last one. The disk is read in blocks, and a block already in the bucket is
+never uploaded again. While a backup runs, the app keeps running. Its writes
+to the volume pause for a moment at the end, so the backup is the disk as it
+was at one instant, the way a power cut would leave it; databases recover
+from that the same way they do after a crash.
+
+To restore:
+
+```sh
+jokku backups:restore myapp data                   # the latest backup
+jokku backups:restore myapp data 2026-10-09T14-15-00Z
+jokku backups:restore myapp data --node server-2   # its server is down: restore onto another
+```
+
+The current data is backed up first, so a restore can be undone. The backup
+downloads while the app runs; then the app restarts with the restored disk.
+
+For now, backups run when you ask. Schedules, and restoring automatically
+onto another server when one dies, come next. `backups:report` shows when
+each volume was last backed up.
 
 ### Deploy from GitHub Actions
 

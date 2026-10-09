@@ -256,4 +256,52 @@ INSERT OR REPLACE INTO properties (app_id, plugin, key, value) SELECT app_id, 'b
 INSERT OR REPLACE INTO properties (app_id, plugin, key, value) SELECT app_id, 'builder', 'image', source_ref FROM image_apps;
 DROP TABLE image_apps;
 `,
+
+	// 8: backups: S3-compatible destinations, the key that encrypts them,
+	// each volume's settings, the backups made, and restores in progress
+	`
+CREATE TABLE backup_destinations (
+	name              TEXT    PRIMARY KEY,
+	endpoint          TEXT    NOT NULL,
+	region            TEXT    NOT NULL DEFAULT '',
+	bucket            TEXT    NOT NULL,
+	access_key_id     TEXT    NOT NULL,
+	secret_access_key TEXT    NOT NULL,
+	encrypt           INTEGER NOT NULL DEFAULT 1,
+	created_at        INTEGER NOT NULL
+);
+
+CREATE TABLE backup_key (
+	id         INTEGER PRIMARY KEY CHECK (id = 1),
+	key        TEXT    NOT NULL,
+	saved      INTEGER NOT NULL DEFAULT 0,
+	created_at INTEGER NOT NULL
+);
+
+CREATE TABLE volume_backups (
+	volume_id   TEXT NOT NULL PRIMARY KEY REFERENCES volumes (id) ON DELETE CASCADE,
+	destination TEXT NOT NULL REFERENCES backup_destinations (name),
+	path        TEXT NOT NULL,
+	UNIQUE (destination, path)
+);
+
+CREATE TABLE backup_runs (
+	id          INTEGER PRIMARY KEY,
+	volume_id   TEXT    NOT NULL REFERENCES volumes (id) ON DELETE CASCADE,
+	name        TEXT    NOT NULL,
+	status      TEXT    NOT NULL,
+	error       TEXT    NOT NULL DEFAULT '',
+	size_bytes  INTEGER NOT NULL DEFAULT 0,
+	blocks      INTEGER NOT NULL DEFAULT 0,
+	new_blocks  INTEGER NOT NULL DEFAULT 0,
+	new_bytes   INTEGER NOT NULL DEFAULT 0,
+	actor       TEXT    NOT NULL DEFAULT '',
+	started_at  INTEGER NOT NULL,
+	finished_at INTEGER
+);
+CREATE INDEX backup_runs_volume ON backup_runs (volume_id, id);
+
+ALTER TABLE volumes ADD COLUMN restore TEXT NOT NULL DEFAULT '';
+ALTER TABLE volumes ADD COLUMN restore_result TEXT NOT NULL DEFAULT '';
+`,
 }

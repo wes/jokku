@@ -12,8 +12,8 @@ import (
 )
 
 // Handler is the agent's API. It serves the control node, which presents
-// token: this node's app logs, and sessions with its VMs (jokku enter,
-// volume copies). It also serves volume disks to the node taking one over,
+// token: this node's app logs, sessions with its VMs (jokku enter, volume
+// copies) and volume backups. It also serves volume disks to the node taking one over,
 // which presents that move's token. With no token, only the latter.
 func (a *Agent) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
@@ -38,6 +38,7 @@ func (a *Agent) Handler(token string) http.Handler {
 			}))
 		}
 		mux.HandleFunc("POST /v1/instances/{id}/session", authorized(a.serveSession))
+		mux.HandleFunc("POST /v1/volumes/{id}/backup", authorized(a.serveBackup))
 	}
 	mux.HandleFunc("POST /v1/volumes/{id}/copy", a.serveVolume)
 	return mux

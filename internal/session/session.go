@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // Port is the vsock port the guest listens on.
@@ -53,7 +54,7 @@ type Request struct {
 	Root bool     `json:"root,omitempty"` // exec as root rather than the image's user
 	Env  []string `json:"env,omitempty"`  // extra, e.g. TERM
 
-	Path  string `json:"path,omitempty"`  // export and import: the directory
+	Path  string `json:"path,omitempty"`  // export, import and freeze: the directory
 	Live  bool   `json:"live,omitempty"`  // export without pausing the app
 	Clear bool   `json:"clear,omitempty"` // import into an emptied directory
 	// KeepOwners restores the archive's numeric owners on import, instead
@@ -67,7 +68,15 @@ const (
 	OpExec   = "exec"
 	OpExport = "export"
 	OpImport = "import"
+	// OpFreeze pauses writes to the filesystem mounted at Path (a volume)
+	// while the node backs it up. The guest says "frozen" on stdout, then
+	// resumes writes at the client's EOF, when the client goes away, or
+	// after FreezeLimit, and exits non-zero in the last case.
+	OpFreeze = "freeze"
 )
+
+// FreezeLimit is the longest a backup may pause a volume's writes.
+const FreezeLimit = 30 * time.Second
 
 // Conn reads and writes frames. Writes are safe from several goroutines.
 type Conn struct {
@@ -94,15 +103,15 @@ func (c *Conn) Write(typ byte, payload []byte) error {
 	if len(payload) > maxFrame {
 		return fmt.Errorf("frame of %d bytes is too large", len(payload))
 	}
-	hdr := make([]byte, 5)
-	hdr[0] = typ
-	binary.BigEndian.PutUint32(hdr[1:], uint32(len(payload)))
+	// One write per frame: no empty writes, which a synchronous pipe would
+	// hold until the other side reads.
+	frame := make([]byte, 5+len(payload))
+	frame[0] = typ
+	binary.BigEndian.PutUint32(frame[1:5], uint32(len(payload)))
+	copy(frame[5:], payload)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, err := c.w.Write(hdr); err != nil {
-		return err
-	}
-	_, err := c.w.Write(payload)
+	_, err := c.w.Write(frame)
 	return err
 }
 

@@ -112,6 +112,36 @@ type VolumeSpec struct {
 	// host:port).
 	Token string `json:"token,omitempty"`
 	From  string `json:"from,omitempty"`
+	// Restore, with role incoming, or owner when the disk is restored on
+	// its own node, says to make the disk from a backup instead.
+	Restore *RestoreSpec `json:"restore,omitempty"`
+}
+
+// RestoreSpec is a backup to make a volume's disk from.
+type RestoreSpec struct {
+	Destination BackupDestination `json:"destination"`
+	Path        string            `json:"path"`
+	Backup      string            `json:"backup"`
+	Key         string            `json:"key,omitempty"`
+	// Swap, for a restore on the disk's own node, says the instances using
+	// the disk were stopped: the restored copy can replace it.
+	Swap bool `json:"swap,omitempty"`
+}
+
+// BackupJob asks the node holding a volume's disk to back it up.
+type BackupJob struct {
+	Volume      string            `json:"volume"` // the volume's ID
+	App         string            `json:"app"`
+	Name        string            `json:"name"`   // the volume's name
+	Backup      string            `json:"backup"` // the backup's name
+	Destination BackupDestination `json:"destination"`
+	Path        string            `json:"path"`
+	Key         string            `json:"key,omitempty"`
+	// Instance, when a running VM has the disk attached, is that VM, and
+	// MountPath where the volume is in it: writes there are paused for the
+	// moment the backup is taken.
+	Instance  string `json:"instance,omitempty"`
+	MountPath string `json:"mount_path,omitempty"`
 }
 
 const (
@@ -131,6 +161,9 @@ type VolumeStatus struct {
 	UsedMB   int    `json:"used_mb,omitempty"`
 	CopiedMB int    `json:"copied_mb,omitempty"`
 	Error    string `json:"error,omitempty"`
+	// Restore is how a restore from a backup is going: copying, received
+	// (downloaded, waiting for the instance to stop) or restored.
+	Restore string `json:"restore,omitempty"`
 }
 
 const (
@@ -140,6 +173,8 @@ const (
 	VolumeCopying   = "copying"
 	VolumeSynced    = "synced"
 	VolumeReceived  = "received"
+	VolumeRestored  = "restored"
+	VolumeFailed    = "failed" // a restore that could not download its backup
 	VolumeDestroyed = "destroyed"
 )
 

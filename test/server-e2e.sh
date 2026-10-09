@@ -265,6 +265,42 @@ eventually_restored() {
   return 1
 }
 eventually_restored || fail "the import was not restored, or the app did not restart: $(kget boots)"
+
+step "backups go to an S3 bucket and restore from it"
+if [ -z "${VERSITYGW:-}" ]; then
+  echo "skipped: set VERSITYGW to a versitygw binary to run an S3 server for this step"
+else
+  s3=$(mktemp -d)
+  mkdir "$s3/jokku" # a bucket
+  ROOT_ACCESS_KEY=jokkuci ROOT_SECRET_KEY=ci-secret-key "$VERSITYGW" --port 127.0.0.1:9000 posix "$s3" >"$s3.log" 2>&1 &
+  s3pid=$!
+  for _ in $(seq 1 40); do curl -s -o /dev/null http://127.0.0.1:9000/ && break; sleep 0.25; done
+  out=$(printf 'ci-secret-key\n' | jssh backups:destination-add ci --endpoint http://127.0.0.1:9000 --bucket jokku --access-key-id jokkuci --force 2>&1) ||
+    fail "backups:destination-add failed: $out $(cat "$s3.log")"
+  grep -q "jbk1_" <<<"$out" || fail "the backup key was not shown: $out"
+  jssh backups:set keep data ci
+  jssh "enter keep web sh -c 'echo backed-up >/data/boots'"
+  out=$(jssh backups:run keep data 2>&1) || fail "backups:run failed: $out"
+  printf '%s\n' "$out"
+  grep -q "Writes were paused for" <<<"$out" || fail "the backup did not pause the app's writes: $out"
+  compgen -G "$s3/jokku/jokku/keep/data/backups/*.backup" >/dev/null || fail "no backup in the bucket: $(find "$s3" | head -20)"
+  jssh "enter keep web sh -c 'echo after-the-backup >/data/boots'"
+  out=$(jssh backups:restore keep data --force 2>&1) || fail "backups:restore failed: $out"
+  printf '%s\n' "$out"
+  # The app restarted with the restored disk, appending a boot.
+  eventually_backed_up() {
+    for _ in $(seq 1 30); do
+      b=$(kget boots 2>/dev/null) && [ "$(head -n 1 <<<"$b")" = backed-up ] && [ "$(wc -l <<<"$b")" -eq 2 ] && return 0
+      sleep 1
+    done
+    return 1
+  }
+  eventually_backed_up || fail "the backup was not restored, or the app did not restart: $(kget boots)"
+  # Two backups: the one restored, and the one of the data it replaced.
+  [ "$(jssh backups:list keep data | grep -c '^20')" -eq 2 ] || fail "backups:list: $(jssh backups:list keep data)"
+  [[ "$(jssh backups:report keep --backups-last)" == 20* ]] || fail "backups:report: $(jssh backups:report keep)"
+  kill "$s3pid"
+fi
 jssh apps:destroy keep --force
 for _ in $(seq 1 30); do
   sudo sh -c 'ls /var/lib/jokku/volumes/*.ext4' >/dev/null 2>&1 || break

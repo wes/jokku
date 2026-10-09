@@ -56,6 +56,18 @@ func (c *Controller) volumeSpecs(ctx context.Context, node string, nodes []store
 			spec.Role = types.VolumeDestroy
 		case v.Node == node:
 			spec.Role, spec.Create, spec.Token = types.VolumeOwner, v.State == store.VolumeNew, v.MoveToken
+			if v.Restore != "" && !v.Moving() {
+				if spec.Restore, err = c.restoreSpec(ctx, v); err != nil {
+					c.Log.Warn("cannot restore volume", "app", v.App, "volume", v.Name, "err", err)
+				}
+			}
+		case v.MovingTo == node && v.Restore != "":
+			r, err := c.restoreSpec(ctx, v)
+			if err != nil {
+				c.Log.Warn("cannot restore volume", "app", v.App, "volume", v.Name, "err", err)
+				continue
+			}
+			spec.Role, spec.Token, spec.Restore = types.VolumeIncoming, v.MoveToken, r
 		case v.MovingTo == node:
 			src, ok := byName[v.Node]
 			if !ok {
@@ -111,6 +123,13 @@ func (c *Controller) tickVolumes(ctx context.Context) (bool, error) {
 				}
 				changed = true
 			}
+
+		case v.Restore != "":
+			ch, err := c.tickRestore(ctx, v, insts, byID, byName, handled, now)
+			if err != nil {
+				return changed, err
+			}
+			changed = changed || ch
 
 		case v.Moving():
 			dest, destOK := byName[v.MovingTo]
@@ -177,7 +196,7 @@ func (c *Controller) tickVolumes(ctx context.Context) (bool, error) {
 // and the instance the move stopped is started again where the disk is.
 func (c *Controller) abortMove(ctx context.Context, v store.Volume, why string, insts []store.Instance,
 	byID map[string]store.Instance, byName map[string]store.Node, handled map[string]bool) error {
-	if err := c.Store.AbortVolumeMove(ctx, v.ID); err != nil {
+	if err := c.Store.AbortVolumeMove(ctx, v.ID, why); err != nil {
 		return err
 	}
 	c.Store.AddEvent(ctx, "volume", v.App, v.Node, "moving volume %s to %s was called off: %s", v.Name, v.MovingTo, why)

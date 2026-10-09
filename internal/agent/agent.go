@@ -140,6 +140,7 @@ type Agent struct {
 	volMu        sync.Mutex
 	vols         map[string]*vol
 	exporting    sync.Map // volume ID -> struct{} while its final pass is being served
+	backingUp    sync.Map // volume ID -> struct{} while it is being backed up
 	volumeClient *http.Client
 }
 

@@ -64,3 +64,29 @@ func (s *Server) computedProperties(ctx context.Context, app, plugin string) (ma
 	}
 	return props.Compute(p, appProps, global), nil
 }
+
+// setBuilder switches an app to Dockerfile or compose builds, from its next
+// push. An app becomes an image app by deploying one (builder:image).
+func (s *Server) setBuilder(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	app := r.PathValue("app")
+	var req types.BuilderRequest
+	if err := decode(r, &req); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if req.Type != "dockerfile" && req.Type != "compose" {
+		s.fail(w, r, badRequest("the builder is dockerfile or compose (to deploy an image: jokku builder:image %s <image>)", app))
+		return
+	}
+	if _, err := s.Store.App(ctx, app); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := s.Store.SetProperties(ctx, app, "builder", map[string]string{"type": req.Type, "file": req.File, "image": ""}); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.Store.AddEvent(ctx, "app", app, "", "%s switched the builder to %s", actor(r), req.Type)
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -15,6 +15,9 @@ type Key struct {
 	Default  string
 	Help     string
 	Validate func(string) error
+	// SetBy names the commands that change this key, for keys "<plugin>:set"
+	// doesn't take. They are per app only: they have no global value.
+	SetBy string
 }
 
 type Plugin struct {
@@ -35,22 +38,15 @@ var Plugins = []Plugin{
 		},
 	},
 	{
-		Name: "builder", Help: "Manage the builder settings for an app", Settable: true,
+		Name: "builder", Help: "Manage how an app is built", Settable: true,
 		Keys: []Key{
-			{Name: "selected", Default: "", Help: "The builder: dockerfile (the default) or compose", Validate: oneOf("", "dockerfile", "compose")},
-			{Name: "build-dir", Default: "", Help: "Subdirectory of the repo to build from"},
-		},
-	},
-	{
-		Name: "builder-dockerfile", Help: "Manage the Dockerfile builder", Settable: true,
-		Keys: []Key{
-			{Name: "dockerfile-path", Default: "Dockerfile", Help: "Path to the Dockerfile, relative to the build dir"},
-		},
-	},
-	{
-		Name: "builder-compose", Help: "Manage the compose builder", Settable: true,
-		Keys: []Key{
-			{Name: "compose-file", Default: "", Help: "Path to the compose file, relative to the build dir (default: compose.yaml, compose.yml, docker-compose.yaml or docker-compose.yml)"},
+			{Name: "type", Default: "dockerfile", Help: "dockerfile, compose or image", Validate: oneOf("dockerfile", "compose", "image"),
+				SetBy: "jokku builder:dockerfile, builder:compose or builder:image"},
+			{Name: "file", Help: "The Dockerfile or compose file, relative to the build dir; empty for the default",
+				SetBy: "jokku builder:dockerfile <app> <path> or builder:compose <app> <path>"},
+			{Name: "image", Help: "The registry image an image app runs", SetBy: "jokku builder:image"},
+			{Name: "build-dir", Help: "Subdirectory of the repo to build from"},
+			{Name: "procfile", Default: "Procfile", Help: "Path to the Procfile, relative to the build dir"},
 		},
 	},
 	{
@@ -63,7 +59,6 @@ var Plugins = []Plugin{
 	{
 		Name: "ps", Help: "Manage app processes", Settable: true,
 		Keys: []Key{
-			{Name: "procfile-path", Default: "Procfile", Help: "Path to the Procfile, relative to the build dir"},
 			{Name: "restart-policy", Default: "on-failure:10", Help: "always | no | on-failure[:N]", Validate: isRestartPolicy},
 		},
 	},
@@ -93,6 +88,17 @@ func Lookup(plugin string) (Plugin, bool) {
 	return Plugin{}, false
 }
 
+// SetKeys lists the keys "<plugin>:set" takes.
+func (p Plugin) SetKeys() []string {
+	var names []string
+	for _, k := range p.Keys {
+		if k.SetBy == "" {
+			names = append(names, k.Name)
+		}
+	}
+	return names
+}
+
 func (p Plugin) Key(name string) (Key, bool) {
 	for _, k := range p.Keys {
 		if k.Name == name {
@@ -111,11 +117,10 @@ func Check(plugin, key, value string) error {
 	}
 	k, ok := p.Key(key)
 	if !ok {
-		names := make([]string, len(p.Keys))
-		for i, k := range p.Keys {
-			names[i] = k.Name
-		}
-		return fmt.Errorf("invalid %s property %q, valid properties: %s", plugin, key, strings.Join(names, ", "))
+		return fmt.Errorf("invalid %s property %q, valid properties: %s", plugin, key, strings.Join(p.SetKeys(), ", "))
+	}
+	if k.SetBy != "" {
+		return fmt.Errorf("the %s %s is set with %s", plugin, key, k.SetBy)
 	}
 	if value == "" || k.Validate == nil {
 		return nil
@@ -134,7 +139,7 @@ func Compute(p Plugin, app, global map[string]string) map[string]string {
 		switch {
 		case app[k.Name] != "":
 			out[k.Name] = app[k.Name]
-		case global[k.Name] != "":
+		case global[k.Name] != "" && k.SetBy == "":
 			out[k.Name] = global[k.Name]
 		default:
 			out[k.Name] = k.Default

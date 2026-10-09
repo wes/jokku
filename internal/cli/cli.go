@@ -85,31 +85,29 @@ var (
 )
 
 var namespaceHelp = map[string]string{
-	"apps":               "Manage apps",
-	"config":             "Manage global and app-specific config vars",
-	"domains":            "Manage domains used by the proxy",
-	"git":                "Manage app deploys via git",
-	"builder":            "Manage the builder settings for an app",
-	"builder-dockerfile": "Manage the Dockerfile builder",
-	"builder-compose":    "Manage the compose builder (deploy a compose file)",
-	"ps":                 "List processes and scale an app",
-	"resource":           "Manage vCPU and memory per process type",
-	"storage":            "Manage volumes: disks for an app's data",
-	"registry":           "Manage logins to private image registries",
-	"checks":             "Manage zero-downtime deploy checks",
-	"proxy":              "Manage the HTTP proxy for an app",
-	"letsencrypt":        "Manage automatic TLS certificates",
-	"ssh-keys":           "Manage SSH keys used for git push and remote commands",
-	"nodes":              "Manage the machines in the cluster",
-	"cluster":            "Add servers and see the cluster",
-	"events":             "List recent events",
-	"enter":              "Open a shell in a running instance of an app",
-	"top":                "Watch the cluster, apps and machines live",
-	"version":            "Print the jokku version",
-	"update":             "Update jokku on this server",
-	"logs":               "Display an app's log output",
-	"releases":           "List an app's releases",
-	"help":               "Print the list of commands",
+	"apps":        "Manage apps",
+	"config":      "Manage global and app-specific config vars",
+	"domains":     "Manage domains used by the proxy",
+	"git":         "Manage app deploys via git",
+	"builder":     "Choose how an app is built: a Dockerfile, a compose file or an image",
+	"ps":          "List processes and scale an app",
+	"resource":    "Manage vCPU and memory per process type",
+	"storage":     "Manage volumes: disks for an app's data",
+	"registry":    "Manage logins to private image registries",
+	"checks":      "Manage zero-downtime deploy checks",
+	"proxy":       "Manage the HTTP proxy for an app",
+	"letsencrypt": "Manage automatic TLS certificates",
+	"ssh-keys":    "Manage SSH keys used for git push and remote commands",
+	"nodes":       "Manage the machines in the cluster",
+	"cluster":     "Add servers and see the cluster",
+	"events":      "List recent events",
+	"enter":       "Open a shell in a running instance of an app",
+	"top":         "Watch the cluster, apps and machines live",
+	"version":     "Print the jokku version",
+	"update":      "Update jokku on this server",
+	"logs":        "Display an app's log output",
+	"releases":    "List an app's releases",
+	"help":        "Print the list of commands",
 }
 
 func register(cmds ...*Command) {
@@ -132,7 +130,7 @@ func init() {
 	register(psCommands...)
 	register(resourceCommands...)
 	register(storageCommands...)
-	register(gitCommands...)
+	register(builderCommands...)
 	register(registryCommands...)
 	register(sshKeysCommands...)
 	register(nodesCommands...)

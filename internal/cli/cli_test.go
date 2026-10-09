@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/wes/jokku/internal/api"
+	"github.com/wes/jokku/internal/client"
 	"github.com/wes/jokku/internal/cluster"
 	"github.com/wes/jokku/internal/gitrepo"
 	"github.com/wes/jokku/internal/store"
@@ -195,15 +196,41 @@ func TestStorageCLI(t *testing.T) {
 
 func TestImageDeployAndRegistryCLI(t *testing.T) {
 	startAPI(t)
-	// git:from-image creates the app and deploys the image (the stub
-	// deployer stands in for BuildKit).
-	out := mustJokku(t, "git:from-image", "cache", "public.ecr.aws/docker/library/redis:7")
-	if !strings.Contains(out, "Creating cache") || !strings.Contains(out, "Deploying image public.ecr.aws/docker/library/redis:7 to cache") {
-		t.Fatalf("git:from-image = %q", out)
+	// builder:image creates the app and deploys the image (the stub
+	// deployer stands in for BuildKit), which makes it an image app.
+	out := mustJokku(t, "builder:image", "cache", "public.ecr.aws/docker/library/redis:7")
+	if !strings.Contains(out, "Creating cache") || !strings.Contains(out, "Deploying image public.ecr.aws/docker/library/redis:7 to cache") ||
+		!strings.Contains(out, "cache now runs an image: pushes no longer deploy it") {
+		t.Fatalf("builder:image = %q", out)
 	}
-	mustJokku(t, "git:from-image", "cache", "redis:7", "Some One", "one@example.com") // Dokku's git author args are accepted
-	if _, errOut, code := jokku(t, "", "git:from-image", "cache", "redis:7\nRUN rm -rf /"); code == 0 || !strings.Contains(errOut, "not an image reference") {
+	if out := mustJokku(t, "builder:image", "cache", "redis:7"); strings.Contains(out, "now runs an image") {
+		t.Errorf("a second image said the app switched: %q", out)
+	}
+	out = mustJokku(t, "builder:report", "cache")
+	if !strings.Contains(out, "Builder type:") || !strings.Contains(out, "image") || !strings.Contains(out, "redis:7") {
+		t.Fatalf("builder:report = %q", out)
+	}
+	if _, errOut, code := jokku(t, "", "builder:image", "cache", "redis:7\nRUN rm -rf /"); code == 0 || !strings.Contains(errOut, "not an image reference") {
 		t.Fatalf("bad image: exit %d, %q", code, errOut)
+	}
+	if out := mustJokku(t, "builder:report", "cache", "--builder-image"); out != "redis:7\n" {
+		t.Errorf("a failed image deploy changed the image to %q", out)
+	}
+
+	// Pushes don't deploy an image app, until it builds from git again.
+	api := client.New(client.Target{Socket: os.Getenv("JOKKU_SOCKET")}, "me")
+	push := func() error {
+		return api.Deploy(context.Background(), "cache", "git", "abc1234", strings.NewReader(""), func(types.Event) {})
+	}
+	if err := push(); err == nil || !strings.Contains(err.Error(), "cache runs the image redis:7") || !strings.Contains(err.Error(), "jokku builder:dockerfile cache") {
+		t.Fatalf("push to an image app: %v", err)
+	}
+	mustJokku(t, "builder:dockerfile", "cache")
+	if err := push(); err != nil {
+		t.Fatalf("push after builder:dockerfile: %v", err)
+	}
+	if out := mustJokku(t, "builder:report", "cache", "--builder-image"); out != "\n" {
+		t.Errorf("builder:dockerfile kept the image %q", out)
 	}
 
 	if out, errOut, code := jokku(t, "ghp_secret\n", "registry:login", "ghcr.io", "me"); code != 0 || !strings.Contains(out, "Logged in to ghcr.io as me") {
@@ -316,6 +343,75 @@ func TestEnterPassesCommandArgsThrough(t *testing.T) {
 		got, err := parseFlags(c, tt.args)
 		if err != nil || !reflect.DeepEqual(got, tt.wantArgs) || c.Bool("root") != tt.root {
 			t.Errorf("parseFlags(%q) = %q (root %v), %v; want %q (root %v)", tt.args, got, c.Bool("root"), err, tt.wantArgs, tt.root)
+		}
+	}
+}
+
+func TestBuilderCLI(t *testing.T) {
+	startAPI(t)
+	// builder:compose picks compose and its file in one go, creating the app.
+	out := mustJokku(t, "builder:compose", "shop", "docker-compose.prod.yml")
+	if !strings.Contains(out, "Creating shop") || !strings.Contains(out, "shop now builds from docker-compose.prod.yml") || !strings.Contains(out, "Deploy it with git push") {
+		t.Fatalf("builder:compose = %q", out)
+	}
+	report := func(flag string) string {
+		t.Helper()
+		return strings.TrimSuffix(mustJokku(t, "builder:report", "shop", "--builder-"+flag), "\n")
+	}
+	if report("type") != "compose" || report("file") != "docker-compose.prod.yml" || report("procfile") != "Procfile" {
+		t.Fatalf("after builder:compose: %q", mustJokku(t, "builder:report", "shop"))
+	}
+	mustJokku(t, "builder:compose", "shop")
+	if got := report("file"); got != "the first of compose.yaml, compose.yml, docker-compose.yaml, docker-compose.yml" {
+		t.Errorf("default compose file = %q", got)
+	}
+	mustJokku(t, "builder:dockerfile", "shop", "docker/prod.Dockerfile")
+	if report("type") != "dockerfile" || report("file") != "docker/prod.Dockerfile" {
+		t.Fatalf("after builder:dockerfile <path>: %q", mustJokku(t, "builder:report", "shop"))
+	}
+	mustJokku(t, "builder:dockerfile", "shop")
+	if got := report("file"); got != "Dockerfile" {
+		t.Errorf("builder:dockerfile without a path left %q", got)
+	}
+
+	// builder:set takes the settings that go with any builder...
+	mustJokku(t, "builder:set", "shop", "build-dir", "api")
+	mustJokku(t, "builder:set", "--global", "procfile", "Procfile.all")
+	if report("build-dir") != "api" || report("procfile") != "Procfile.all" {
+		t.Errorf("builder:set: %q", mustJokku(t, "builder:report", "shop"))
+	}
+	mustJokku(t, "builder:set", "shop", "procfile", "Procfile.prod")
+	if report("procfile") != "Procfile.prod" {
+		t.Errorf("an app's procfile doesn't override the global one")
+	}
+	if out := mustJokku(t, "builder:report", "--global", "--builder-global-procfile"); out != "Procfile.all\n" {
+		t.Errorf("global report = %q", out)
+	}
+	// ...but not the builder itself, which has its own commands.
+	for _, key := range []string{"type", "file", "image"} {
+		if _, errOut, code := jokku(t, "", "builder:set", "shop", key, "compose"); code == 0 || !strings.Contains(errOut, "is set with jokku builder:") {
+			t.Errorf("builder:set %s: exit %d, %q", key, code, errOut)
+		}
+	}
+	if _, errOut, _ := jokku(t, "", "builder:set", "shop", "nope", "x"); !strings.Contains(errOut, "valid properties: build-dir, procfile") {
+		t.Errorf("builder:set nope: %q", errOut)
+	}
+
+	// The old commands are gone.
+	for _, args := range [][]string{
+		{"builder-compose:set", "shop", "compose-file", "x.yml"},
+		{"builder-dockerfile:set", "shop", "dockerfile-path", "x"},
+		{"git:from-image", "shop", "redis:7"},
+		{"ps:set", "shop", "procfile-path", "x"},
+	} {
+		if _, _, code := jokku(t, "", args...); code == 0 {
+			t.Errorf("%s still works", args[0])
+		}
+	}
+	help := mustJokku(t, "help", "builder")
+	for _, cmd := range []string{"builder:dockerfile", "builder:compose", "builder:image", "builder:set", "builder:report"} {
+		if !strings.Contains(help, cmd) {
+			t.Errorf("help builder lacks %s:\n%s", cmd, help)
 		}
 	}
 }

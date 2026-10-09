@@ -117,6 +117,18 @@ Pushing to an app that doesn't exist yet creates it, so step 1 is
 optional. If the new version fails to start, the push is rejected and the
 previous version keeps serving.
 
+Jokku builds the `Dockerfile` at the root of the repo. To use another one, or
+build from a subdirectory:
+
+```sh
+jokku builder:dockerfile myapp docker/prod.Dockerfile   # relative to the build dir
+jokku builder:set myapp build-dir api                   # build from api/ in the repo
+jokku builder:report myapp                              # how the app is built
+```
+
+An app can also deploy a [compose file](#deploy-a-compose-file) or a
+[registry image](#deploy-an-image) instead.
+
 **3. Add your domain**
 
 ```sh
@@ -172,7 +184,9 @@ web: bin/server
 worker: bin/jobs
 ```
 
-Then scale each one: `jokku ps:scale myapp web=3 worker=1`.
+Only `web` runs at first; scale the others to start them, for example
+`jokku ps:scale myapp web=3 worker=1`. For a Procfile somewhere else:
+`jokku builder:set myapp procfile Procfile.prod`.
 
 ### Deploy a compose file
 
@@ -206,26 +220,22 @@ volumes:
   pgdata:
 ```
 
-To deploy a different file, for example a production one next to the
-`docker-compose.yml` you use locally, point Jokku at it:
+**2. Switch the app to compose**
 
 ```sh
-jokku builder-compose:set shop compose-file docker-compose.prod.yml
+jokku builder:compose shop                           # the first of compose.yaml ... docker-compose.yml
+jokku builder:compose shop docker-compose.prod.yml   # or a file you name
 ```
 
-Only that one file is read. A `docker-compose.override.yml` is not merged
-in, so local development overrides stay out of production.
+This creates the app if it doesn't exist yet. Naming a file lets you deploy,
+say, a production file that sits next to the `docker-compose.yml` you use
+locally. Only that one file is read: a `docker-compose.override.yml` is not
+merged in, so local development overrides stay out of production.
 
-**2. Create the app and switch it to compose**
-
-```sh
-jokku apps:create shop
-jokku builder:set shop selected compose
-```
-
-Jokku never guesses this from the files, since many repos keep a compose
-file around just for local development. Without it, the app is built from
-its Dockerfile.
+Jokku never switches to compose by itself, since many repos keep a compose
+file around just for local development. A push with a compose file and no
+Dockerfile tells you to run `builder:compose`. `jokku builder:dockerfile
+shop` switches back.
 
 **3. Set the values your file uses**
 
@@ -268,13 +278,18 @@ secrets) instead of guessing; see
 Skip the build and run an image from a registry:
 
 ```sh
-jokku git:from-image myapp ghcr.io/you/myapp:v2
-jokku git:from-image cache redis:7
+jokku builder:image myapp ghcr.io/you/myapp:v2
+jokku builder:image cache redis:7
 ```
 
+This creates the app if needed and deploys the image. From then on, the app
+runs that image. `ps:rebuild` pulls the tag again, and `builder:image` with
+another tag deploys that one. `git push` to the app is refused, so a push
+can't replace the image by accident; `jokku builder:dockerfile myapp` makes
+pushes build it again.
+
 For a private registry, log in first:
-`echo $TOKEN | jokku registry:login ghcr.io you`. `ps:rebuild` pulls the tag
-again.
+`echo $TOKEN | jokku registry:login ghcr.io you`.
 
 ### Apps talk to each other by name
 

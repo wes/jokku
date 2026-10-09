@@ -230,7 +230,7 @@ func (s *Server) notCompose(ctx context.Context, app string) error {
 	if err != nil {
 		return err
 	}
-	if builder["selected"] == "compose" {
+	if builder["type"] == "compose" {
 		return httpErrorf(http.StatusConflict, "%s deploys a compose file, which says what each service mounts: change volumes: there", app)
 	}
 	return nil

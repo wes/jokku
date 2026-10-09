@@ -229,4 +229,31 @@ CREATE TABLE registry_logins (
 ALTER TABLE releases ADD COLUMN services TEXT NOT NULL DEFAULT '{}';
 ALTER TABLE releases ADD COLUMN web TEXT NOT NULL DEFAULT '';
 `,
+
+	// 7: how an app is built is one set of builder properties: type (was
+	// builder selected), file (was builder-dockerfile dockerfile-path or
+	// builder-compose compose-file), image, build-dir and procfile (was ps
+	// procfile-path). Apps whose last deploy was an image become image apps.
+	`
+UPDATE properties SET key = 'type' WHERE plugin = 'builder' AND key = 'selected';
+DELETE FROM properties WHERE plugin = 'builder' AND key = 'type' AND app_id = 0;
+INSERT OR REPLACE INTO properties (app_id, plugin, key, value)
+	SELECT app_id, 'builder', 'file', value FROM properties
+	WHERE app_id != 0 AND plugin = 'builder-dockerfile' AND key = 'dockerfile-path'
+		AND app_id NOT IN (SELECT app_id FROM properties WHERE plugin = 'builder' AND key = 'type' AND value = 'compose');
+INSERT OR REPLACE INTO properties (app_id, plugin, key, value)
+	SELECT app_id, 'builder', 'file', value FROM properties
+	WHERE app_id != 0 AND plugin = 'builder-compose' AND key = 'compose-file'
+		AND app_id IN (SELECT app_id FROM properties WHERE plugin = 'builder' AND key = 'type' AND value = 'compose');
+DELETE FROM properties WHERE plugin IN ('builder-dockerfile', 'builder-compose');
+UPDATE properties SET plugin = 'builder', key = 'procfile' WHERE plugin = 'ps' AND key = 'procfile-path';
+
+CREATE TEMP TABLE image_apps AS
+	SELECT d.app_id, d.source_ref FROM deploys d
+	WHERE d.source = 'image' AND d.id = (SELECT MAX(id) FROM deploys WHERE app_id = d.app_id AND status = 'succeeded');
+DELETE FROM properties WHERE plugin = 'builder' AND key = 'file' AND app_id IN (SELECT app_id FROM image_apps);
+INSERT OR REPLACE INTO properties (app_id, plugin, key, value) SELECT app_id, 'builder', 'type', 'image' FROM image_apps;
+INSERT OR REPLACE INTO properties (app_id, plugin, key, value) SELECT app_id, 'builder', 'image', source_ref FROM image_apps;
+DROP TABLE image_apps;
+`,
 }

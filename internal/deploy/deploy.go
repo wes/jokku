@@ -80,7 +80,7 @@ func (p *Pipeline) deploy(ctx context.Context, d *types.Deploy, sourcePath strin
 		rel.Description = description(d)
 		return p.release(ctx, d, rel, log)
 	}
-	src, err := Inspect(sourcePath, settings)
+	src, err := Inspect(d.App, sourcePath, settings)
 	if err != nil {
 		return 0, err
 	}
@@ -155,7 +155,7 @@ func (p *Pipeline) release(ctx context.Context, d *types.Deploy, rel *store.Rele
 	return rel.Version, p.printURLs(ctx, rel, log)
 }
 
-// SourceImage is the deploy source of git:from-image: a registry image,
+// SourceImage is the deploy source of builder:image: a registry image,
 // built from a one-line Dockerfile, "FROM <image>".
 const SourceImage = "image"
 
@@ -322,17 +322,22 @@ func (p *Pipeline) readyNodes(ctx context.Context) (map[string]bool, error) {
 	return ready, nil
 }
 
-// rebuild deploys the most recently deployed source again.
+// rebuild deploys the most recently pushed source again, or for an image
+// app, pulls its image again.
 func (p *Pipeline) rebuild(ctx context.Context, app, actor string, log func(string)) error {
-	source, prev, err := p.lastSource(ctx, app)
+	settings, err := p.settings(ctx, app)
 	if err != nil {
 		return err
 	}
-	kind := "rebuild"
-	if prev.Source == SourceImage {
-		kind = SourceImage // pull the image again
+	kind, ref, source := SourceImage, settings.Image, ""
+	if settings.Builder != "image" {
+		var prev *types.Deploy
+		if source, prev, err = p.lastSource(ctx, app); err != nil {
+			return err
+		}
+		kind, ref = "rebuild", prev.SourceRef
 	}
-	d, err := p.Store.CreateDeploy(ctx, app, kind, prev.SourceRef, actor)
+	d, err := p.Store.CreateDeploy(ctx, app, kind, ref, actor)
 	if err != nil {
 		return err
 	}
@@ -340,7 +345,15 @@ func (p *Pipeline) rebuild(ctx context.Context, app, actor string, log func(stri
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
 	}
-	if err := os.Link(source, dst); err != nil {
+	if source != "" {
+		err = os.Link(source, dst)
+	} else {
+		var tarball []byte
+		if tarball, err = ImageSource(ref); err == nil {
+			err = os.WriteFile(dst, tarball, 0o600)
+		}
+	}
+	if err != nil {
 		return err
 	}
 	err = p.Deploy(ctx, d, dst, log)
@@ -353,14 +366,14 @@ func (p *Pipeline) rebuild(ctx context.Context, app, actor string, log func(stri
 }
 
 // lastSource finds the source tarball of the app's latest successful
-// deploy, which cleanup keeps.
+// deploy from source (not an image), which cleanup keeps.
 func (p *Pipeline) lastSource(ctx context.Context, app string) (string, *types.Deploy, error) {
 	deploys, err := p.Store.Deploys(ctx, app, 100)
 	if err != nil {
 		return "", nil, err
 	}
 	for _, prev := range deploys {
-		if prev.Status != types.StatusSucceeded {
+		if prev.Status != types.StatusSucceeded || prev.Source == SourceImage {
 			continue
 		}
 		source := filepath.Join(p.DataDir, "builds", strconv.FormatInt(prev.ID, 10), "source.tar")

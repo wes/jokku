@@ -163,7 +163,6 @@ func psReport(c *Context) error {
 			{"deployed", "Deployed", yesNo(a.CurrentRelease > 0)},
 			{"processes", "Processes", strconv.Itoa(len(status))},
 			{"running", "Running", yesNo(running > 0 && !a.Stopped)},
-			{"ps-procfile-path", "Ps procfile path", ps.Computed["procfile-path"]},
 			{"ps-restart-policy", "Ps restart policy", ps.Computed["restart-policy"]},
 			{"ps-scale", "Ps scale", strings.Join(scale, " ")},
 		}, status...))

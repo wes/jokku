@@ -2,9 +2,13 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"maps"
 	"net/netip"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/wes/jokku/internal/types"
 )
@@ -330,5 +334,81 @@ func TestInstanceVolumesAndNodeFeatures(t *testing.T) {
 	s.NodeReported(ctx, "n1", "v0", "", nil, types.NodeMetrics{})
 	if n, _ := s.Node(ctx, "n1"); n.Has(types.FeatureVolumes) {
 		t.Fatal("an older agent kept the newer one's features")
+	}
+}
+
+// Migration 7 gathers the old builder settings (builder selected,
+// builder-dockerfile, builder-compose, ps procfile-path) into the builder
+// plugin, and makes apps last deployed from an image into image apps.
+func TestBuilderSettingsMigration(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "jokku.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := &Store{db: db, now: time.Now}
+	for _, m := range migrations[:6] {
+		if _, err := db.ExecContext(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.ExecContext(ctx, "PRAGMA user_version = 6")
+	for _, app := range []string{"web", "shop", "cache", "plain"} {
+		if _, err := old.CreateApp(ctx, app); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, p := range [][4]string{
+		{"web", "builder-dockerfile", "dockerfile-path", "docker/prod.Dockerfile"},
+		{"web", "ps", "procfile-path", "Procfile.prod"},
+		{"web", "builder", "build-dir", "api"},
+		{"shop", "builder", "selected", "compose"},
+		{"shop", "builder-compose", "compose-file", "prod.yml"},
+		{"shop", "builder-dockerfile", "dockerfile-path", "ignored"},
+		{"cache", "builder-dockerfile", "dockerfile-path", "ignored"},
+		{"", "builder-dockerfile", "dockerfile-path", "ignored"},
+		{"", "ps", "procfile-path", "Procfile.all"},
+	} {
+		if err := old.SetProperty(ctx, p[0], p[1], p[2], p[3]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, d := range [][3]string{
+		{"cache", "git", "succeeded"}, {"cache", "image", "succeeded"}, {"cache", "git", "failed"},
+		{"plain", "image", "succeeded"}, {"plain", "git", "succeeded"},
+	} {
+		dep, err := old.CreateDeploy(ctx, d[0], d[1], "redis:7", "me")
+		if err != nil {
+			t.Fatal(err)
+		}
+		old.SetDeployStatus(ctx, dep.ID, d[2], "")
+	}
+	db.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for app, want := range map[string]map[string]string{
+		"web":   {"file": "docker/prod.Dockerfile", "procfile": "Procfile.prod", "build-dir": "api"},
+		"shop":  {"type": "compose", "file": "prod.yml"},
+		"cache": {"type": "image", "image": "redis:7"},
+		"plain": {},
+		"":      {"procfile": "Procfile.all"},
+	} {
+		got, err := s.Properties(ctx, app, "builder")
+		if err != nil || !maps.Equal(got, want) {
+			t.Errorf("%q builder properties = %v, %v; want %v", app, got, err, want)
+		}
+	}
+	for _, plugin := range []string{"builder-dockerfile", "builder-compose"} {
+		if got, _ := s.Properties(ctx, "web", plugin); len(got) != 0 {
+			t.Errorf("%s left behind: %v", plugin, got)
+		}
+	}
+	if got, _ := s.Properties(ctx, "web", "ps"); len(got) != 0 {
+		t.Errorf("ps properties left behind: %v", got)
 	}
 }

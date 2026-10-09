@@ -6,7 +6,7 @@ import (
 )
 
 // RegistryLogin is a credential for pulling images from a private registry,
-// used by every build (git:from-image and Dockerfile FROM lines alike).
+// used by every build (builder:image and Dockerfile FROM lines alike).
 type RegistryLogin struct {
 	Server    string
 	Username  string

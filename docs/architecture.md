@@ -179,9 +179,9 @@ Every deploy, however it starts, becomes the same thing: **a source tarball
 | `git push jokku main` | The `pre-receive` hook runs `git archive <rev>` (it can see the quarantined objects) and streams the tarball to the API. Build output streams back as `remote:` lines. A failed deploy rejects the push. |
 | `git:sync app <repo> [ref] --build` | Control fetches the repo (deploy key / `git:auth`), archives the ref, deploys. |
 | `git:from-archive app <url>` | Control downloads the tarball and deploys it. |
-| `git:from-image app <image>` | A one-line Dockerfile, `FROM <image>`, goes through the same build: BuildKit pulls the image and it is converted like any other. `ps:rebuild` pulls the tag again. |
+| `builder:image app <image>` | A one-line Dockerfile, `FROM <image>`, goes through the same build: BuildKit pulls the image and it is converted like any other. The app becomes an image app: `ps:rebuild` pulls the tag again, and pushes are refused until `builder:dockerfile` or `builder:compose`. |
 | HTTPS API | Upload a tarball, as above. |
-| `ps:rebuild app` | Rebuilds the last deployed source. |
+| `ps:rebuild app` | Rebuilds the last pushed source, or pulls an image app's image again. |
 
 Long-running calls stream newline-delimited JSON events
 (`{"type":"log","message":"..."}` ... `{"type":"done","status":"succeeded"}`).
@@ -205,13 +205,13 @@ source.tar --> BuildKit (Dockerfile) --> OCI image --> flatten layers --> rootfs
 ```
 
 1. **Build.** `buildctl` against a local `buildkitd` builds the Dockerfile
-   (`builder-dockerfile:set app dockerfile-path Dockerfile.prod`) to an OCI
+   (`builder:dockerfile app Dockerfile.prod`) to an OCI
    image. Build args come from `docker-options:add app build "--build-arg X"`.
    Images from private registries are pulled with the logins saved by
    `registry:login`, handed to BuildKit for that build only.
 2. **Convert.** The image's layers are flattened (whiteouts applied) and
    written as an ext4 image; the image config is kept as JSON. This also
-   handles `git:from-image`, so registry images and Dockerfile builds share
+   handles `builder:image`, so registry images and Dockerfile builds share
    one path.
 3. **Release.** An immutable, numbered record: artifact digest, process
    types, config vars snapshot, resources. `config:set` creates a new release
@@ -545,12 +545,11 @@ just because the control node stopped listing it. Leftovers of moves
 
 ## Compose apps
 
-`builder:set app selected compose` deploys the app from a compose file
-instead of a Dockerfile. Pushing to the app then deploys every service in the
-file as one Jokku app, and each service becomes a process type with its own
-image. The file is `compose.yaml` (or `compose.yml`, `docker-compose.yaml`,
-`docker-compose.yml`) in the build dir, or `builder-compose:set app
-compose-file <path>`.
+`builder:compose app [<path>]` deploys the app from a compose file instead
+of a Dockerfile. Pushing to the app then deploys every service in the file as
+one Jokku app, and each service becomes a process type with its own image.
+The file is `<path>`, or else `compose.yaml` (or `compose.yml`,
+`docker-compose.yaml`, `docker-compose.yml`), in the build dir.
 
 The file is read with compose-go, the loader docker compose itself uses, so
 interpolation, `extends` within the file, profiles (`COMPOSE_PROFILES`) and
@@ -629,7 +628,7 @@ SQLite (WAL) at `/var/lib/jokku/jokku.db` on the control node. Main tables:
 | `apps` | name, locked, current release |
 | `config_vars` | per app, plus `app_id = 0` for global |
 | `domains` | per app, plus global |
-| `properties` | generic `(app, plugin, key) -> value` behind every Dokku-style `*:set` / `*:report` command (`git:set`, `checks:set`, `builder-dockerfile:set`, ...) |
+| `properties` | generic `(app, plugin, key) -> value` behind every Dokku-style `*:set` / `*:report` command (`git:set`, `checks:set`, `builder:set`, ...); the `builder` plugin's `type`, `file` and `image` are set only by `builder:dockerfile`, `builder:compose` and `builder:image` |
 | `formations` / `resources` | `ps:scale` quantities and `resource:limit` sizes per process type |
 | `releases` / `deploys` | immutable releases, deploy history and status |
 | `instances` | desired and observed state of every microVM, with the volumes it mounts |
@@ -742,7 +741,7 @@ stays the stable entry point, including for versions that predate the command.
   `install.sh --join`, `nodes:*`, scheduler, artifact distribution, cluster
   cert storage, failover, `jokku top`, events.
 - **M3 – remote API.** HTTPS listener, tokens, `git:sync`, deploy keys,
-  `git:from-image` and `registry:login` (*done*), `git:from-archive`.
+  `builder:image` and `registry:login` (*done*), `git:from-archive`.
 - **M4 – depth.** The Firecracker `jailer`, `run`, `enter` via vsock (*done*, with
   `storage:export`/`storage:import`), volumes (local disks that move with their instance:
   *done*; object storage next), `releases:rollback`, app.json health checks, log drains,

@@ -10,54 +10,37 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/wes/jokku/internal/props"
+	"github.com/wes/jokku/internal/compose"
 )
 
 // Settings are the build-related properties resolved for one app.
 type Settings struct {
-	Builder        string // "" or dockerfile, or compose
+	Builder        string // dockerfile, compose or image
 	BuildDir       string
 	DockerfilePath string
 	ProcfilePath   string
-	ComposeFile    string
+	ComposeFile    string // "" finds the usual names
+	Image          string // what an image app runs
 }
 
 func (p *Pipeline) settings(ctx context.Context, app string) (Settings, error) {
-	get := func(plugin string) (map[string]string, error) {
-		pl, _ := props.Lookup(plugin)
-		global, err := p.Store.Properties(ctx, "", plugin)
-		if err != nil {
-			return nil, err
+	b, err := p.computed(ctx, app, "builder")
+	if err != nil {
+		return Settings{}, err
+	}
+	s := Settings{
+		Builder: b["type"], BuildDir: b["build-dir"], ProcfilePath: b["procfile"], Image: b["image"],
+		DockerfilePath: "Dockerfile",
+	}
+	switch s.Builder {
+	case "dockerfile":
+		if b["file"] != "" {
+			s.DockerfilePath = b["file"]
 		}
-		appProps, err := p.Store.Properties(ctx, app, plugin)
-		if err != nil {
-			return nil, err
-		}
-		return props.Compute(pl, appProps, global), nil
+	case "compose":
+		s.ComposeFile = b["file"]
 	}
-	builder, err := get("builder")
-	if err != nil {
-		return Settings{}, err
-	}
-	dockerfile, err := get("builder-dockerfile")
-	if err != nil {
-		return Settings{}, err
-	}
-	composeProps, err := get("builder-compose")
-	if err != nil {
-		return Settings{}, err
-	}
-	ps, err := get("ps")
-	if err != nil {
-		return Settings{}, err
-	}
-	return Settings{
-		Builder:        builder["selected"],
-		BuildDir:       builder["build-dir"],
-		DockerfilePath: dockerfile["dockerfile-path"],
-		ProcfilePath:   ps["procfile-path"],
-		ComposeFile:    composeProps["compose-file"],
-	}, nil
+	return s, nil
 }
 
 // Source is what Inspect learned about a source tarball.
@@ -66,8 +49,9 @@ type Source struct {
 	Procfile   map[string]string // process type -> command; nil without a Procfile
 }
 
-// Inspect checks a source tarball has a Dockerfile and reads its Procfile.
-func Inspect(tarPath string, s Settings) (*Source, error) {
+// Inspect checks app's source tarball has a Dockerfile and reads its
+// Procfile.
+func Inspect(app, tarPath string, s Settings) (*Source, error) {
 	f, err := os.Open(tarPath)
 	if err != nil {
 		return nil, err
@@ -79,6 +63,7 @@ func Inspect(tarPath string, s Settings) (*Source, error) {
 	procfile := cleanTarPath(path.Join(base, s.ProcfilePath))
 
 	src := &Source{}
+	composeFile := "" // for a hint when there is no Dockerfile
 	tr := tar.NewReader(f)
 	for {
 		h, err := tr.Next()
@@ -91,7 +76,11 @@ func Inspect(tarPath string, s Settings) (*Source, error) {
 		if h.Typeflag != tar.TypeReg {
 			continue
 		}
-		switch cleanTarPath(h.Name) {
+		name := cleanTarPath(h.Name)
+		if dir, file := path.Split(name); composeFile == "" && path.Clean("/"+dir) == path.Clean("/"+base) && slices.Contains(compose.DefaultFiles, file) {
+			composeFile = name
+		}
+		switch name {
 		case dockerfile:
 			src.Dockerfile = dockerfile
 		case procfile:
@@ -105,7 +94,10 @@ func Inspect(tarPath string, s Settings) (*Source, error) {
 		}
 	}
 	if src.Dockerfile == "" {
-		return nil, fmt.Errorf("no %s found in the source; Jokku builds apps from a Dockerfile (set another path with: jokku builder-dockerfile:set <app> dockerfile-path <path>)", dockerfile)
+		if composeFile != "" {
+			return nil, fmt.Errorf("no %s found in the source, but there is %s; to deploy it: jokku builder:compose %s", dockerfile, composeFile, app)
+		}
+		return nil, fmt.Errorf("no %s found in the source; Jokku builds apps from a Dockerfile (to use another one: jokku builder:dockerfile %s <path>)", dockerfile, app)
 	}
 	return src, nil
 }

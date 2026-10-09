@@ -63,6 +63,7 @@ var serverCommands = []*Command{
 		Flags: []Flag{{Name: "key-name", Value: "NAME", Help: "Name of the SSH key that authenticated"}}, Run: runSSHCommand},
 	{Name: "git-hook", Hidden: true, Local: true, serverOnly: true, Args: "<app>", MinArgs: 1, Run: runGitHook},
 	{Name: "api:dial-stdio", Hidden: true, Local: true, Run: runDialStdio},
+	restoreClusterCommand,
 }
 
 func serverSocket() string {

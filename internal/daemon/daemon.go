@@ -166,7 +166,7 @@ func runControl(ctx context.Context, cfg Config, log *slog.Logger) error {
 
 	ctl := cluster.New(&cluster.Controller{
 		Store: st, Log: log, Self: nodeName, ClusterCIDR: cidr, Version: version.Version,
-		Address: net.JoinHostPort(advertise, strconv.Itoa(cluster.APIPort)), Pin: pin,
+		Address: net.JoinHostPort(advertise, strconv.Itoa(cluster.APIPort)), Pin: pin, DataDir: cfg.DataDir,
 	})
 	go backfillChecksums(ctx, st, filepath.Join(cfg.DataDir, "artifacts"), log)
 

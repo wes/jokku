@@ -23,12 +23,15 @@ import (
 //	<id>.ext4.moved     the old owner's disk after the final pass handed it over
 //
 // Those are deleted once the control node stops listing the volume for this
-// node. The disk itself is deleted only on an explicit destroy.
+// node. The disk itself is deleted only on an explicit destroy; when the
+// volume was restored onto another node while this one was down, the disk
+// is set aside as <id>.ext4.stale until the user discards it.
 const (
 	sufIncoming = ".incoming"
 	sufReceived = ".received"
 	sufMoved    = ".moved"
-	sufNew      = ".new" // being created
+	sufNew      = ".new"   // being created
+	sufStale    = ".stale" // set aside: the volume was restored elsewhere while this node was down
 )
 
 // finalPassAfter is how little a copy pass (made while the app runs) must
@@ -51,6 +54,9 @@ type vol struct {
 	// one is under way: no instance starts with the disk until it is over.
 	restore   string
 	restoring bool
+	// autoRestore: the volume would be restored elsewhere if this node were
+	// cut off, so its instances stop when it may be (see fence.go).
+	autoRestore bool
 }
 
 func (a *Agent) volumePath(id, suffix string) string {
@@ -87,7 +93,7 @@ func (a *Agent) syncVolumes(ctx context.Context, st *types.NodeState, attached m
 	for _, spec := range st.Volumes {
 		listed[spec.ID] = true
 		v := a.vol(spec.ID)
-		a.setVol(spec.ID, func(v *vol) { v.role, v.restoring = spec.Role, spec.Restore != nil })
+		a.setVol(spec.ID, func(v *vol) { v.role, v.restoring, v.autoRestore = spec.Role, spec.Restore != nil, spec.AutoRestore })
 		var err error
 		switch spec.Role {
 		case types.VolumeOwner:
@@ -113,6 +119,12 @@ func (a *Agent) syncVolumes(ctx context.Context, st *types.NodeState, attached m
 		case types.VolumeDestroy:
 			a.stopCopy(spec.ID)
 			err = a.destroyVolume(spec, attached)
+		case types.VolumeStale:
+			a.stopCopy(spec.ID)
+			err = a.keepStale(spec, attached)
+		case types.VolumeDiscard:
+			a.stopCopy(spec.ID)
+			err = a.discardStale(spec)
 		}
 		if err != nil {
 			a.logOnce("volume "+spec.ID, err)
@@ -155,6 +167,11 @@ func (a *Agent) own(ctx context.Context, spec types.VolumeSpec, attached map[str
 	path := a.volumePath(spec.ID, "")
 	if !exists(path) {
 		switch {
+		case spec.Restore != nil:
+			// Being restored from a backup, which will be the disk once the
+			// instances using it have stopped (restoreHere).
+			a.setVol(spec.ID, func(v *vol) { v.state = types.VolumeMissing })
+			return nil
 		case exists(a.volumePath(spec.ID, sufReceived)):
 			// A move to this node is done.
 			if err := os.Rename(a.volumePath(spec.ID, sufReceived), path); err != nil {
@@ -296,6 +313,44 @@ func (a *Agent) destroyVolume(spec types.VolumeSpec, attached map[string]bool) e
 		}
 	}
 	a.setVol(spec.ID, func(v *vol) { v.state = types.VolumeDestroyed })
+	return nil
+}
+
+// keepStale sets aside this node's disk of a volume that was restored onto
+// another node while this one was down: it may hold writes newer than the
+// backup, so it is kept (.stale), but never used again.
+func (a *Agent) keepStale(spec types.VolumeSpec, attached map[string]bool) error {
+	path := a.volumePath(spec.ID, "")
+	if exists(path) {
+		if attached[path] {
+			return nil // its VM is stopping
+		}
+		stale := a.volumePath(spec.ID, sufStale)
+		if exists(stale) {
+			stale += "-" + time.Now().UTC().Format("20060102T150405Z")
+		}
+		if err := os.Rename(path, stale); err != nil {
+			return err
+		}
+		a.Log.Warn("kept this node's copy of a volume restored elsewhere while it was down", "app", spec.App, "volume", spec.Name, "path", stale)
+	}
+	used := 0
+	if copies, _ := filepath.Glob(a.volumePath(spec.ID, sufStale) + "*"); len(copies) > 0 {
+		used = allocatedMB(copies[0])
+	}
+	a.setVol(spec.ID, func(v *vol) { v.state, v.usedMB = types.VolumeKept, used })
+	return nil
+}
+
+// discardStale deletes the copies keepStale set aside.
+func (a *Agent) discardStale(spec types.VolumeSpec) error {
+	copies, _ := filepath.Glob(a.volumePath(spec.ID, sufStale) + "*")
+	for _, c := range copies {
+		if err := os.Remove(c); err != nil {
+			return err
+		}
+	}
+	a.setVol(spec.ID, func(v *vol) { v.state = types.VolumeDiscarded })
 	return nil
 }
 

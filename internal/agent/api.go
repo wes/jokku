@@ -41,6 +41,7 @@ func (a *Agent) Handler(token string) http.Handler {
 		mux.HandleFunc("POST /v1/volumes/{id}/backup", authorized(a.serveBackup))
 	}
 	mux.HandleFunc("POST /v1/volumes/{id}/copy", a.serveVolume)
+	mux.HandleFunc("GET /v1/contact", a.serveContact)
 	return mux
 }
 

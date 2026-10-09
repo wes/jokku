@@ -38,6 +38,9 @@ type Controller struct {
 	// AgentAddr is where a node's agent API listens, host:port. The default
 	// is its mesh address and AgentPort; tests override it.
 	AgentAddr func(store.Node) string
+	// DataDir is the control node's data directory, which cluster backups
+	// copy.
+	DataDir string
 
 	mu        sync.Mutex
 	changed   chan struct{} // closed and replaced on every change
@@ -48,6 +51,8 @@ type Controller struct {
 	volMu       sync.Mutex           // one volume decision at a time; guards volAttempts
 	volAttempts map[string]time.Time // volume ID -> last attempt to move it off a draining node
 	backups     sync.Map             // volume ID -> true while it is being backed up
+	scheduler   backupScheduler
+	failover    failover
 }
 
 func New(c *Controller) *Controller {
@@ -109,6 +114,9 @@ func (c *Controller) Run(ctx context.Context) {
 	for {
 		if err := c.tick(ctx); err != nil && ctx.Err() == nil {
 			c.Log.Error("controller", "err", err)
+		}
+		if err := c.tickBackups(ctx); err != nil && ctx.Err() == nil {
+			c.Log.Error("scheduling backups", "err", err)
 		}
 		select {
 		case <-ctx.Done():

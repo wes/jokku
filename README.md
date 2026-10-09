@@ -87,8 +87,12 @@ A live view of the machines, apps, instances and recent events, with CPU and
 memory for each. Press `6` for **Traffic**: every request flies across its
 app's lane as a dot (green, yellow for 4xx, red for 5xx) and lands on the
 instance and server that answered, with requests per second, latency and error
-rate updating live. Over SSH it needs a terminal, so use `ssh -t
-jokku@your-server top` (or put `-t` in your alias).
+rate updating live. Press `7` for **Backups**: every volume and the cluster
+itself, backed up or not, with their last and next backups, a chart of
+recent ones, and what they keep; `space` turns a volume's backups on or off,
+`b` backs it up now, `s` changes how often and `a` turns automatic restore
+on or off. Over SSH it needs a terminal, so use `ssh -t jokku@your-server
+top` (or put `-t` in your alias).
 
 ## Deploy an app
 
@@ -325,9 +329,9 @@ written.
   copy and starts on the new server. Move one yourself with
   `jokku storage:move myapp data server-2`.
 - **If a server dies,** apps with volumes on it wait for it to come back
-  instead of starting elsewhere, because their data is there. Keep
-  [backups](#back-up-volumes) of anything that matters: they can be
-  restored onto another server.
+  instead of starting elsewhere, because their data is there, unless the
+  volumes are [backed up](#back-up-volumes): then, after five minutes, they
+  are restored onto another server from their latest backup.
 
 To see a volume's files, `jokku enter myapp web ls /app/data`. To copy them
 out or back in, as a backup or to move data between servers:
@@ -361,10 +365,16 @@ which volumes go there:
 ```sh
 jokku backups:destination-add tigris --endpoint https://fly.storage.tigris.dev \
   --bucket my-backups --access-key-id tid_xxx      # asks for the secret key
-jokku backups:set myapp data tigris                # under jokku/myapp/data in the bucket
-jokku backups:run myapp data                       # back it up now
+jokku backups:set myapp data tigris                # under jokku/myapp/data, every 15 minutes
 jokku backups:list myapp data
+jokku backups:run myapp data                       # back it up now, too
 ```
+
+Each volume is backed up every 15 minutes, keeping every backup from the
+last 24 hours and the last one of each day for 30 days. Change that with
+`backups:set` flags: `--every 1h` (or `off`, for only when you run
+`backups:run`), `--keep-recent 48h`, `--keep-daily 14`. Older backups are
+deleted after each backup, and then the blocks no remaining backup uses.
 
 Backups are encrypted with a key Jokku makes the first time you add a
 destination. **Save the key somewhere safe, away from your servers:** a
@@ -374,8 +384,8 @@ again. Pass `--no-encrypt` to `destination-add` for a destination that
 stores backups unencrypted.
 
 Each backup is complete on its own, but only uploads what changed since the
-last one. The disk is read in blocks, and a block already in the bucket is
-never uploaded again. While a backup runs, the app keeps running. Its writes
+previous one, so a backup every 15 minutes costs little. The disk is read in
+blocks, and a block already in the bucket is never uploaded again. While a backup runs, the app keeps running. Its writes
 to the volume pause for a moment at the end, so the backup is the disk as it
 was at one instant, the way a power cut would leave it; databases recover
 from that the same way they do after a crash.
@@ -391,9 +401,44 @@ jokku backups:restore myapp data --node server-2   # its server is down: restore
 The current data is backed up first, so a restore can be undone. The backup
 downloads while the app runs; then the app restarts with the restored disk.
 
-For now, backups run when you ask. Schedules, and restoring automatically
-onto another server when one dies, come next. `backups:report` shows when
-each volume was last backed up.
+`backups:report` shows each volume's schedule, its last and next backups,
+any failure, and what its backups take up in the bucket; `jokku top`
+(press `7`) shows it all at a glance and lets you turn backups on and off.
+
+**When a server dies,** each backed-up volume on it is restored onto
+another server from its latest backup once the server has been gone for
+five minutes, and its app starts there. Anything written after that backup
+is lost, unless the server comes back: then it keeps its copy of the disk
+aside, never used again. `storage:report` shows where, and
+`jokku storage:discard-old-copy myapp data` deletes it once you have what
+you need from it. `backups:set ... --auto-restore off` makes a volume wait
+for its server instead.
+
+A server that is only cut off from the others, not dead, would otherwise
+keep running its copy of the app while the restored one runs too. So a
+server that loses touch with the control node for two minutes stops its
+apps with backed-up volumes, unless it is clearly the control node that is
+down (the servers it can reach don't hear from it either, and they are most
+of the cluster). In a two-server cluster that means a worker stops those
+apps whenever it can't reach the control node for two minutes.
+
+**The cluster itself** is backed up too: adding your first destination also
+backs up the control node every hour. That covers its database (apps, config
+vars, domains, settings, the backup key) and identity, and the images of
+recent releases. To rebuild a lost control node, install Jokku on a new
+server with the same name (and, so the other servers reconnect, the same
+address), then:
+
+```sh
+sudo jokku restore-cluster --endpoint https://fly.storage.tigris.dev \
+  --bucket my-backups --access-key-id tid_xxx     # asks for the secret key and the backup key
+```
+
+Apps start again from their releases, and volumes come back from their own
+backups. Remove servers that are gone for good with `jokku nodes:remove
+<name> --force`, so their volumes come back elsewhere. `jokku
+backups:cluster <destination> --every 6h` changes where and how often, and
+`backups:cluster-list` lists them.
 
 ### Deploy from GitHub Actions
 

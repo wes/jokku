@@ -55,6 +55,34 @@ func init() {
 	cluster.DrainGrace = 0
 	cluster.PollTimeout = 2 * time.Second
 	cluster.PollRecheck = 200 * time.Millisecond
+	cluster.FailoverAfter = 4 * time.Second
+	cluster.RetryFailoverAfter = time.Second
+	agent.FenceAfter = time.Second
+	agent.FenceCheckEvery = 200 * time.Millisecond
+}
+
+// cuttable is a node's way to the control node, which a test can cut, as a
+// network partition would.
+type cuttable struct {
+	agent.ControlPlane
+	cut *atomic.Bool
+}
+
+var errCut = errors.New("cut off from the control node")
+
+func (c cuttable) State(ctx context.Context, etag string) (*types.NodeState, error) {
+	if c.cut.Load() {
+		time.Sleep(200 * time.Millisecond)
+		return nil, errCut
+	}
+	return c.ControlPlane.State(ctx, etag)
+}
+
+func (c cuttable) Report(ctx context.Context, st *types.NodeStatus) error {
+	if c.cut.Load() {
+		return errCut
+	}
+	return c.ControlPlane.Report(ctx, st)
 }
 
 // fakeRuntime pretends to run VMs: a started VM is "running" until stopped
@@ -401,6 +429,7 @@ type node struct {
 	api        *httptest.Server // the agent API, where other nodes copy volumes from
 	cancel     context.CancelFunc
 	stopped    chan struct{}
+	cut        atomic.Bool // cut off from the control node
 }
 
 type harness struct {
@@ -443,7 +472,7 @@ func newHarness(t *testing.T) *harness {
 		disks: &diskTracker{attached: map[string]string{}}, apiAddrs: map[string]string{}}
 	h.ctl = cluster.New(&cluster.Controller{
 		Store: st, Log: log, Self: "control", ClusterCIDR: netip.MustParsePrefix("10.210.0.0/16"),
-		Version: "test", Pin: pin, TickEvery: 200 * time.Millisecond,
+		Version: "test", Pin: pin, TickEvery: 200 * time.Millisecond, DataDir: dir,
 		AgentAddr: func(n store.Node) string {
 			h.apiMu.Lock()
 			defer h.apiMu.Unlock()
@@ -542,11 +571,22 @@ func (h *harness) startNode(name, token, agentToken, dir string, plane agent.Con
 	ctx, cancel := context.WithCancel(h.ctx)
 	n.cancel, n.stopped = cancel, make(chan struct{})
 	a := agent.New(agent.Config{
-		Control: plane, Runtime: n.rt, Mesh: n.mesh, Proxy: n.proxy, Resolver: n.resolver, DataDir: dir, Version: "test", Log: h.log,
+		Control: cuttable{plane, &n.cut}, Runtime: n.rt, Mesh: n.mesh, Proxy: n.proxy, Resolver: n.resolver, DataDir: dir, Version: "test", Log: h.log,
 		GCArtifacts: name != "control", ReconcileEvery: 100 * time.Millisecond, ReportEvery: 200 * time.Millisecond, UpFor: time.Second,
 		Metrics: func() types.NodeMetrics { return types.NodeMetrics{CPUs: 4, MemoryMB: 4096} },
 	})
-	n.api = httptest.NewServer(a.Handler(n.agentToken))
+	handler := a.Handler(n.agentToken)
+	if name == "control" {
+		// The control node's agent goes down with it.
+		inner := handler
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if h.down.Load() {
+				panic(http.ErrAbortHandler)
+			}
+			inner.ServeHTTP(w, r)
+		})
+	}
+	n.api = httptest.NewServer(handler)
 	h.apiMu.Lock()
 	h.apiAddrs[name] = n.api.Listener.Addr().String()
 	h.apiMu.Unlock()

@@ -104,8 +104,10 @@ several namespaces. In Jokku it is one command, `builder:dockerfile`,
 | `storage:export <app> <name> [--live] > file.tar.gz`, `storage:import <app> <name> [--clear] [--keep-owners] < file.tar.gz` | ➕ ✅ |
 | `storage:ensure-directory` | ✖ volumes are disks, created by `storage:mount` |
 | `backups:destination-add <name> --endpoint --bucket [--region] --access-key-id [--no-encrypt]`, `backups:destinations`, `backups:destination-remove`, `backups:key` | ➕ ✅ S3-compatible buckets; encrypted with a key you keep |
-| `backups:set <app> <volume> <destination> [<path>]`, `backups:unset`, `backups:run`, `backups:list`, `backups:restore <app> <volume> [<backup>] [--node] [--skip-backup]`, `backups:report` | ➕ ✅ incremental, block by block |
-| Scheduled backups, and restoring onto another node automatically when one dies | ➕ 🔜 next |
+| `backups:set <app> <volume> <destination> [<path>] [--every] [--keep-recent] [--keep-daily] [--auto-restore on\|off]`, `backups:unset`, `backups:run`, `backups:list`, `backups:restore <app> <volume> [<backup>] [--node] [--skip-backup]`, `backups:report` | ➕ ✅ incremental, block by block; every 15 minutes by default; restored onto another node when its node is down 5 minutes |
+| `storage:discard-old-copy <app> <name>` (the disk a node kept after its volume was restored elsewhere) | ➕ ✅ |
+| `backups:cluster <destination> [<path>] [--every] [--keep-recent] [--keep-daily]`, `backups:cluster-unset`, `backups:cluster-run`, `backups:cluster-list` (the control node's database, identity and recent releases; hourly once a destination exists) | ➕ ✅ |
+| `jokku restore-cluster --endpoint --bucket --access-key-id [--path] [--backup]` (as root, on a new control node) | ➕ ✅ |
 | Object-storage volumes (`--type s3`), shared by many instances | 🔜 later |
 | `postgres:*`, `redis:*`, ... | 🔜 later, as apps plus volumes plus `*:link` |
 | `plugin:*` | ✖ |

@@ -72,6 +72,7 @@ func (c *Controller) ComputeState(ctx context.Context, name string) (*types.Node
 			sub, ip := NodeSubnet(c.ClusterCIDR, n.SubnetIndex)
 			st.Peers = append(st.Peers, types.Peer{
 				Name: n.Name, PublicKey: n.WGPublicKey, Endpoint: n.WGEndpoint, Subnet: sub.String(), MeshIP: ip.String(),
+				AgentAddr: c.agentAddr(n),
 			})
 		}
 	}

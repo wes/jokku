@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wes/jokku/internal/api"
 	"github.com/wes/jokku/internal/backup"
@@ -435,8 +436,21 @@ func TestBackupsCLI(t *testing.T) {
 	}
 	key := regexp.MustCompile(`jbk1_\S+`).FindString(out)
 	out, errOut, code = jokku(t, "s3cret\n", append(add, "--force")...)
-	if code != 0 || !strings.Contains(out, key) || !strings.Contains(out, "Added tigris: bucket b at https://fly.storage.tigris.dev, encrypted") {
+	if code != 0 || !strings.Contains(out, key) || !strings.Contains(out, "Added tigris: bucket b at https://fly.storage.tigris.dev, encrypted") ||
+		!strings.Contains(out, "The cluster itself is backed up there every hour") {
 		t.Fatalf("destination-add --force: exit %d\n%s%s", code, out, errOut)
+	}
+	if out := mustJokku(t, "backups:cluster", "tigris", "--every", "6h"); !strings.Contains(out, "Backing up the cluster to tigris, under jokku/cluster, every 6h") {
+		t.Errorf("backups:cluster = %q", out)
+	}
+	if out := mustJokku(t, "backups:cluster-list"); !strings.Contains(out, "none yet") {
+		t.Errorf("backups:cluster-list = %q", out)
+	}
+	if out := mustJokku(t, "backups:report"); !strings.Contains(out, "Cluster backups") || !strings.Contains(out, "every 6h") {
+		t.Errorf("backups:report without an app = %q", out)
+	}
+	if _, errOut, code := jokku(t, "", "backups:cluster", "tigris", "--auto-restore", "on"); code == 0 {
+		t.Errorf("backups:cluster took --auto-restore: %q", errOut)
 	}
 	if out := mustJokku(t, "backups:key"); !strings.Contains(out, key) {
 		t.Errorf("backups:key doesn't show the key: %q", out)
@@ -453,6 +467,39 @@ func TestBackupsCLI(t *testing.T) {
 	}
 	if _, errOut, code := jokku(t, "", "backups:set", "db", "pg", "tigris", "../up"); code == 0 || !strings.Contains(errOut, "not a path") {
 		t.Errorf("a bad path: exit %d, %q", code, errOut)
+	}
+	report := func(flag string) string {
+		t.Helper()
+		return strings.TrimSuffix(mustJokku(t, "backups:report", "db", "--backups-"+flag), "\n")
+	}
+	if report("schedule") != "every 15m" || report("keep") != "every backup from the last 24h, and the last one of each day for 30 days" {
+		t.Errorf("default schedule: %q, keeping %q", report("schedule"), report("keep"))
+	}
+	mustJokku(t, "backups:set", "db", "pg", "tigris", "--every", "1h", "--keep-recent", "2d", "--keep-daily", "7")
+	mustJokku(t, "backups:set", "db", "pg", "tigris") // keeps the schedule it has
+	if report("schedule") != "every 1h" || report("keep") != "every backup from the last 2d, and the last one of each day for 7 days" {
+		t.Errorf("set schedule: %q, keeping %q", report("schedule"), report("keep"))
+	}
+	if out := mustJokku(t, "backups:set", "db", "pg", "tigris", "--every", "off"); !strings.Contains(out, "when asked") {
+		t.Errorf("--every off: %q", out)
+	}
+	if got := report("auto-restore"); got != "it is restored onto another node from its latest backup after 5m" {
+		t.Errorf("default auto restore: %q", got)
+	}
+	mustJokku(t, "backups:set", "db", "pg", "tigris", "--auto-restore", "off")
+	if got := report("auto-restore"); !strings.Contains(got, "waits for that node") {
+		t.Errorf("--auto-restore off: %q", got)
+	}
+	if _, errOut, code := jokku(t, "", "backups:set", "db", "pg", "tigris", "--auto-restore", "maybe"); code == 0 || !strings.Contains(errOut, "on or off") {
+		t.Errorf("--auto-restore maybe: exit %d, %q", code, errOut)
+	}
+	if _, errOut, code := jokku(t, "", "storage:discard-old-copy", "db", "pg", "--force"); code == 0 || !strings.Contains(errOut, "no node keeps an old copy") {
+		t.Errorf("discarding a copy nobody keeps: exit %d, %q", code, errOut)
+	}
+	for _, bad := range [][]string{{"--every", "1m"}, {"--every", "soon"}, {"--keep-recent", "-1h"}, {"--keep-daily", "x"}} {
+		if _, errOut, code := jokku(t, "", append([]string{"backups:set", "db", "pg", "tigris"}, bad...)...); code == 0 {
+			t.Errorf("backups:set %v passed: %q", bad, errOut)
+		}
 	}
 	if out := mustJokku(t, "backups:report", "db", "--backups-path"); out != "jokku/db/pg\n" {
 		t.Errorf("backups:report = %q", out)
@@ -472,8 +519,23 @@ func TestBackupsCLI(t *testing.T) {
 		t.Errorf("removing a destination in use: exit %d, %q", code, errOut)
 	}
 	mustJokku(t, "backups:unset", "db", "pg")
+	if _, errOut, code := jokku(t, "", "backups:destination-remove", "tigris"); code == 0 || !strings.Contains(errOut, "the cluster is backed up to tigris") {
+		t.Errorf("removing the cluster's destination: exit %d, %q", code, errOut)
+	}
+	mustJokku(t, "backups:cluster-unset")
 	mustJokku(t, "backups:destination-remove", "tigris")
 	if out := mustJokku(t, "backups:destinations"); !strings.Contains(out, "none") {
 		t.Errorf("backups:destinations after removing = %q", out)
+	}
+}
+
+func TestShortDuration(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		15 * time.Minute: "15m", time.Hour: "1h", 90 * time.Minute: "1h30m", 24 * time.Hour: "24h",
+		7 * 24 * time.Hour: "7d", 30 * time.Second: "30s",
+	} {
+		if got := shortDuration(d); got != want {
+			t.Errorf("shortDuration(%s) = %q, want %q", d, got, want)
+		}
 	}
 }

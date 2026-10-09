@@ -194,6 +194,10 @@ type Volume struct {
 	Status string        `json:"status"` // new | ready | missing | moving | restoring | destroying
 	Move   *VolumeMove   `json:"move,omitempty"`
 	Mounts []VolumeMount `json:"mounts"`
+	// OldCopy is the disk a node kept after the volume was restored onto
+	// another node while it was down: it may hold writes newer than the
+	// backup. storage:discard-old-copy deletes it.
+	OldCopy *VolumeOldCopy `json:"old_copy,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -205,6 +209,11 @@ type VolumeMove struct {
 	State    string `json:"state"` // copying | synced (waiting for the instance to stop) | received
 	CopiedMB int    `json:"copied_mb"`
 	Error    string `json:"error,omitempty"`
+}
+
+type VolumeOldCopy struct {
+	Node string `json:"node"`
+	Disk string `json:"disk"` // where it is on Node, with .stale (or .stale-<time>) at the end
 }
 
 // VolumeMount puts a volume at Path in a process type's instances.
@@ -245,6 +254,9 @@ type BackupDestination struct {
 	SecretAccessKey string    `json:"secret_access_key,omitempty"`
 	Encrypt         bool      `json:"encrypt"`
 	CreatedAt       time.Time `json:"created_at"`
+	// BacksUpCluster, when a destination was just added, says it was made
+	// where the cluster itself is backed up (there was nowhere yet).
+	BacksUpCluster bool `json:"backs_up_cluster,omitempty"`
 }
 
 type CreateBackupDestinationRequest struct {
@@ -265,15 +277,26 @@ type BackupKey struct {
 	Saved bool   `json:"saved"`
 }
 
-// SetVolumeBackupRequest says where a volume is backed up. Path defaults
-// to jokku/<app>/<volume>.
+// SetVolumeBackupRequest says where a volume is backed up (Path defaults
+// to jokku/<app>/<volume>), how often (Every, a duration like 15m, 1h or
+// 1d, or "off" for only when asked), and how long backups are kept: every
+// one from the last KeepRecent, and the last of each of the last KeepDaily
+// days. Unset fields keep their current values, or the defaults.
 type SetVolumeBackupRequest struct {
 	Destination string `json:"destination"`
 	Path        string `json:"path,omitempty"`
+	Every       string `json:"every,omitempty"`
+	KeepRecent  string `json:"keep_recent,omitempty"`
+	KeepDaily   *int   `json:"keep_daily,omitempty"`
+	// AutoRestore, "on" (the default) or "off", restores the volume onto
+	// another node from its latest backup when its node is down a while.
+	AutoRestore string `json:"auto_restore,omitempty"`
 }
 
-// VolumeBackups is where a volume is backed up, and the backups there.
+// VolumeBackups is where a volume is backed up, and the backups there. With
+// Cluster, it is the cluster's own backups (App and Volume are empty).
 type VolumeBackups struct {
+	Cluster     bool         `json:"cluster,omitempty"`
 	App         string       `json:"app"`
 	Volume      string       `json:"volume"`
 	Destination string       `json:"destination"`
@@ -281,6 +304,19 @@ type VolumeBackups struct {
 	Backups     []BackupInfo `json:"backups,omitempty"` // newest first
 	Last        *BackupRun   `json:"last,omitempty"`    // the latest attempt, failed or not
 	Succeeded   *BackupRun   `json:"succeeded,omitempty"`
+
+	EverySeconds      int64     `json:"every_seconds"` // 0: only when asked
+	KeepRecentSeconds int64     `json:"keep_recent_seconds"`
+	KeepDaily         int       `json:"keep_daily"`
+	Next              time.Time `json:"next,omitzero"`
+	AutoRestore       bool      `json:"auto_restore"`
+	// FailoverSeconds is how long its node must be down before it is
+	// restored elsewhere.
+	FailoverSeconds int64 `json:"failover_seconds,omitempty"`
+	// What the backups take up in the bucket, as of the last count plus
+	// what backups added since.
+	StoredBytes   int64 `json:"stored_bytes"`
+	StoredBackups int   `json:"stored_backups"`
 }
 
 // BackupInfo is one backup in a bucket. The sizes are known for backups
@@ -300,6 +336,44 @@ type BackupRun struct {
 	Error      string    `json:"error,omitempty"`
 	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at,omitzero"`
+}
+
+// BackupsOverview is everything about backups at once, for jokku top: where
+// they go, the key (not its text), the cluster's own backups, and every
+// volume, backed up or not.
+type BackupsOverview struct {
+	Destinations  []BackupDestination `json:"destinations"`
+	Key           *BackupKeyStatus    `json:"key,omitempty"`
+	Cluster       *VolumeBackups      `json:"cluster,omitempty"`
+	ClusterRecent []BackupPoint       `json:"cluster_recent,omitempty"`
+	Volumes       []VolumeProtection  `json:"volumes"`
+}
+
+type BackupKeyStatus struct {
+	ID    string `json:"id"`
+	Saved bool   `json:"saved"`
+}
+
+// VolumeProtection is a volume and how it is backed up: Backups is nil
+// when it isn't.
+type VolumeProtection struct {
+	App     string         `json:"app"`
+	Volume  string         `json:"volume"`
+	Node    string         `json:"node,omitempty"`
+	SizeMB  int            `json:"size_mb"`
+	UsedMB  int            `json:"used_mb"`
+	Status  string         `json:"status"`
+	Mounts  []VolumeMount  `json:"mounts"`
+	Backups *VolumeBackups `json:"backups,omitempty"`
+	Recent  []BackupPoint  `json:"recent,omitempty"` // oldest first
+	OldCopy *VolumeOldCopy `json:"old_copy,omitempty"`
+}
+
+// BackupPoint is one recent backup attempt.
+type BackupPoint struct {
+	At       time.Time `json:"at"`
+	Status   string    `json:"status"`
+	NewBytes int64     `json:"new_bytes"`
 }
 
 // BackupResult is what one backup stored.

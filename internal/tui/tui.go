@@ -30,17 +30,18 @@ const (
 	instancesView
 	eventsView
 	trafficView
+	backupsView
 	logsView
 )
 
-var tabNames = []string{"Overview", "Nodes", "Apps", "Instances", "Events", "Traffic"}
+var tabNames = []string{"Overview", "Nodes", "Apps", "Instances", "Events", "Traffic", "Backups"}
 
 // Run starts the dashboard and blocks until the user quits.
 func Run(ctx context.Context, api *client.Client, in io.Reader, out io.Writer) error {
 	if f, ok := out.(*os.File); !ok || !term.IsTerminal(int(f.Fd())) {
 		return fmt.Errorf("jokku top needs a terminal; over ssh, use ssh -t")
 	}
-	m := &model{ctx: ctx, api: api, cursor: map[view]int{}}
+	m := &model{ctx: ctx, api: api, cursor: map[view]int{}, bkBusy: map[string]string{}}
 	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithInput(in), tea.WithOutput(out), tea.WithContext(ctx)).Run()
 	if err == tea.ErrProgramKilled {
 		return nil
@@ -67,6 +68,18 @@ type model struct {
 	logErr                error
 
 	tr *traffic
+
+	// The Backups view (backups.go).
+	bk          *types.BackupsOverview
+	bkErr       error
+	bkBusy      map[string]string // row -> what it is doing
+	bkFlash     string
+	bkFlashWarn bool
+	bkFlashAt   time.Time
+	bkConfirm   string // row whose backups the next space turns off
+	bkPicking   bool   // choosing a destination for bkPickFor
+	bkPickFor   string
+	bkPick      int
 }
 
 type statusMsg struct {
@@ -82,7 +95,7 @@ type logsMsg struct {
 	err   error
 }
 
-func (m *model) Init() tea.Cmd { return tea.Batch(m.fetch(), tick()) }
+func (m *model) Init() tea.Cmd { return tea.Batch(m.fetch(), m.fetchBackups(), tick()) }
 
 func tick() tea.Cmd {
 	return tea.Tick(refreshEvery, func(time.Time) tea.Msg { return tickMsg{} })
@@ -121,10 +134,28 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.app == m.logApp {
 			m.logs, m.logErr = msg.lines, msg.err
 		}
+	case backupsMsg:
+		if msg.err != nil {
+			m.bkErr = msg.err
+		} else {
+			m.bk, m.bkErr = msg.ov, nil
+			m.move(0)
+		}
+	case backupDoneMsg:
+		delete(m.bkBusy, msg.row)
+		if msg.err != nil {
+			m.flash(msg.err.Error(), true)
+		} else {
+			m.flash("✔ "+msg.what, false)
+		}
+		return m, m.fetchBackups()
 	case tickMsg:
 		cmds := []tea.Cmd{m.fetch(), tick()}
-		if m.view == logsView {
+		switch m.view {
+		case logsView:
 			cmds = append(cmds, m.fetchLogs(m.logApp))
+		case overview, backupsView:
+			cmds = append(cmds, m.fetchBackups())
 		}
 		return m, tea.Batch(cmds...)
 	case tea.KeyMsg:
@@ -135,6 +166,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.startTraffic())
 		case before == trafficView && m.view != trafficView:
 			m.stopTraffic()
+		}
+		if before != backupsView && m.view == backupsView {
+			cmds = append(cmds, m.fetchBackups())
 		}
 		return m, tea.Batch(cmds...)
 	case requestsMsg, trafficEndMsg, frameMsg, trafficRetryMsg:
@@ -154,6 +188,11 @@ func (m *model) key(k string) tea.Cmd {
 	if m.trafficKey(k) {
 		return nil
 	}
+	if m.view == backupsView {
+		if cmd, ok := m.backupsKey(k); ok {
+			return cmd
+		}
+	}
 	switch k {
 	case "q", "ctrl+c":
 		return tea.Quit
@@ -162,18 +201,18 @@ func (m *model) key(k string) tea.Cmd {
 	case "r":
 		return m.fetch()
 	case "tab", "right":
-		if m.view < trafficView {
+		if m.view < backupsView {
 			m.view++
-		} else if m.view == trafficView {
+		} else if m.view == backupsView {
 			m.view = overview
 		}
 	case "shift+tab", "left":
-		if m.view > overview && m.view <= trafficView {
+		if m.view > overview && m.view <= backupsView {
 			m.view--
 		} else if m.view == overview {
-			m.view = trafficView
+			m.view = backupsView
 		}
-	case "1", "2", "3", "4", "5", "6":
+	case "1", "2", "3", "4", "5", "6", "7":
 		m.view = view(k[0] - '1')
 	case "up", "k":
 		m.move(-1)
@@ -243,6 +282,8 @@ func (m *model) rows() int {
 		return len(m.st.Events)
 	case logsView:
 		return len(m.logs)
+	case backupsView:
+		return len(m.bkRows())
 	}
 	return 0
 }

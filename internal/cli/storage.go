@@ -31,6 +31,8 @@ var storageCommands = []*Command{
 	{Name: "storage:move", Help: "Move a volume, and the instance using it, to another node", App: NeedsApp, Args: "<name> <node>", MinArgs: 2,
 		Flags: []Flag{{Name: "detach", Help: "Return right away instead of following the move"}}, Run: storageMove},
 	{Name: "storage:destroy", Help: "Delete a volume and its data", App: NeedsApp, Args: "<name>", MinArgs: 1, Flags: []Flag{forceFlag}, Run: storageDestroy},
+	{Name: "storage:discard-old-copy", Help: "Delete the copy of a volume's disk a node kept after the volume was restored elsewhere",
+		App: NeedsApp, Args: "<name>", MinArgs: 1, MaxArgs: 1, Flags: []Flag{forceFlag}, Run: storageDiscardOldCopy},
 	{Name: "storage:export", Help: "Write a volume's files to stdout as a .tar.gz (the app pauses for a moment)", App: NeedsApp, Args: "<name>", MinArgs: 1,
 		Flags: []Flag{{Name: "live", Help: "Don't pause the app; files being written may be caught mid-write"}}, Run: storageExport},
 	{Name: "storage:import", Help: "Restore a volume's files from a .tar or .tar.gz on stdin, then restart the process using it", App: NeedsApp, Args: "<name>", MinArgs: 1,
@@ -198,6 +200,9 @@ func storageReport(c *Context) error {
 			if v.Disk != "" {
 				rows = append(rows, row{"storage-" + v.Name + "-disk", "Storage " + v.Name + " disk", v.Node + ":" + v.Disk})
 			}
+			if v.OldCopy != nil {
+				rows = append(rows, row{"storage-" + v.Name + "-old-copy", "Storage " + v.Name + " old copy", v.OldCopy.Node + ":" + v.OldCopy.Disk})
+			}
 		}
 		return c.report(a.Name+" storage information", append([]row{
 			{"storage-mounts", "Storage mounts", strings.Join(mountList, ", ")},
@@ -271,6 +276,27 @@ func storageDestroy(c *Context) error {
 	}
 	c.Step("Destroying volume %s", name)
 	return c.API.DestroyVolume(c, c.App, name)
+}
+
+func storageDiscardOldCopy(c *Context) error {
+	name := c.Args[0]
+	v, err := c.API.Volume(c, c.App, name)
+	if err != nil {
+		return err
+	}
+	if v.OldCopy == nil {
+		return fmt.Errorf("no node keeps an old copy of volume %s", name)
+	}
+	if !c.Bool("force") {
+		if err := c.confirm(fmt.Sprintf("delete the old copy of volume %s on %s, with anything written to it after its last backup", name, v.OldCopy.Node), name); err != nil {
+			return err
+		}
+	}
+	if err := c.API.DiscardOldCopy(c, c.App, name); err != nil {
+		return err
+	}
+	c.Step("Deleting the old copy of volume %s on %s", name, v.OldCopy.Node)
+	return nil
 }
 
 func storageExport(c *Context) error {

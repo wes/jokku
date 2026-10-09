@@ -97,21 +97,45 @@ func (s *Store) SetBackupKeySaved(ctx context.Context) error {
 	return err
 }
 
-// VolumeBackup is where a volume is backed up: a path in a destination.
+// VolumeBackup is where a volume is backed up (a path in a destination),
+// how often, and how long backups are kept.
 type VolumeBackup struct {
 	VolumeID    string
 	App         string
 	Volume      string
 	Destination string
 	Path        string
+
+	Every      time.Duration // 0: only when asked
+	KeepRecent time.Duration // keep every backup this recent
+	KeepDaily  int           // and the last of each of this many days
+	// AutoRestore restores the volume onto another node from its latest
+	// backup when its node has been down a while.
+	AutoRestore bool
+
+	// What the backups take up: exact when last collected, plus what
+	// backups added since.
+	StoredBytes   int64
+	StoredBackups int
+	CollectedAt   time.Time
 }
 
-// SetVolumeBackup sets (or changes) where a volume is backed up.
+// Default schedule and retention.
+const (
+	DefaultBackupEvery = 15 * time.Minute
+	DefaultKeepRecent  = 24 * time.Hour
+	DefaultKeepDaily   = 30
+)
+
+// SetVolumeBackup sets (or changes) where and how often a volume is backed
+// up.
 func (s *Store) SetVolumeBackup(ctx context.Context, b VolumeBackup) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO volume_backups (volume_id, destination, path) VALUES (?, ?, ?)
-ON CONFLICT (volume_id) DO UPDATE SET destination = excluded.destination, path = excluded.path`,
-		b.VolumeID, b.Destination, b.Path)
+INSERT INTO volume_backups (volume_id, destination, path, every_s, keep_recent_s, keep_daily, auto_restore) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (volume_id) DO UPDATE SET destination = excluded.destination, path = excluded.path,
+	every_s = excluded.every_s, keep_recent_s = excluded.keep_recent_s, keep_daily = excluded.keep_daily,
+	auto_restore = excluded.auto_restore`,
+		b.VolumeID, b.Destination, b.Path, int64(b.Every/time.Second), int64(b.KeepRecent/time.Second), b.KeepDaily, b.AutoRestore)
 	if isUniqueViolation(err) {
 		return &ExistsError{What: "Backups to " + b.Destination + " " + b.Path + " for another volume"}
 	}
@@ -130,8 +154,21 @@ func (s *Store) DeleteVolumeBackup(ctx context.Context, volumeID string) error {
 }
 
 const volumeBackupSelect = `
-SELECT b.volume_id, COALESCE(a.name, ''), v.name, b.destination, b.path
+SELECT b.volume_id, COALESCE(a.name, ''), v.name, b.destination, b.path, b.every_s, b.keep_recent_s, b.keep_daily,
+	b.auto_restore, b.stored_bytes, b.stored_backups, b.collected_at
 FROM volume_backups b JOIN volumes v ON v.id = b.volume_id LEFT JOIN apps a ON a.id = v.app_id`
+
+func scanVolumeBackup(row interface{ Scan(...any) error }) (*VolumeBackup, error) {
+	var b VolumeBackup
+	var every, recent, collected int64
+	if err := row.Scan(&b.VolumeID, &b.App, &b.Volume, &b.Destination, &b.Path, &every, &recent, &b.KeepDaily,
+		&b.AutoRestore, &b.StoredBytes, &b.StoredBackups, &collected); err != nil {
+		return nil, err
+	}
+	b.Every, b.KeepRecent = time.Duration(every)*time.Second, time.Duration(recent)*time.Second
+	b.CollectedAt = fromUnix(collected)
+	return &b, nil
+}
 
 // VolumeBackups lists where volumes are backed up: an app's, every app's
 // for app "", or those going to a destination.
@@ -150,23 +187,37 @@ func (s *Store) VolumeBackups(ctx context.Context, app, destination string) ([]V
 	defer rows.Close()
 	var out []VolumeBackup
 	for rows.Next() {
-		var b VolumeBackup
-		if err := rows.Scan(&b.VolumeID, &b.App, &b.Volume, &b.Destination, &b.Path); err != nil {
+		b, err := scanVolumeBackup(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, b)
+		out = append(out, *b)
 	}
 	return out, rows.Err()
 }
 
 // VolumeBackupFor says where one volume is backed up.
 func (s *Store) VolumeBackupFor(ctx context.Context, volumeID string) (*VolumeBackup, error) {
-	var b VolumeBackup
-	err := s.db.QueryRowContext(ctx, volumeBackupSelect+" WHERE b.volume_id = ?", volumeID).Scan(&b.VolumeID, &b.App, &b.Volume, &b.Destination, &b.Path)
+	b, err := scanVolumeBackup(s.db.QueryRowContext(ctx, volumeBackupSelect+" WHERE b.volume_id = ?", volumeID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, &NotFoundError{What: "Backups for this volume"}
 	}
-	return &b, err
+	return b, err
+}
+
+// AddBackupUsage counts a new backup's bytes into what a volume's backups
+// take up, with backups the number now kept.
+func (s *Store) AddBackupUsage(ctx context.Context, volumeID string, bytes int64, backups int) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE volume_backups SET stored_bytes = stored_bytes + ?, stored_backups = ? WHERE volume_id = ?",
+		bytes, backups, volumeID)
+	return err
+}
+
+// SetBackupUsage records what a volume's backups take up, as just counted.
+func (s *Store) SetBackupUsage(ctx context.Context, volumeID string, bytes int64, backups int) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE volume_backups SET stored_bytes = ?, stored_backups = ?, collected_at = ? WHERE volume_id = ?",
+		bytes, backups, unix(s.now()), volumeID)
+	return err
 }
 
 // BackupRun is one backup made (or tried) of a volume.
@@ -253,5 +304,45 @@ func (s *Store) EndVolumeRestore(ctx context.Context, id, result string) error {
 	_, err := s.db.ExecContext(ctx, `
 UPDATE volumes SET restore = '', restore_result = ?, move_token = '', transfer = '', copied_mb = 0, move_error = ''
 WHERE id = ? AND moving_to = ''`, result, id)
+	return err
+}
+
+// AutoRestoreVolumes lists the volumes that would be restored elsewhere if
+// their node went down: set to, and with a backup to restore.
+func (s *Store) AutoRestoreVolumes(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT b.volume_id FROM volume_backups b
+WHERE b.auto_restore = 1 AND EXISTS (SELECT 1 FROM backup_runs r WHERE r.volume_id = b.volume_id AND r.status = ?)`, types.StatusSucceeded)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
+// DiscardStaleCopy asks the node keeping an old copy of a volume's disk to
+// delete it.
+func (s *Store) DiscardStaleCopy(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, "UPDATE volumes SET discard_stale = 1 WHERE id = ? AND stale_node != ''", id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return &NotFoundError{What: "An old copy of this volume"}
+	}
+	return nil
+}
+
+// ForgetStaleCopy forgets a volume's old copy: deleted, or its node gone.
+func (s *Store) ForgetStaleCopy(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE volumes SET stale_node = '', discard_stale = 0 WHERE id = ?", id)
 	return err
 }

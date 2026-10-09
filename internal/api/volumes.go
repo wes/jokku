@@ -333,6 +333,9 @@ func (s *Server) volumeInfo(v store.Volume) types.Volume {
 		// Every node keeps its data in the same place as this one.
 		out.Disk = filepath.Join(s.DataDir, "volumes", v.ID+".ext4")
 	}
+	if v.StaleNode != "" {
+		out.OldCopy = &types.VolumeOldCopy{Node: v.StaleNode, Disk: filepath.Join(s.DataDir, "volumes", v.ID+".ext4.stale")}
+	}
 	switch {
 	case v.State == store.VolumeDestroying:
 		out.Status = "destroying"

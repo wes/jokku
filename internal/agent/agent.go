@@ -141,6 +141,8 @@ type Agent struct {
 	vols         map[string]*vol
 	exporting    sync.Map // volume ID -> struct{} while its final pass is being served
 	backingUp    sync.Map // volume ID -> struct{} while it is being backed up
+	fence        fence
+	applying     string // the ETag of the state the current reconcile pass applies (under mu)
 	volumeClient *http.Client
 }
 
@@ -194,6 +196,7 @@ func (a *Agent) Run(ctx context.Context) {
 	}
 	go a.watch(ctx)
 	go a.reportLoop(ctx)
+	go a.fenceLoop(ctx)
 	t := time.NewTicker(a.ReconcileEvery)
 	defer t.Stop()
 	for {
@@ -250,6 +253,9 @@ func (a *Agent) watch(ctx context.Context) {
 		if st.ETag != etag {
 			a.setDesired(st, true)
 		}
+		// Only now: back in touch means running what the control node says
+		// now, not the state cached while cut off.
+		a.heard(st.ETag)
 	}
 }
 
@@ -345,6 +351,7 @@ func (a *Agent) reconcile(ctx context.Context) error {
 		return err
 	}
 	a.syncVolumes(ctx, st, attached)
+	a.applying = st.ETag
 	now := time.Now()
 	specs := map[string]types.InstanceSpec{}
 	changed := false
@@ -410,6 +417,13 @@ func (a *Agent) step(ctx context.Context, spec types.InstanceSpec, l *local, uni
 	_, running := units[spec.ID]
 	if _, busy := a.stopping.Load(spec.ID); busy {
 		return
+	}
+	if spec.Run && a.fenced(spec, a.applying) {
+		// This node may be cut off, and the volume restored elsewhere.
+		if running {
+			a.Log.Warn("stopping an instance while cut off from the control node", "app", spec.App, "process", spec.Process)
+		}
+		spec.Run = false
 	}
 	if !spec.Run {
 		if running {

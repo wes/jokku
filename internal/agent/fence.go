@@ -23,7 +23,8 @@ import (
 // sides of a split never both run an app.
 
 // The timings are variables so tests can shorten them. FenceAfter must stay
-// well under cluster.FailoverAfter.
+// well under cluster.FailoverAfter, and well over cluster.PollTimeout: an
+// idle node only hears from the control node when a long poll returns.
 var (
 	FenceAfter      = 2 * time.Minute
 	FenceCheckEvery = 5 * time.Second

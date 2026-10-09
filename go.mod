@@ -15,6 +15,7 @@ require (
 	github.com/klauspost/compress v1.20.1
 	github.com/miekg/dns v1.1.73
 	github.com/minio/minio-go/v7 v7.3.0
+	github.com/muesli/termenv v0.16.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.4
 	golang.org/x/crypto v0.57.0
 	golang.org/x/sys v0.48.0
@@ -120,7 +121,6 @@ require (
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
-	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/nlnwa/whatwg-url v0.6.2 // indirect

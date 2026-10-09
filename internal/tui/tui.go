@@ -42,6 +42,9 @@ func Run(ctx context.Context, api *client.Client, in io.Reader, out io.Writer) e
 		return fmt.Errorf("jokku top needs a terminal; over ssh, use ssh -t")
 	}
 	m := &model{ctx: ctx, api: api, cursor: map[view]int{}, bkBusy: map[string]string{}}
+	// Ask the terminal for its background (the colors follow it) before the
+	// program starts reading keys and could take the answer for one.
+	lipgloss.HasDarkBackground()
 	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithInput(in), tea.WithOutput(out), tea.WithContext(ctx)).Run()
 	if err == tea.ErrProgramKilled {
 		return nil
@@ -345,22 +348,26 @@ func (m *model) instances() []types.InstanceView {
 	return out
 }
 
-// Styles
+// Styles: the website's terminal colors, warm amber on dark (or a darker
+// amber on a light terminal).
 
 var (
-	accent    = lipgloss.AdaptiveColor{Light: "#5A3FD6", Dark: "#A78BFA"}
-	dim       = lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#9CA3AF"}
-	good      = lipgloss.AdaptiveColor{Light: "#15803D", Dark: "#4ADE80"}
-	warn      = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
-	bad       = lipgloss.AdaptiveColor{Light: "#B91C1C", Dark: "#F87171"}
+	accent    = lipgloss.AdaptiveColor{Light: "#A9580F", Dark: "#E8963F"}
+	fg        = lipgloss.AdaptiveColor{Light: "#1F1812", Dark: "#E6DCCD"}
+	dim       = lipgloss.AdaptiveColor{Light: "#6B5C4C", Dark: "#8A7C6A"}
+	good      = lipgloss.AdaptiveColor{Light: "#2F7D32", Dark: "#8BD17C"}
+	warn      = lipgloss.AdaptiveColor{Light: "#9A6A00", Dark: "#F2C94C"}
+	bad       = lipgloss.AdaptiveColor{Light: "#B42318", Dark: "#F07A6A"}
+	cyan      = lipgloss.AdaptiveColor{Light: "#1F7A70", Dark: "#8FD0C4"}
 	sTitle    = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	sDim      = lipgloss.NewStyle().Foreground(dim)
 	sGood     = lipgloss.NewStyle().Foreground(good)
 	sWarn     = lipgloss.NewStyle().Foreground(warn)
 	sBad      = lipgloss.NewStyle().Foreground(bad)
+	sCyan     = lipgloss.NewStyle().Foreground(cyan)
 	sHead     = lipgloss.NewStyle().Bold(true).Foreground(dim)
 	sTab      = lipgloss.NewStyle().Padding(0, 1).Foreground(dim)
-	sTabOn    = lipgloss.NewStyle().Padding(0, 1).Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#111827"}).Background(accent)
-	sSelected = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "#EDE9FE", Dark: "#312E81"})
+	sTabOn    = lipgloss.NewStyle().Padding(0, 1).Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#FFFAF3", Dark: "#1C130A"}).Background(accent)
+	sSelected = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "#F6E4CC", Dark: "#3B2916"})
 	sSection  = lipgloss.NewStyle().Bold(true).Foreground(accent).MarginTop(1)
 )

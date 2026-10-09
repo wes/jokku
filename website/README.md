@@ -20,7 +20,8 @@ npm start        # serve the build
 | `src/lib/nav.ts` | The docs sidebar, in reading order |
 | `src/components/markdown.tsx` | Renders the Markdown, with the extras below |
 | `src/lib/highlight.ts` | Build-time syntax highlighting (Shiki) and its color theme |
-| `src/lib/site.ts` | Version, GitHub URL and install command |
+| `src/lib/site.ts` | Site URL, version, GitHub URL and install command |
+| `og/og-image.html` | The link preview image's source; `npm run og` renders it to `public/og-image.jpg` |
 | `src/styles.css` | Color tokens for light and dark |
 
 ## Writing docs
@@ -46,7 +47,8 @@ Beyond standard Markdown:
 
 The docs here are written for readers and follow the repo's own `README.md` and
 `docs/`. When a change to Jokku updates those, update the matching page here too.
-When Jokku ships a release, update `VERSION` in `src/lib/site.ts`.
+When Jokku ships a release, update `VERSION` in `src/lib/site.ts`, and the version in
+`og/og-image.html` (then `npm run og`).
 
 ## Deploy it on Jokku
 

@@ -9,6 +9,7 @@ import { InstallCommand } from '../components/landing/install-command';
 import { Pipeline } from '../components/landing/pipeline';
 import { Roadmap } from '../components/landing/roadmap';
 import { SectionHeading } from '../components/landing/section-heading';
+import { SocialMeta } from '../components/social-meta';
 import { TrafficDemo } from '../components/landing/traffic-demo';
 import { DESCRIPTION, VERSION } from '../lib/site';
 
@@ -24,9 +25,7 @@ const BUILT_ON = ['Firecracker', 'WireGuard', 'Caddy', 'BuildKit', 'SQLite'];
 export default async function HomePage() {
   return (
     <>
-      <title>Jokku · git push to microVMs on your own servers</title>
-      <meta property="og:title" content="Jokku" />
-      <meta name="description" content={DESCRIPTION} />
+      <SocialMeta title="Jokku · git push to microVMs on your own servers" description={DESCRIPTION} path="/" />
 
       {/* Hero */}
       <section className="relative overflow-hidden">

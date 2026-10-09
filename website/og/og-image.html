@@ -1,0 +1,274 @@
+<!doctype html>
+<!-- The social preview card (1200×630). Edit, then run `npm run og` to
+     render it to public/og-image.jpg. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@500..800&family=Geist+Mono:wght@400..600&display=block"
+    />
+    <style>
+      :root {
+        --bg: #16120e;
+        --fg: #efe6d8;
+        --muted: #a99a86;
+        --subtle: #7d6f5c;
+        --accent: #e8963f;
+        --term: #0c0a07;
+        --term-line: #3a2f24;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      html,
+      body {
+        width: 1200px;
+        height: 630px;
+        overflow: hidden;
+        background: var(--bg);
+      }
+      body {
+        position: relative;
+        font-family: 'Geist', system-ui, sans-serif;
+        color: var(--fg);
+        -webkit-font-smoothing: antialiased;
+      }
+      .mono {
+        font-family: 'Geist Mono', ui-monospace, monospace;
+      }
+
+      /* Warm light from the booting instance, top right. */
+      .glow {
+        position: absolute;
+        width: 900px;
+        height: 700px;
+        right: -260px;
+        top: -260px;
+        background: radial-gradient(closest-side, rgb(232 150 63 / 0.22), transparent);
+      }
+      .grain {
+        position: absolute;
+        inset: 0;
+        opacity: 0.09;
+        z-index: 10;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      }
+
+      /* The mark, engraved: a server's nine slots, six running as the J. */
+      /* Everything stays inside .art so the fade covers all of it. */
+      .art {
+        position: absolute;
+        width: 560px;
+        height: 560px;
+        right: 0;
+        top: 36px;
+        -webkit-mask-image: linear-gradient(to right, transparent 0%, rgb(0 0 0 / 0.35) 22%, black 58%);
+        -webkit-mask-repeat: no-repeat;
+      }
+      .grid {
+        position: absolute;
+        inset: 34px 34px 34px 34px;
+      }
+      .plate {
+        position: absolute;
+        inset: 0;
+        border: 1.5px dashed rgb(232 150 63 / 0.16);
+        border-radius: 56px;
+      }
+      .rule-h,
+      .rule-v {
+        position: absolute;
+        background: rgb(232 150 63 / 0.1);
+      }
+      .rule-h {
+        left: 0;
+        width: 100%;
+        top: 50%;
+        height: 1.5px;
+      }
+      .rule-v {
+        top: 0;
+        height: 100%;
+        left: 50%;
+        width: 1.5px;
+      }
+      .cell {
+        position: absolute;
+        width: 32%;
+        height: 32%;
+        border-radius: 22%;
+      }
+      .empty {
+        border: 1.5px dashed rgb(232 150 63 / 0.22);
+      }
+      .run {
+        border: 1.5px solid rgb(232 150 63 / 0.5);
+        background-image:
+          repeating-linear-gradient(135deg, rgb(232 150 63 / 0.55) 0 1.5px, transparent 1.5px 8px),
+          repeating-linear-gradient(45deg, rgb(232 150 63 / 0.2) 0 1.5px, transparent 1.5px 12px);
+      }
+      .boot {
+        border: 2px solid var(--accent);
+        box-shadow: 0 0 90px -10px rgb(232 150 63 / 0.75);
+        background-image:
+          repeating-linear-gradient(135deg, rgb(232 150 63 / 0.9) 0 1.5px, transparent 1.5px 5px),
+          repeating-linear-gradient(45deg, rgb(232 150 63 / 0.45) 0 1.5px, transparent 1.5px 7px);
+      }
+      .boot::after {
+        content: '';
+        position: absolute;
+        inset: 30%;
+        border-radius: 22%;
+        background: rgb(240 168 92 / 0.9);
+        filter: blur(1px);
+      }
+
+      .content {
+        position: absolute;
+        inset: 0;
+        padding: 64px 72px 60px;
+        display: flex;
+        flex-direction: column;
+        z-index: 5;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .brand svg {
+        width: 40px;
+        height: 40px;
+      }
+      .brand .name {
+        font-size: 38px;
+        font-weight: 650;
+        letter-spacing: -0.03em;
+      }
+      .brand .version {
+        margin-left: 6px;
+        padding: 4px 9px;
+        border-radius: 7px;
+        background: var(--accent);
+        color: #1c130a;
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      .eyebrow {
+        margin-top: 58px;
+        font-size: 22px;
+        color: var(--accent);
+      }
+      .eyebrow span {
+        color: var(--subtle);
+      }
+      h1 {
+        margin-top: 18px;
+        font-size: 70px;
+        line-height: 1.04;
+        font-weight: 750;
+        letter-spacing: -0.048em;
+      }
+      h1 .accent {
+        color: var(--accent);
+      }
+
+      .footer {
+        margin-top: auto;
+        display: flex;
+        align-items: center;
+        gap: 22px;
+      }
+      .chip {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: 56px;
+        padding: 0 22px;
+        border-radius: 12px;
+        border: 1.5px solid var(--term-line);
+        background: var(--term);
+        font-size: 23px;
+        color: #fff6e9;
+        box-shadow: 0 10px 30px rgb(0 0 0 / 0.35);
+      }
+      .chip .prompt {
+        color: var(--accent);
+      }
+      .chip .caret {
+        width: 12px;
+        height: 26px;
+        background: var(--accent);
+        border-radius: 1px;
+      }
+      .facts {
+        font-size: 19px;
+        color: var(--muted);
+      }
+      .facts b {
+        color: var(--accent);
+        font-weight: 400;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="glow"></div>
+
+    <div class="art">
+      <div class="plate"></div>
+      <div class="rule-h"></div>
+      <div class="rule-v"></div>
+      <div class="grid">
+      <div class="cell empty" style="left: 0; top: 0"></div>
+      <div class="cell empty" style="left: 34%; top: 0"></div>
+      <div class="cell empty" style="left: 34%; top: 34%"></div>
+      <div class="cell run" style="left: 0; top: 34%"></div>
+      <div class="cell run" style="left: 68%; top: 34%"></div>
+      <div class="cell run" style="left: 0; top: 68%"></div>
+      <div class="cell run" style="left: 34%; top: 68%"></div>
+      <div class="cell run" style="left: 68%; top: 68%"></div>
+      <div class="cell boot" style="left: 68%; top: 0"></div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="brand">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <g fill="#e8963f">
+            <rect x="16.2" y="1" width="6.4" height="6.4" rx="1.6" />
+            <g opacity=".55">
+              <rect x="16.2" y="8.6" width="6.4" height="6.4" rx="1.6" />
+              <rect x="16.2" y="16.2" width="6.4" height="6.4" rx="1.6" />
+              <rect x="8.6" y="16.2" width="6.4" height="6.4" rx="1.6" />
+              <rect x="1" y="16.2" width="6.4" height="6.4" rx="1.6" />
+              <rect x="1" y="8.6" width="6.4" height="6.4" rx="1.6" />
+            </g>
+          </g>
+        </svg>
+        <span class="name">jokku</span>
+        <span class="version mono">v0.5.0</span>
+      </div>
+
+      <p class="eyebrow mono"><span>-----&gt;</span> self-hosted, modeled on Dokku</p>
+      <h1>
+        Your apps, your servers.<br />
+        Every instance a microVM.<br />
+        <span class="accent">Deploy with git push.</span>
+      </h1>
+
+      <div class="footer">
+        <div class="chip mono">
+          <span class="prompt">$</span> git push jokku main <span class="caret"></span>
+        </div>
+        <p class="facts mono">Firecracker <b>·</b> HTTPS <b>·</b> clusters</p>
+      </div>
+    </div>
+
+    <div class="grain"></div>
+  </body>
+</html>

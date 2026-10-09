@@ -3,6 +3,7 @@ import { docHref, getDoc } from '../lib/docs';
 import { GITHUB_URL } from '../lib/site';
 import { ArrowLeftIcon, ArrowRightIcon, GitHubIcon } from './icons';
 import { Markdown } from './markdown';
+import { SocialMeta } from './social-meta';
 import { Toc } from './toc';
 
 export const DocPage = ({ slug }: { slug: string }) => {
@@ -11,8 +12,11 @@ export const DocPage = ({ slug }: { slug: string }) => {
 
   return (
     <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_14rem] xl:gap-14">
-      <title>{slug === 'introduction' ? 'Docs · Jokku' : `${doc.title} · Jokku docs`}</title>
-      <meta name="description" content={doc.description} />
+      <SocialMeta
+        title={slug === 'introduction' ? 'Docs · Jokku' : `${doc.title} · Jokku docs`}
+        description={doc.description}
+        path={docHref(slug)}
+      />
 
       <article className="mx-auto max-w-[46rem] min-w-0 pt-10 pb-20 text-[15.5px] leading-7 text-body lg:pt-12 xl:mx-0">
         <header className="mb-10 border-b border-line pb-8">

@@ -5,6 +5,7 @@ export default async function NotFoundPage() {
   return (
     <div className="mx-auto flex max-w-2xl flex-col items-center px-4 py-28 text-center sm:py-36">
       <title>Not found · Jokku</title>
+      <meta name="robots" content="noindex" />
       <div className="w-full overflow-hidden rounded-2xl border border-term-line bg-term text-left font-mono text-[13px] leading-[1.9] shadow-2xl shadow-black/30">
         <div className="flex h-10 items-center gap-2 border-b border-term-line bg-term-bar px-4">
           <span className="size-3 rounded-full bg-white/10" />

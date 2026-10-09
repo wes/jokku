@@ -3,14 +3,10 @@ import '../styles.css';
 import type { ReactNode } from 'react';
 import { SiteFooter } from '../components/site-footer';
 import { SiteHeader } from '../components/site-header';
-import { DESCRIPTION } from '../lib/site';
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-svh flex-col">
-      <meta name="description" content={DESCRIPTION} />
-      <meta property="og:site_name" content="Jokku" />
-      <meta property="og:description" content={DESCRIPTION} />
       <meta name="theme-color" content="#16120e" />
       <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
       <link rel="preconnect" href="https://fonts.googleapis.com" />

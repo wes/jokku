@@ -37,6 +37,7 @@ func newFakeBuilder(dir string) *fakeBuilder {
 		"build":       {Cmd: []string{"/app/server"}, Port: 5000, PortFrom: build.DefaultPortFrom},
 		"postgres:17": {Cmd: []string{"postgres"}, Env: []string{"PGDATA=/var/lib/postgresql/data"}, Port: 5432, PortFrom: "from EXPOSE 5432", StopSignal: "SIGINT"},
 		"redis:7":     {Cmd: []string{"redis-server"}, Port: 6379, PortFrom: "from EXPOSE 6379"},
+		"mysql:8.4":   {Cmd: []string{"mysqld"}, Port: 3306, PortFrom: "from EXPOSE 3306"},
 	}}
 }
 

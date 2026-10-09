@@ -539,3 +539,72 @@ func TestShortDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestDatabasesCLI(t *testing.T) {
+	startAPI(t)
+	// The stub deployer stands in for BuildKit and the microVMs.
+	out := mustJokku(t, "db:postgres:create", "shopdb", "--image-version", "16", "--size", "20g")
+	if !strings.Contains(out, "Creating postgres database shopdb (postgres:16)") || !strings.Contains(out, "It isn't backed up") {
+		t.Fatalf("create = %q", out)
+	}
+	if _, errOut, code := jokku(t, "", "db:postgres:create", "Shop_DB"); code == 0 || !strings.Contains(errOut, "not a database name") {
+		t.Errorf("a bad name: exit %d, %q", code, errOut)
+	}
+	if _, errOut, code := jokku(t, "", "db:postgres:create", "x", "--image-version", "16 ${X}"); code == 0 || !strings.Contains(errOut, "not an image") {
+		t.Errorf("a bad image: exit %d, %q", code, errOut)
+	}
+	if out := mustJokku(t, "db:list"); !strings.Contains(out, "shopdb") || !strings.Contains(out, "postgres:16") {
+		t.Errorf("db:list = %q", out)
+	}
+	if out := mustJokku(t, "apps:list"); strings.Contains(out, "shopdb") {
+		t.Errorf("apps:list shows a database: %q", out)
+	}
+
+	dsn := strings.TrimSpace(mustJokku(t, "db:postgres:info", "shopdb", "--dsn"))
+	if !strings.HasPrefix(dsn, "postgres://postgres:") || !strings.HasSuffix(dsn, "@postgres-shopdb.internal:5432/shopdb") || strings.Contains(dsn, "•") {
+		t.Fatalf("--dsn = %q", dsn)
+	}
+	info := mustJokku(t, "db:postgres:info", "shopdb")
+	if strings.Contains(info, dsn) || !strings.Contains(info, "postgres://postgres:•••••@postgres-shopdb.internal:5432/shopdb") {
+		t.Errorf("info shows the password: %q", info)
+	}
+
+	mustJokku(t, "apps:create", "shop")
+	if out := mustJokku(t, "db:postgres:link", "shopdb", "shop"); !strings.Contains(out, "DATABASE_URL is set") {
+		t.Errorf("link = %q", out)
+	}
+	if got := strings.TrimSpace(mustJokku(t, "config:get", "shop", "DATABASE_URL")); got != dsn {
+		t.Errorf("DATABASE_URL = %q", got)
+	}
+	if out := mustJokku(t, "db:postgres:info", "shopdb", "--links"); !strings.Contains(out, "shop (DATABASE_URL)") {
+		t.Errorf("links = %q", out)
+	}
+	if _, errOut, code := jokku(t, "", "db:postgres:destroy", "shopdb", "--force"); code == 0 || !strings.Contains(errOut, "unlink it first") {
+		t.Errorf("destroying a linked database: exit %d, %q", code, errOut)
+	}
+	mustJokku(t, "db:postgres:unlink", "shopdb", "shop")
+	mustJokku(t, "db:postgres:destroy", "shopdb", "--force")
+	if out := mustJokku(t, "db:list"); !strings.Contains(out, "No databases yet") {
+		t.Errorf("db:list after destroy = %q", out)
+	}
+
+	// Redis has no import; every engine has the rest.
+	if _, _, code := jokku(t, "", "db:redis:import", "cache"); code == 0 {
+		t.Error("db:redis:import exists")
+	}
+	help := mustJokku(t, "help", "db")
+	for _, cmd := range []string{"db:list", "db:postgres:create", "db:mysql:export", "db:redis:connect", "db:mysql:import"} {
+		if !strings.Contains(help, cmd) {
+			t.Errorf("help db lacks %s", cmd)
+		}
+	}
+	if _, errOut, code := jokku(t, "", "db:postgres:export", "nope"); code == 0 || !strings.Contains(errOut, "no postgres database nope") {
+		t.Errorf("exporting a missing database: exit %d, %q", code, errOut)
+	}
+}
+
+func TestMaskPassword(t *testing.T) {
+	if got := maskPassword("redis://:s3cret@redis-cache.internal:6379"); got != "redis://:•••••@redis-cache.internal:6379" {
+		t.Errorf("maskPassword = %q", got)
+	}
+}

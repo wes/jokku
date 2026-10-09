@@ -322,6 +322,7 @@ type NodeView struct {
 
 type AppView struct {
 	Name      string    `json:"name"`
+	Kind      string    `json:"kind,omitempty"` // a database's engine
 	Release   int       `json:"release"`
 	Stopped   bool      `json:"stopped"`
 	Locked    bool      `json:"locked"`

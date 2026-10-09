@@ -440,6 +440,39 @@ backups. Remove servers that are gone for good with `jokku nodes:remove
 backups:cluster <destination> --every 6h` changes where and how often, and
 `backups:cluster-list` lists them.
 
+### Databases
+
+Jokku runs Postgres, MySQL and Redis for your apps, each from its official
+image, on a volume of its own:
+
+```sh
+jokku db:postgres:create shopdb        # Postgres 17; also db:mysql:create and db:redis:create
+jokku db:postgres:link shopdb myapp    # sets DATABASE_URL on myapp (REDIS_URL for Redis) and restarts it
+jokku db:postgres:connect shopdb       # a psql shell (mysql or redis-cli for the others)
+jokku db:postgres:info shopdb          # status, address, links and backups; --dsn prints its URL
+jokku db:list
+```
+
+A database is reachable only from your apps, at `postgres-shopdb.internal`.
+If you have a [backup destination](#back-up-volumes), it's backed up every
+15 minutes from the moment it's created, and restored onto another server if
+its own dies.
+
+```sh
+jokku db:postgres:export shopdb > shopdb.dump     # pg_dump; mysqldump for MySQL, an RDB snapshot for Redis
+jokku db:postgres:import shopdb < shopdb.dump     # Postgres and MySQL
+jokku db:postgres:create shopdb --image-version 16 --size 50g --memory 1g
+jokku db:postgres:link shopdb myapp --alias orders    # sets ORDERS_URL instead
+jokku db:postgres:logs shopdb -t                  # also restart, stop and start
+jokku db:postgres:destroy shopdb                  # refused while linked; its backups stay in their bucket
+```
+
+Postgres 17 gets 512 MB of memory, MySQL 8.4 gets 1 GB and Redis 7 (with
+append-only persistence) gets 256 MB, each with a 10 GB volume. Under the
+hood a database is an app named after its engine, like `postgres-shopdb`, so
+`jokku top`, `storage:report` and `resource:limit` work on it too. It isn't
+listed by `apps:list`, and pushes to it are refused. SQLite comes next.
+
 ### Deploy from GitHub Actions
 
 Create a key for GitHub and give it access:

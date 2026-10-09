@@ -379,6 +379,41 @@ sget | grep -q "hello jokku from compose" || fail "web did not pick up the confi
 jssh apps:destroy stack --force
 cd "$GITHUB_WORKSPACE"
 
+step "databases: postgres, redis and mysql"
+dbtmp=$(mktemp -d)
+ecr=public.ecr.aws/docker/library
+out=$(jssh db:postgres:create shopdb --image "$ecr/postgres" --image-version 17-alpine 2>&1) || fail "db:postgres:create failed: $out"
+printf '%s\n' "$out" | tail -n 3
+# psql, through a pipe; a database that is still starting gets a few tries.
+sql() { printf '%s\n' "$1" | jssh db:postgres:connect shopdb 2>&1; }
+for _ in $(seq 1 30); do res=$(sql 'SELECT 41+1 AS answer;') && grep -q 42 <<<"$res" && break; sleep 1; done
+grep -q 42 <<<"$res" || fail "psql didn't answer: $res"
+sql "CREATE TABLE t (v text); INSERT INTO t VALUES ('kept');" >/dev/null || fail "creating a table failed"
+jssh db:postgres:export shopdb >"$dbtmp/shopdb.dump" || fail "db:postgres:export failed"
+sql "DROP TABLE t;" >/dev/null || fail "dropping the table failed"
+jssh db:postgres:import shopdb <"$dbtmp/shopdb.dump" || fail "db:postgres:import failed"
+grep -q kept <<<"$(sql 'SELECT v FROM t;')" || fail "the import didn't bring the table back"
+# Linked, the app gets its URL and finds it by name.
+jssh db:postgres:link shopdb hello >/dev/null || fail "db:postgres:link failed"
+[[ "$(jssh config:get hello DATABASE_URL)" == postgres://postgres:*@postgres-shopdb.internal:5432/shopdb ]] || fail "DATABASE_URL: $(jssh config:get hello DATABASE_URL)"
+jssh enter hello nslookup postgres-shopdb.internal >/dev/null || fail "hello can't resolve postgres-shopdb.internal"
+
+out=$(jssh db:redis:create cache --image "$ecr/redis" --image-version 7-alpine 2>&1) || fail "db:redis:create failed: $out"
+for _ in $(seq 1 30); do res=$(printf 'SET greeting hi\nGET greeting\n' | jssh db:redis:connect cache 2>&1) && grep -qx hi <<<"$res" && break; sleep 1; done
+grep -qx hi <<<"$res" || fail "redis-cli didn't answer: $res"
+
+out=$(jssh db:mysql:create orders --image "$ecr/mysql" --image-version 8.4 2>&1) || fail "db:mysql:create failed: $out"
+# mysqld initializes its data on first boot, which takes a while.
+for _ in $(seq 1 120); do res=$(printf 'SELECT 41+1;\n' | jssh db:mysql:connect orders 2>&1) && grep -q 42 <<<"$res" && break; sleep 1; done
+grep -q 42 <<<"$res" || fail "mysql didn't answer: $res"
+jssh db:mysql:export orders >"$dbtmp/orders.sql" || fail "db:mysql:export failed"
+grep -q "MySQL dump" "$dbtmp/orders.sql" || fail "the mysql export isn't a dump: $(head -c 300 "$dbtmp/orders.sql")"
+
+[ "$(jssh db:list | grep -cE '^(shopdb|cache|orders) ')" -eq 3 ] || fail "db:list: $(jssh db:list)"
+if jssh apps:list | grep -q postgres-shopdb; then fail "apps:list shows the database"; fi
+jssh db:postgres:unlink shopdb hello >/dev/null
+for db in postgres:shopdb redis:cache mysql:orders; do jssh "db:${db%%:*}:destroy" "${db#*:}" --force; done
+
 step "running install.sh again changes nothing"
 out=$(sudo JOKKU_DOWNLOAD_URL="file://$dist/new" sh ./install.sh)
 grep -q "already installed" <<<"$out" || fail "reinstall should point to update.sh"

@@ -348,4 +348,18 @@ CREATE TABLE cluster_backup_runs (
 	finished_at INTEGER
 );
 `,
+
+	// 10: databases: apps of a kind (postgres, mysql, redis) rather than
+	// apps deployed from code, and the apps they are linked to
+	`
+ALTER TABLE apps ADD COLUMN kind TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE database_links (
+	database_id INTEGER NOT NULL REFERENCES apps (id) ON DELETE CASCADE,
+	app_id      INTEGER NOT NULL REFERENCES apps (id) ON DELETE CASCADE,
+	var         TEXT    NOT NULL,
+	created_at  INTEGER NOT NULL,
+	PRIMARY KEY (database_id, app_id)
+);
+`,
 }

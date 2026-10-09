@@ -36,7 +36,10 @@ func (a *Agent) serveBackup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "a backup of volume "+job.Name+" is already running", http.StatusConflict)
 		return
 	}
-	defer a.backingUp.Delete(id)
+	// The locks go before the last event: once the control node hears the
+	// backup is done, it may start the next.
+	release := func() { a.backingUp.Delete(id) }
+	defer func() { release() }()
 	if job.Instance == "" {
 		// Nothing should write to the disk: keep it that way (instances
 		// wait to start) while it is read.
@@ -44,7 +47,7 @@ func (a *Agent) serveBackup(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "volume "+job.Name+" is being handed to another node", http.StatusConflict)
 			return
 		}
-		defer a.exporting.Delete(id)
+		release = func() { a.exporting.Delete(id); a.backingUp.Delete(id) }
 		a.mu.Lock()
 		attached, err := a.Runtime.Attached(r.Context())
 		a.mu.Unlock()
@@ -71,6 +74,8 @@ func (a *Agent) serveBackup(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	rc.Flush() // the first progress line may be a while
 	res, err := a.backUp(r.Context(), job, path, func(line string) { send(types.Event{Type: types.EventLog, Message: line}) })
+	release()
+	release = func() {}
 	if err != nil {
 		a.Log.Error("backup failed", "app", job.App, "volume", job.Name, "err", err)
 		send(types.Event{Type: types.EventDone, Status: types.StatusFailed, Error: err.Error()})

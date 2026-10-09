@@ -88,6 +88,7 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /v1/properties/{plugin}/{key}", s.setProperty)
 	m.HandleFunc("GET /v1/apps/{app}/properties/{plugin}", s.getProperties)
 	m.HandleFunc("PUT /v1/apps/{app}/properties/{plugin}/{key}", s.setProperty)
+	m.HandleFunc("PUT /v1/apps/{app}/builder", s.setBuilder)
 
 	m.HandleFunc("GET /v1/apps/{app}/formation", s.getFormation)
 	m.HandleFunc("POST /v1/apps/{app}/scale", s.scale)

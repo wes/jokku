@@ -86,6 +86,17 @@ func (s *Server) createDeploy(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, badRequest("Unknown deploy source %q", source))
 		return
 	}
+	builder, err := s.computedProperties(ctx, name, "builder")
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if source != deploy.SourceImage && builder["type"] == "image" {
+		s.fail(w, r, httpErrorf(http.StatusConflict,
+			"%s runs the image %s, so pushes don't deploy it. To build it from this repo instead: jokku builder:dockerfile %s (or builder:compose); to deploy another image: jokku builder:image %s <image>",
+			name, builder["image"], name, name))
+		return
+	}
 
 	d, err := s.Store.CreateDeploy(ctx, name, source, ref, actor(r))
 	if err != nil {
@@ -112,6 +123,14 @@ func (s *Server) createDeploy(w http.ResponseWriter, r *http.Request) {
 	// A dropped connection (Ctrl-C on git push, a flaky SSH session) must not
 	// leave a half-finished rollout, so the deploy outlives the request.
 	err = s.Deployer.Deploy(context.WithoutCancel(ctx), d, srcPath, st.Log)
+	if err == nil && source == deploy.SourceImage {
+		// From now on the app runs this image, and ps:rebuild pulls it again.
+		if serr := s.Store.SetProperties(context.WithoutCancel(ctx), name, "builder", map[string]string{"type": "image", "image": ref, "file": ""}); serr != nil {
+			s.Log.Error("recording the image", "app", name, "err", serr)
+		} else if builder["type"] != "image" {
+			st.Log(fmt.Sprintf("-----> %s now runs an image: pushes no longer deploy it (to build from git again: jokku builder:dockerfile %s)", name, name))
+		}
+	}
 	status, msg := types.StatusSucceeded, ""
 	if err != nil {
 		status, msg = types.StatusFailed, err.Error()

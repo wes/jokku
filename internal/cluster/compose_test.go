@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -62,6 +63,26 @@ func (f *fakeBuilder) BuildTarget(_ context.Context, _ int64, t build.Target, _ 
 	return &res, nil
 }
 
+// Build stands in for a Dockerfile build: a Dockerfile that is just
+// "FROM <image>" (an image deploy's) pulls the image; any other builds.
+func (f *fakeBuilder) Build(ctx context.Context, o build.Options, log func(string)) (*build.Result, error) {
+	src, err := f.Unpack(ctx, o.DeployID, o.Source)
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(src)
+	dir := filepath.Join(src, filepath.FromSlash(path.Clean("/"+o.BuildDir)))
+	dockerfile, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(path.Clean("/"+o.DockerfilePath))))
+	if err != nil {
+		return nil, err
+	}
+	t := build.Target{Name: o.App, Context: dir}
+	if image, ok := strings.CutPrefix(strings.TrimSpace(string(dockerfile)), "FROM "); ok && !strings.ContainsAny(image, " \n") {
+		t.Image = image
+	}
+	return f.BuildTarget(ctx, o.DeployID, t, o.Logins, log)
+}
+
 func (f *fakeBuilder) builds() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -78,7 +99,7 @@ func (h *harness) composeDeploy(app string, files map[string]string) error {
 			h.t.Fatal(err)
 		}
 	}
-	h.st.SetProperty(ctx, app, "builder", "selected", "compose")
+	h.st.SetProperty(ctx, app, "builder", "type", "compose")
 	h.st.SetProperty(ctx, app, "checks", "wait-to-retire", "0")
 	h.st.UpdateDomains(ctx, app, types.DomainsPatch{Add: []string{app + ".example.test"}})
 	d, err := h.st.CreateDeploy(ctx, app, "git", "abc1234", "test")

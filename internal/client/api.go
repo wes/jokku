@@ -89,6 +89,12 @@ func (c *Client) SetProperty(ctx context.Context, app, plugin, key, value string
 	return c.call(ctx, http.MethodPut, path, types.SetPropertyRequest{Value: value}, nil)
 }
 
+// SetBuilder switches an app to Dockerfile or compose builds (typ), with file
+// the Dockerfile or compose file ("" for the default).
+func (c *Client) SetBuilder(ctx context.Context, app, typ, file string) error {
+	return c.call(ctx, http.MethodPut, appPath(app, "builder"), types.BuilderRequest{Type: typ, File: file}, nil)
+}
+
 // Processes and resources
 
 func (c *Client) Formation(ctx context.Context, app string) ([]types.Process, error) {
@@ -395,8 +401,8 @@ func (c *Client) MoveVolume(ctx context.Context, app, name, node string) (*types
 	return &v, c.call(ctx, http.MethodPost, volumePath(app, name, "move"), types.MoveVolumeRequest{Node: node}, &v)
 }
 
-// DeployImage deploys a registry image (git:from-image) and streams the pull
-// and rollout.
+// DeployImage deploys a registry image (builder:image), which makes the app
+// an image app, and streams the pull and rollout.
 func (c *Client) DeployImage(ctx context.Context, app, image string, onEvent func(types.Event)) error {
 	return c.Deploy(ctx, app, "image", image, http.NoBody, onEvent)
 }

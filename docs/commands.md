@@ -1,10 +1,15 @@
 # Command compatibility
 
-Jokku keeps Dokku's command names, argument order and output. This table
-tracks what exists today. Milestones are described in
+Jokku keeps Dokku's command names, argument order and output, except where
+noted. This table tracks what exists today. Milestones are described in
 [architecture.md](architecture.md#milestones).
 
-✅ works now · 🔜 planned (milestone) · ➕ Jokku-only · ✖ not planned
+✅ works now · 🔜 planned (milestone) · ➕ Jokku-only · ✏️ replaces a Dokku command · ✖ not planned
+
+How an app is built is the one area that departs from Dokku: Dokku has no
+compose builder, and choosing a builder and its file there takes commands in
+several namespaces. In Jokku it is one command, `builder:dockerfile`,
+`builder:compose` or `builder:image`.
 
 ## Apps and config
 
@@ -20,9 +25,10 @@ tracks what exists today. Milestones are described in
 | --- | --- |
 | `git push jokku main` (auto-creates the app; builds and deploys with zero downtime) | ✅ |
 | `git:set`, `git:report` (`deploy-branch`, `keep-git-dir`) | ✅ |
-| `builder:set` (`build-dir`), `builder-dockerfile:set` (`dockerfile-path`) | ✅ |
-| `builder:set <app> selected compose`, `builder-compose:set` (`compose-file`): deploy a compose file, a process type per service | ➕ ✅ |
-| `git:from-image <app> <image>` (pulls the image; creates the app if needed; `ps:rebuild` pulls again) | ✅ |
+| `builder:dockerfile <app> [<path>]` (the default builder; replaces `builder:set selected` and `builder-dockerfile:set dockerfile-path`) | ✏️ ✅ |
+| `builder:compose <app> [<path>]`: deploy a compose file, a process type per service | ➕ ✅ |
+| `builder:image <app> <image>` (replaces `git:from-image`; pulls the image; creates the app if needed; `ps:rebuild` pulls again; refuses `git push` until `builder:dockerfile`) | ✏️ ✅ |
+| `builder:set` (`build-dir`, `procfile`; `procfile` replaces `ps:set procfile-path`), `builder:report` | ✅ |
 | `registry:login [--password-stdin] <server> <username> [<password>]`, `registry:logout`, `registry:report` | ✅ logins apply to every app |
 | `git:sync [--build]`, `git:from-archive` | 🔜 M3 |
 | `git:generate-deploy-key`, `git:public-key`, `git:allow-host`, `git:auth` | 🔜 M3 |
@@ -36,7 +42,7 @@ tracks what exists today. Milestones are described in
 
 | Command | Status |
 | --- | --- |
-| `ps:scale <app> [type=n ...] [--skip-deploy]`, `ps:report`, `ps:set` (`restart-policy`, `procfile-path`) | ✅ |
+| `ps:scale <app> [type=n ...] [--skip-deploy]`, `ps:report`, `ps:set` (`restart-policy`; the Procfile path is `builder:set procfile`) | ✅ |
 | `ps:start`, `ps:stop`, `ps:restart` | ✅ |
 | `ps:inspect` | ✖ use `ps:report` |
 | `resource:limit [--process-type] [--cpu] [--memory]`, `resource:limit-clear`, `resource:report` | ✅ applied with a rolling restart |

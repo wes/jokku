@@ -48,19 +48,26 @@ func TestInspect(t *testing.T) {
 		"svc/api/Procfile":        "web: ./api\nworker: ./jobs\n",
 	})
 
-	got, err := Inspect(src, Settings{DockerfilePath: "Dockerfile", ProcfilePath: "Procfile"})
+	got, err := Inspect("shop", src, Settings{DockerfilePath: "Dockerfile", ProcfilePath: "Procfile"})
 	if err != nil || got.Dockerfile != "Dockerfile" || got.Procfile["web"] != "./app" {
 		t.Fatalf("root: %+v, %v", got, err)
 	}
 
-	got, err = Inspect(src, Settings{BuildDir: "svc/api", DockerfilePath: "Dockerfile.prod", ProcfilePath: "Procfile"})
+	got, err = Inspect("shop", src, Settings{BuildDir: "svc/api", DockerfilePath: "Dockerfile.prod", ProcfilePath: "Procfile"})
 	if err != nil || got.Dockerfile != "svc/api/Dockerfile.prod" || len(got.Procfile) != 2 {
 		t.Fatalf("build dir: %+v, %v", got, err)
 	}
 
-	_, err = Inspect(src, Settings{DockerfilePath: "Missing", ProcfilePath: "Procfile"})
-	if err == nil || !strings.Contains(err.Error(), "no Missing found") {
+	_, err = Inspect("shop", src, Settings{DockerfilePath: "Missing", ProcfilePath: "Procfile"})
+	if err == nil || !strings.Contains(err.Error(), "no Missing found") || !strings.Contains(err.Error(), "jokku builder:dockerfile shop <path>") {
 		t.Fatalf("missing dockerfile: %v", err)
+	}
+
+	// A compose file and no Dockerfile: the app probably wants builder:compose.
+	compose := writeTar(t, map[string]string{"svc/docker-compose.yml": "services: {}\n", "compose.yaml": "services: {}\n"})
+	_, err = Inspect("shop", compose, Settings{BuildDir: "svc", DockerfilePath: "Dockerfile", ProcfilePath: "Procfile"})
+	if err == nil || !strings.Contains(err.Error(), "but there is svc/docker-compose.yml; to deploy it: jokku builder:compose shop") {
+		t.Fatalf("compose file, no Dockerfile: %v", err)
 	}
 }
 
@@ -103,7 +110,7 @@ func TestImageSource(t *testing.T) {
 		t.Fatalf("Dockerfile = %q", body)
 	}
 	// It inspects like any source, with the settings image deploys use.
-	src, err := Inspect(path, Settings{DockerfilePath: "Dockerfile", ProcfilePath: "Procfile"})
+	src, err := Inspect("shop", path, Settings{DockerfilePath: "Dockerfile", ProcfilePath: "Procfile"})
 	if err != nil || src.Dockerfile != "Dockerfile" || src.Procfile != nil {
 		t.Fatalf("inspect: %+v, %v", src, err)
 	}

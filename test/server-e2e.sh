@@ -147,12 +147,15 @@ grep -qE "Name:[[:space:]]+github.com" <<<"$answer" || fail "the probe could not
 jssh apps:destroy probe --force
 
 step "deploy an image from a registry"
-out=$(jssh git:from-image nginx public.ecr.aws/docker/library/nginx:alpine 2>&1) || fail "git:from-image failed: $out"
+out=$(jssh builder:image nginx public.ecr.aws/docker/library/nginx:alpine 2>&1) || fail "builder:image failed: $out"
 printf '%s\n' "$out" | tail -n 5
 ndomain=$(jssh domains:report nginx --domains-app-vhosts)
 curl -fsS --max-time 5 -H "Host: $ndomain" http://127.0.0.1/ | grep -q "Welcome to nginx" || fail "the nginx image does not serve"
 jssh releases nginx | grep -q "Deploy public.ecr.aws/docker/library/nginx:alpine" || fail "the release does not name the image"
+[ "$(jssh builder:report nginx --builder-type)" = image ] || fail "builder:report does not say nginx is an image app"
 jssh ps:rebuild nginx >/dev/null || fail "ps:rebuild of an image deploy failed"
+if out=$(git push "jokku@$host:nginx" main 2>&1); then fail "a push deployed over an image app: $out"; fi
+grep -q "nginx runs the image" <<<"$out" || fail "the push to an image app failed for another reason: $out"
 jssh apps:destroy nginx --force
 
 step "a failing deploy keeps the old release serving"
@@ -289,8 +292,7 @@ volumes:
 EOF
 git add -A
 git commit -qm stack
-jssh apps:create stack
-jssh builder:set stack selected compose
+jssh builder:compose stack
 jssh config:set --no-restart stack WHO=world
 out=$(git push "jokku@$host:stack" main 2>&1) || fail "deploying the compose file failed: $out"
 printf '%s\n' "$out" | grep -E "Deploying compose.yaml|Pulling|Building|Created volume|Starting" || true

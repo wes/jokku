@@ -16,7 +16,7 @@ import (
 	"github.com/wes/jokku/internal/types"
 )
 
-// A compose app (builder:set <app> selected compose) runs its compose file:
+// A compose app (builder:compose <app>) runs its compose file:
 // each service is a process type with its own image. Config vars fill in
 // ${VAR} in the file, the way a .env file does for docker compose; services
 // get exactly the environment the file gives them.

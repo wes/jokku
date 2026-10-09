@@ -19,12 +19,8 @@ func propertyCommands() []*Command {
 	}
 	for _, p := range props.Plugins {
 		if p.Settable {
-			var keys []string
-			for _, k := range p.Keys {
-				keys = append(keys, k.Name)
-			}
 			add(&Command{
-				Name: p.Name + ":set", Help: "Set or clear a " + p.Name + " property (" + strings.Join(keys, ", ") + ")",
+				Name: p.Name + ":set", Help: "Set or clear a " + p.Name + " property (" + strings.Join(p.SetKeys(), ", ") + ")",
 				App: AppOrGlobal, Args: "<key> [<value>]", MinArgs: 1, MaxArgs: 2, Run: propertySet(p),
 			})
 		}

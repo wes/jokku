@@ -137,6 +137,13 @@ type SetPropertyRequest struct {
 	Value string `json:"value"` // empty unsets
 }
 
+// BuilderRequest switches how an app is built: from a Dockerfile or a
+// compose file (File, relative to the build dir; empty for the default).
+type BuilderRequest struct {
+	Type string `json:"type"`
+	File string `json:"file,omitempty"`
+}
+
 type Node struct {
 	Name        string    `json:"name"`
 	Role        string    `json:"role"`   // control | worker

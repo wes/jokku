@@ -127,7 +127,7 @@ var (
 // source), with vars filling in ${VAR}. file is relative to dir; "" finds
 // one of DefaultFiles. app names the project.
 func Load(ctx context.Context, root, dir, file, app string, vars map[string]string) (*Plan, error) {
-	path, err := findFile(root, dir, file)
+	path, err := findFile(root, dir, file, app)
 	if err != nil {
 		return nil, err
 	}
@@ -209,11 +209,11 @@ func fail(file string, problems []string) error {
 	return fmt.Errorf("Jokku cannot run %s as it is:\n- %s", file, strings.Join(problems, "\n- "))
 }
 
-func findFile(root, dir, file string) (string, error) {
+func findFile(root, dir, file, app string) (string, error) {
 	if file != "" {
 		path := filepath.Join(dir, filepath.FromSlash(filepath.Clean("/"+file)))
 		if !exists(path) {
-			return "", fmt.Errorf("no %s in the source (set another with: jokku builder-compose:set <app> compose-file <path>)", relTo(root, path))
+			return "", fmt.Errorf("no %s in the source (to deploy another file: jokku builder:compose %s <path>)", relTo(root, path), app)
 		}
 		return path, inside(root, path)
 	}
@@ -222,7 +222,7 @@ func findFile(root, dir, file string) (string, error) {
 			return path, inside(root, path)
 		}
 	}
-	return "", fmt.Errorf("no compose file in %s (looked for %s)", relTo(root, dir)+"/", strings.Join(DefaultFiles, ", "))
+	return "", fmt.Errorf("no compose file in %s (looked for %s; to deploy another file: jokku builder:compose %s <path>)", relTo(root, dir)+"/", strings.Join(DefaultFiles, ", "), app)
 }
 
 // prescan refuses what would make the loader read other files before Jokku

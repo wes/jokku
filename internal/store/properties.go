@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 )
 
 // Properties returns the values set for one plugin, for an app or globally
@@ -41,4 +42,28 @@ func (s *Store) SetProperty(ctx context.Context, app, plugin, key, value string)
 		"INSERT INTO properties (app_id, plugin, key, value) VALUES (?, ?, ?, ?) ON CONFLICT (app_id, plugin, key) DO UPDATE SET value = excluded.value",
 		id, plugin, key, value)
 	return err
+}
+
+// SetProperties stores several of a plugin's values at once; empty values
+// delete their keys.
+func (s *Store) SetProperties(ctx context.Context, app, plugin string, values map[string]string) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		id, err := appID(ctx, tx, app)
+		if err != nil {
+			return err
+		}
+		for key, value := range values {
+			if value == "" {
+				_, err = tx.ExecContext(ctx, "DELETE FROM properties WHERE app_id = ? AND plugin = ? AND key = ?", id, plugin, key)
+			} else {
+				_, err = tx.ExecContext(ctx,
+					"INSERT INTO properties (app_id, plugin, key, value) VALUES (?, ?, ?, ?) ON CONFLICT (app_id, plugin, key) DO UPDATE SET value = excluded.value",
+					id, plugin, key, value)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

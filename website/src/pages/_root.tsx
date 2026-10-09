@@ -10,6 +10,14 @@ export default async function RootElement({ children }: { children: ReactNode })
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        {/* Umami analytics, in production builds only so local dev doesn't count. */}
+        {import.meta.env.PROD ? (
+          <script
+            defer
+            src="https://umami.limehosting.com/script.js"
+            data-website-id="d1132bb4-1fc0-445b-92de-f41d061d4fd0"
+          />
+        ) : null}
       </head>
       <body>{children}</body>
     </html>

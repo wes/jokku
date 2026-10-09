@@ -77,7 +77,7 @@ first; `jokku nodes:remove server-2` takes it out of the cluster. The first
 server holds the cluster's state: if it goes down, the others keep running and
 serving what they have, and you can't deploy until it's back.
 
-### Watch everything
+### Watch everything (name change incoming)
 
 ```sh
 jokku top
@@ -209,7 +209,7 @@ For example:
 services:
   web:
     build: .
-    ports: ["8080:3000"]     # this service gets the app's domains; it listens on 3000
+    ports: ["8080:3000"] # this service gets the app's domains; it listens on 3000
     environment:
       DATABASE_URL: postgres://shop:${DB_PASSWORD}@db/shop
     depends_on: [db]
@@ -267,6 +267,7 @@ named `web`, or the only one with `ports:`, gets the app's domains and
 HTTPS, on the port its `ports:` entry points to (3000 above).
 
 Once deployed:
+
 - Services reach each other by name (`db`).
 - Each service is a process type: `ps:scale shop web=3`, `logs shop -p db`
   and `storage:list shop` work per service.

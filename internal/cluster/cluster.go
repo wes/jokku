@@ -47,6 +47,7 @@ type Controller struct {
 
 	volMu       sync.Mutex           // one volume decision at a time; guards volAttempts
 	volAttempts map[string]time.Time // volume ID -> last attempt to move it off a draining node
+	backups     sync.Map             // volume ID -> true while it is being backed up
 }
 
 func New(c *Controller) *Controller {

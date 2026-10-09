@@ -535,13 +535,61 @@ resumes from what has already arrived. If the new node goes down before the
 commit, the move is called off: the old node takes its disk back and the
 instance starts there again. A volume never moves when its node dies, because
 the data is only there. Instances wait for that node, which makes backups
-the answer to losing a server for good.
+the answer to losing a server for good (see [Backups](#backups)).
 
 **Deleting** is explicit. `storage:destroy` (refused while the volume is
 mounted or in use) or `apps:destroy` marks a volume as destroying, and its
 node deletes the disk and reports it gone. An agent never deletes a disk
 just because the control node stopped listing it. Leftovers of moves
 (`.incoming`, `.received`, `.moved`) are cleaned up that way.
+
+### Backups
+
+A volume's backups go to a path in an S3-compatible bucket (a
+*destination*). The node holding the disk uploads straight to the bucket;
+the control node keeps the settings, the encryption key and a record of
+each backup. In the bucket:
+
+```
+<path>/jokku-backup.json       format, block size, the volume's ID, the key's ID
+<path>/backups/<time>.backup   one per backup: the disk's size and its blocks, in order
+<path>/blocks/ab/abcd...       1 MiB blocks, named by their contents, shared by every backup that has them
+```
+
+**A backup** reads the disk in 1 MiB blocks, skipping holes and zero blocks,
+and uploads the blocks the latest backup doesn't have. Then the guest agent
+freezes the volume's filesystem (`FIFREEZE`, writes wait, reads go on), the
+disk is read again and blocks changed meanwhile are copied to a staging file,
+and writes resume; those blocks are uploaded after. The freeze lasts one
+read of the disk, and the guest ends it by itself after 30 seconds if the
+node goes quiet, failing the backup. A volume no running VM has is read
+directly, with its instances held back meanwhile. The backup file is written
+last, so a backup cut short is simply not there.
+
+**Encryption** is per destination, on by default. One key per cluster, shown
+to the user when made and kept by the control node. Blocks are named by an
+HMAC of their contents (SHA-256 without a key), compressed with zstd, and
+sealed with AES-256-GCM bound to their name; backup files the same way.
+Restores check every block against its name, so a changed bucket is caught.
+`jokku-backup.json` records the key's ID, so the wrong key gets a clear
+error, and the volume's ID, so two volumes never share a path.
+
+**A restore** makes a new copy of the disk from a backup, as a move does
+from the owner, and the current data is backed up first unless
+`--skip-backup`:
+- On the disk's own node: the backup downloads (`.incoming`, then
+  `.received`) while the app runs. Then the instances using the disk are
+  replaced, the restored copy takes the disk's place once their VMs let go
+  of it, and the replacements start with it.
+- Onto another node, when the disk's node is down or gone: the instances
+  using the disk are replaced there right away and wait, the download is
+  committed like a move, and they start. The old node's disk is kept when it
+  comes back, and its instance is stopped.
+
+Next: schedules and retention (with deleting blocks no backup uses), and
+restoring onto another node automatically when a node dies, with nodes
+stopping their volume apps when cut off from the cluster so two copies
+never write at once.
 
 ## Compose apps
 
@@ -744,5 +792,6 @@ stays the stable entry point, including for versions that predate the command.
   `builder:image` and `registry:login` (*done*), `git:from-archive`.
 - **M4 – depth.** The Firecracker `jailer`, `run`, `enter` via vsock (*done*, with
   `storage:export`/`storage:import`), volumes (local disks that move with their instance:
-  *done*; object storage next), `releases:rollback`, app.json health checks, log drains,
-  services.
+  *done*; object storage next), backups to S3 (*manual backups and restores done*;
+  schedules and automatic restores next), `releases:rollback`, app.json health checks,
+  log drains, services.

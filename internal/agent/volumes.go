@@ -43,9 +43,14 @@ type vol struct {
 	usedMB int
 	copied int64 // bytes, in the current copy pass
 	err    string
-	// A copy from another node in progress, and the move it belongs to.
+	// A copy from another node (or a download of a backup) in progress, and
+	// the move or restore it belongs to.
 	cancel context.CancelFunc
 	token  string
+	// restore is how a restore from a backup is going, and restoring says
+	// one is under way: no instance starts with the disk until it is over.
+	restore   string
+	restoring bool
 }
 
 func (a *Agent) volumePath(id, suffix string) string {
@@ -82,14 +87,26 @@ func (a *Agent) syncVolumes(ctx context.Context, st *types.NodeState, attached m
 	for _, spec := range st.Volumes {
 		listed[spec.ID] = true
 		v := a.vol(spec.ID)
-		a.setVol(spec.ID, func(v *vol) { v.role = spec.Role })
+		a.setVol(spec.ID, func(v *vol) { v.role, v.restoring = spec.Role, spec.Restore != nil })
 		var err error
 		switch spec.Role {
 		case types.VolumeOwner:
-			a.stopCopy(spec.ID)
+			if spec.Restore == nil {
+				a.stopCopy(spec.ID)
+				a.setVol(spec.ID, func(v *vol) { v.restore = "" })
+			}
 			err = a.own(ctx, spec, attached)
+			if err == nil && spec.Restore != nil {
+				err = a.restoreHere(spec, attached)
+			}
 		case types.VolumeIncoming:
-			a.receive(spec, v)
+			if spec.Restore == nil {
+				a.receive(spec, v)
+			} else if exists(a.volumePath(spec.ID, sufReceived)) {
+				a.setVol(spec.ID, func(v *vol) { v.state, v.restore, v.token = types.VolumeReceived, types.VolumeReceived, spec.Token })
+			} else {
+				a.startRestore(spec)
+			}
 		case types.VolumePrevious:
 			a.stopCopy(spec.ID)
 			a.setVol(spec.ID, func(v *vol) { v.state = "" })
@@ -291,8 +308,9 @@ func (a *Agent) volumeGate(spec types.InstanceSpec, attached map[string]bool) (s
 		a.volMu.Lock()
 		v, ok := a.vols[m.ID]
 		var role, state string
+		var restoring bool
 		if ok {
-			role, state = v.role, v.state
+			role, state, restoring = v.role, v.state, v.restoring
 		}
 		a.volMu.Unlock()
 		switch {
@@ -300,6 +318,8 @@ func (a *Agent) volumeGate(spec types.InstanceSpec, attached map[string]bool) (s
 			return "", fmt.Errorf("volume %s is not on this node", m.ID)
 		case role == types.VolumeIncoming:
 			return "syncing", nil
+		case restoring:
+			return "pending", nil // being restored from a backup
 		case state == types.VolumeMissing:
 			return "", fmt.Errorf("the disk of volume %s is missing", m.ID)
 		case state != types.VolumeReady:
@@ -397,7 +417,7 @@ func (a *Agent) volumeStatus() []types.VolumeStatus {
 			continue
 		}
 		out = append(out, types.VolumeStatus{
-			ID: id, State: v.state, UsedMB: v.usedMB, CopiedMB: int(v.copied >> 20), Error: v.err,
+			ID: id, State: v.state, UsedMB: v.usedMB, CopiedMB: int(v.copied >> 20), Error: v.err, Restore: v.restore,
 		})
 	}
 	return out

@@ -191,14 +191,15 @@ type Volume struct {
 	Node string `json:"node,omitempty"`
 	// Disk is the disk image's path on Node.
 	Disk   string        `json:"disk,omitempty"`
-	Status string        `json:"status"` // new | ready | missing | moving | destroying
+	Status string        `json:"status"` // new | ready | missing | moving | restoring | destroying
 	Move   *VolumeMove   `json:"move,omitempty"`
 	Mounts []VolumeMount `json:"mounts"`
 
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// VolumeMove is a local volume's copy to another node.
+// VolumeMove is a local volume's copy to another node, or a restore from a
+// backup onto To.
 type VolumeMove struct {
 	To       string `json:"to"`
 	State    string `json:"state"` // copying | synced (waiting for the instance to stop) | received
@@ -230,6 +231,93 @@ type ResizeVolumeRequest struct {
 
 type MoveVolumeRequest struct {
 	Node string `json:"node"`
+}
+
+// BackupDestination is an S3-compatible bucket that volumes are backed up
+// to. The secret only travels to the node doing a backup or restore; lists
+// leave it out.
+type BackupDestination struct {
+	Name            string    `json:"name"`
+	Endpoint        string    `json:"endpoint"` // https://host[:port]; http:// for a local test server
+	Region          string    `json:"region,omitempty"`
+	Bucket          string    `json:"bucket"`
+	AccessKeyID     string    `json:"access_key_id"`
+	SecretAccessKey string    `json:"secret_access_key,omitempty"`
+	Encrypt         bool      `json:"encrypt"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+type CreateBackupDestinationRequest struct {
+	Name            string `json:"name"`
+	Endpoint        string `json:"endpoint"`
+	Region          string `json:"region,omitempty"`
+	Bucket          string `json:"bucket"`
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+	NoEncrypt       bool   `json:"no_encrypt,omitempty"`
+}
+
+// BackupKey is the key that encrypts the cluster's backups. Saved says the
+// user confirmed keeping a copy; encrypted backups wait until then.
+type BackupKey struct {
+	Key   string `json:"key"`
+	ID    string `json:"id"`
+	Saved bool   `json:"saved"`
+}
+
+// SetVolumeBackupRequest says where a volume is backed up. Path defaults
+// to jokku/<app>/<volume>.
+type SetVolumeBackupRequest struct {
+	Destination string `json:"destination"`
+	Path        string `json:"path,omitempty"`
+}
+
+// VolumeBackups is where a volume is backed up, and the backups there.
+type VolumeBackups struct {
+	App         string       `json:"app"`
+	Volume      string       `json:"volume"`
+	Destination string       `json:"destination"`
+	Path        string       `json:"path"`
+	Backups     []BackupInfo `json:"backups,omitempty"` // newest first
+	Last        *BackupRun   `json:"last,omitempty"`    // the latest attempt, failed or not
+	Succeeded   *BackupRun   `json:"succeeded,omitempty"`
+}
+
+// BackupInfo is one backup in a bucket. The sizes are known for backups
+// this cluster made.
+type BackupInfo struct {
+	Name      string    `json:"name"`
+	Time      time.Time `json:"time"`
+	Size      int64     `json:"size,omitempty"`      // the disk's size
+	NewBytes  int64     `json:"new_bytes,omitempty"` // what it added to the bucket
+	NewBlocks int       `json:"new_blocks,omitempty"`
+}
+
+// BackupRun is one attempt at a backup.
+type BackupRun struct {
+	Name       string    `json:"name"`
+	Status     string    `json:"status"` // running | succeeded | failed
+	Error      string    `json:"error,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at,omitzero"`
+}
+
+// BackupResult is what one backup stored.
+type BackupResult struct {
+	Name      string `json:"name"`
+	Size      int64  `json:"size"`
+	Blocks    int    `json:"blocks"`
+	NewBlocks int    `json:"new_blocks"`
+	NewBytes  int64  `json:"new_bytes"`
+}
+
+// RestoreVolumeRequest restores a volume from one of its backups (the
+// latest without Backup), on Node if given. Unless SkipBackup, the volume
+// is backed up first, so the restore can be undone.
+type RestoreVolumeRequest struct {
+	Backup     string `json:"backup,omitempty"`
+	Node       string `json:"node,omitempty"`
+	SkipBackup bool   `json:"skip_backup,omitempty"`
 }
 
 type Release struct {
@@ -266,6 +354,8 @@ type Event struct {
 	Request *Request `json:"request,omitempty"`
 	Status  string   `json:"status,omitempty"` // on done: succeeded | failed
 	Error   string   `json:"error,omitempty"`
+	// Backup, on a node's done event for a backup, is what it stored.
+	Backup *BackupResult `json:"backup,omitempty"`
 }
 
 const (
@@ -273,6 +363,7 @@ const (
 	EventRequest = "request"
 	EventDone    = "done"
 
+	StatusRunning   = "running"
 	StatusSucceeded = "succeeded"
 	StatusFailed    = "failed"
 )

@@ -35,7 +35,9 @@ jobs:
           printf '#!/bin/sh\necho "this release is broken" >&2\nexit 1\n' > dist/broken/jokku-linux-amd64
           chmod +x dist/broken/jokku-linux-amd64
           for v in old new broken; do (cd dist/$v && sha256sum jokku-linux-amd64 > checksums.txt); done
-      - run: bash test/server-e2e.sh dist
+      - name: Build an S3 server for the backup tests
+        run: GOBIN=$PWD/tools go install github.com/versity/versitygw/cmd/versitygw@v1.8.0
+      - run: VERSITYGW=$PWD/tools/versitygw bash test/server-e2e.sh dist
 
   # A two-node cluster: the runner is the control node, a QEMU VM joins as a
   # worker over WireGuard.

@@ -336,6 +336,16 @@ func (s *Server) volumeInfo(v store.Volume) types.Volume {
 	switch {
 	case v.State == store.VolumeDestroying:
 		out.Status = "destroying"
+	case v.Restore != "":
+		out.Status = "restoring"
+		state, to := v.Transfer, v.MovingTo
+		if state == "" {
+			state = types.VolumeCopying
+		}
+		if to == "" {
+			to = v.Node
+		}
+		out.Move = &types.VolumeMove{To: to, State: state, CopiedMB: v.CopiedMB, Error: v.MoveError}
 	case v.Moving():
 		out.Status = "moving"
 		state := v.Transfer

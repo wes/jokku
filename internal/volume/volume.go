@@ -76,6 +76,25 @@ func Summarize(f *os.File) (Summary, error) {
 	return sum, err
 }
 
+// EachBlock calls fn, in order, with each block of f that holds data; holes
+// and all-zero blocks are skipped. b is reused between calls. It returns f's
+// size.
+func EachBlock(f *os.File, fn func(i int64, b []byte) error) (int64, error) {
+	st, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	size := st.Size()
+	buf := make([]byte, BlockSize)
+	return size, eachDataBlock(f, size, func(i int64) error {
+		b, err := readBlock(f, buf, i, size)
+		if err != nil || isZero(b) {
+			return err
+		}
+		return fn(i, b)
+	})
+}
+
 // WriteSummary encodes a summary for the owner.
 func WriteSummary(w io.Writer, sum Summary) error {
 	idx := make([]int64, 0, len(sum))

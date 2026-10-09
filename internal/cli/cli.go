@@ -93,6 +93,7 @@ var namespaceHelp = map[string]string{
 	"ps":          "List processes and scale an app",
 	"resource":    "Manage vCPU and memory per process type",
 	"storage":     "Manage volumes: disks for an app's data",
+	"backups":     "Back volumes up to S3-compatible storage, and restore them",
 	"registry":    "Manage logins to private image registries",
 	"checks":      "Manage zero-downtime deploy checks",
 	"proxy":       "Manage the HTTP proxy for an app",
@@ -132,6 +133,7 @@ func init() {
 	register(storageCommands...)
 	register(builderCommands...)
 	register(registryCommands...)
+	register(backupsCommands...)
 	register(sshKeysCommands...)
 	register(nodesCommands...)
 	register(clusterCommands...)

@@ -107,6 +107,9 @@ func handleSession(cfg *Config, a *app, conn *os.File) {
 		return
 	}
 	switch req.Op {
+	case session.OpFreeze:
+		code, msg := freezeSession(c, req.Path)
+		c.Exit(code, msg)
 	case session.OpExec:
 		code, err := execSession(cfg, c, req)
 		msg := ""
@@ -365,4 +368,64 @@ func setSize(f *os.File, rows, cols uint16) {
 	if rows > 0 && cols > 0 {
 		unix.IoctlSetWinsize(int(f.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: rows, Col: cols})
 	}
+}
+
+// The fsfreeze ioctls, _IOWR('X', 119 and 120, int), the same on amd64 and
+// arm64.
+const (
+	fiFreeze = 0xC0045877
+	fiThaw   = 0xC0045878
+)
+
+// freezeSession pauses writes to the volume mounted at path while the node
+// backs it up, so the backup is the disk at one moment, as a power cut
+// would leave it. Writes resume when the node says so, hangs up, or takes
+// longer than session.FreezeLimit; the last fails the backup.
+func freezeSession(c *session.Conn, path string) (int, string) {
+	var root, st unix.Stat_t
+	if err := unix.Stat("/", &root); err != nil {
+		return 1, err.Error()
+	}
+	if err := unix.Stat(path, &st); err != nil {
+		return 1, err.Error()
+	}
+	if st.Dev == root.Dev {
+		return 1, path + " is not a volume of its own"
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return 1, err.Error()
+	}
+	defer f.Close()
+	if err := unix.IoctlSetInt(int(f.Fd()), fiFreeze, 0); err != nil {
+		return 1, fmt.Sprintf("pausing writes to %s: %v", path, err)
+	}
+	thaw := func() error { return unix.IoctlSetInt(int(f.Fd()), fiThaw, 0) }
+	if err := c.Write(session.FrameStdout, []byte("frozen\n")); err != nil {
+		thaw()
+		return 1, err.Error()
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			if typ, _, err := c.Read(); err != nil || typ == session.FrameEOF {
+				return
+			}
+		}
+	}()
+	timer := time.NewTimer(session.FreezeLimit)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		if err := thaw(); err != nil {
+			return 1, err.Error()
+		}
+		return 1, fmt.Sprintf("writes to %s resumed after %s, before the backup had read the disk", path, session.FreezeLimit)
+	}
+	if err := thaw(); err != nil {
+		return 1, fmt.Sprintf("resuming writes to %s: %v", path, err)
+	}
+	return 0, ""
 }

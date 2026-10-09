@@ -254,7 +254,7 @@ func TestVolumes(t *testing.T) {
 		t.Fatalf("the old copy is still kept: %+v", got)
 	}
 	s.StartVolumeMove(ctx, v.ID, "n3", "tok3")
-	s.AbortVolumeMove(ctx, v.ID)
+	s.AbortVolumeMove(ctx, v.ID, "")
 	if got, _ := s.VolumeByID(ctx, v.ID); got.Node != "n2" || got.Moving() {
 		t.Fatalf("after abort: %+v", got)
 	}

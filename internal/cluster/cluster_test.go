@@ -62,6 +62,7 @@ func init() {
 type fakeRuntime struct {
 	guestDir    string         // each fake VM's filesystem: <guestDir>/<id>
 	restarts    map[string]int // app restarts the guest agent did in place (after an import)
+	freezes     map[string]int // writes paused for a backup, by instance
 	tokens      map[string]string
 	node        string
 	disks       *diskTracker
@@ -73,7 +74,7 @@ type fakeRuntime struct {
 }
 
 func newFakeRuntime(node string, disks *diskTracker) *fakeRuntime {
-	return &fakeRuntime{node: node, disks: disks, running: map[string]vm.Spec{}, restarts: map[string]int{}, tokens: map[string]string{}}
+	return &fakeRuntime{node: node, disks: disks, running: map[string]vm.Spec{}, restarts: map[string]int{}, freezes: map[string]int{}, tokens: map[string]string{}}
 }
 
 // Session connects to a fake guest agent that speaks the real protocol: exec
@@ -105,6 +106,17 @@ func (f *fakeRuntime) guest(id, token string, conn net.Conn) {
 	}
 	dir := filepath.Join(f.guestDir, id, filepath.FromSlash(req.Path))
 	switch req.Op {
+	case session.OpFreeze:
+		f.mu.Lock()
+		f.freezes[id]++
+		f.mu.Unlock()
+		c.Write(session.FrameStdout, []byte("frozen\n"))
+		for {
+			if typ, _, err := c.Read(); err != nil || typ == session.FrameEOF {
+				break
+			}
+		}
+		c.Exit(0, "")
 	case session.OpExec:
 		if len(req.Argv) == 2 && req.Argv[0] == "exit" {
 			code, _ := strconv.Atoi(req.Argv[1])

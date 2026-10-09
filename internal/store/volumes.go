@@ -34,6 +34,14 @@ type Volume struct {
 	Transfer  string // what MovingTo last reported: copying, synced or received
 	CopiedMB  int
 	MoveError string
+	// Restore, while the disk is being restored from a backup, is the
+	// types.RestoreSpec (without credentials) as JSON. The disk is made
+	// on MovingTo, or on Node when MovingTo is "", and MoveToken, Transfer,
+	// CopiedMB and MoveError follow it as they do a move.
+	Restore string
+	// RestoreResult is how the last restore ended: "" while one runs,
+	// "restored", or why it failed.
+	RestoreResult string
 
 	Mounts    []types.VolumeMount
 	CreatedAt time.Time
@@ -73,7 +81,7 @@ func (s *Store) CreateVolume(ctx context.Context, v *Volume) error {
 
 const volumeSelect = `
 SELECT v.id, COALESCE(a.name, ''), v.name, v.type, v.size_mb, v.state, v.node, v.status, v.used_mb, v.previous_node,
-	v.moving_to, v.move_token, v.transfer, v.copied_mb, v.move_error, v.created_at
+	v.moving_to, v.move_token, v.transfer, v.copied_mb, v.move_error, v.restore, v.restore_result, v.created_at
 FROM volumes v LEFT JOIN apps a ON a.id = v.app_id`
 
 // Volumes lists an app's volumes, or every volume (including those of
@@ -127,7 +135,7 @@ func (s *Store) queryVolumes(ctx context.Context, q string, args ...any) ([]Volu
 		var v Volume
 		var created int64
 		err := rows.Scan(&v.ID, &v.App, &v.Name, &v.Type, &v.SizeMB, &v.State, &v.Node, &v.Status, &v.UsedMB, &v.PreviousNode,
-			&v.MovingTo, &v.MoveToken, &v.Transfer, &v.CopiedMB, &v.MoveError, &created)
+			&v.MovingTo, &v.MoveToken, &v.Transfer, &v.CopiedMB, &v.MoveError, &v.Restore, &v.RestoreResult, &created)
 		if err != nil {
 			return nil, err
 		}
@@ -179,7 +187,7 @@ func destroyVolumes(ctx context.Context, tx *sql.Tx, where string, arg any) erro
 	stmts := []string{
 		"DELETE FROM volume_mounts WHERE volume_id IN (SELECT id FROM volumes WHERE " + where + ")",
 		"DELETE FROM volumes WHERE node = '' AND " + where,
-		"UPDATE volumes SET state = 'destroying', previous_node = '', moving_to = '', move_token = '', transfer = '', copied_mb = 0, move_error = '' WHERE " + where,
+		"UPDATE volumes SET state = 'destroying', previous_node = '', moving_to = '', move_token = '', transfer = '', copied_mb = 0, move_error = '', restore = '' WHERE " + where,
 	}
 	for _, q := range stmts {
 		if _, err := tx.ExecContext(ctx, q, arg); err != nil {
@@ -240,15 +248,19 @@ WHERE id = ? AND moving_to = '' AND state != ?`, to, token, id, VolumeDestroying
 func (s *Store) CommitVolumeMove(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `
 UPDATE volumes SET previous_node = node, node = moving_to, state = ?, status = '',
-	moving_to = '', move_token = '', transfer = '', copied_mb = 0, move_error = ''
+	moving_to = '', move_token = '', transfer = '', copied_mb = 0, move_error = '', restore = '',
+	restore_result = CASE WHEN restore != '' THEN 'restored' ELSE restore_result END
 WHERE id = ? AND moving_to != ''`, VolumeReady, id)
 	return err
 }
 
-// AbortVolumeMove calls off a move; the disk stays where it was.
-func (s *Store) AbortVolumeMove(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx,
-		"UPDATE volumes SET moving_to = '', move_token = '', transfer = '', copied_mb = 0, move_error = '' WHERE id = ?", id)
+// AbortVolumeMove calls off a move, or a restore onto another node (why
+// is recorded as its result); the disk stays where it was.
+func (s *Store) AbortVolumeMove(ctx context.Context, id, why string) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE volumes SET moving_to = '', move_token = '', transfer = '', copied_mb = 0, move_error = '', restore = '',
+	restore_result = CASE WHEN restore != '' THEN ? ELSE restore_result END
+WHERE id = ?`, why, id)
 	return err
 }
 
@@ -280,9 +292,18 @@ func (s *Store) ReportVolume(ctx context.Context, node string, st types.VolumeSt
 			state, previous = VolumeReady, "" // the old copy, if any, can go
 		}
 		changed := v.Status != st.State || state != v.State || previous != v.PreviousNode
-		_, err := s.db.ExecContext(ctx, "UPDATE volumes SET status = ?, used_mb = ?, state = ?, previous_node = ? WHERE id = ?",
-			st.State, st.UsedMB, state, previous, v.ID)
-		return changed, err
+		if _, err := s.db.ExecContext(ctx, "UPDATE volumes SET status = ?, used_mb = ?, state = ?, previous_node = ? WHERE id = ?",
+			st.State, st.UsedMB, state, previous, v.ID); err != nil {
+			return false, err
+		}
+		if v.Restore != "" && st.Restore != "" {
+			// A restore on the disk's own node.
+			changed = changed || v.Transfer != st.Restore || v.MoveError != st.Error
+			_, err := s.db.ExecContext(ctx, "UPDATE volumes SET transfer = ?, copied_mb = ?, move_error = ? WHERE id = ? AND moving_to = ''",
+				st.Restore, st.CopiedMB, st.Error, v.ID)
+			return changed, err
+		}
+		return changed, nil
 	}
 	return false, nil
 }

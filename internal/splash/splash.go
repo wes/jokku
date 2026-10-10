@@ -24,13 +24,13 @@ type Info struct {
 
 	// Cluster is set when the control node answered; the figures below are
 	// the whole cluster's.
-	Cluster                  bool
-	Apps, Databases, Stopped int
-	Unhealthy                []AppHealth
-	Nodes, NodesUp, Edges    int
-	Down                     []string // nodes that stopped reporting
-	Instances                int
-	LastDeploy               *types.Deploy
+	Cluster                          bool
+	Apps, Databases, Asleep, Stopped int
+	Unhealthy                        []AppHealth
+	Nodes, NodesUp, Edges            int
+	Down                             []string // nodes that stopped reporting
+	Instances                        int
+	LastDeploy                       *types.Deploy
 
 	// Here is the instances on this node.
 	Here int
@@ -164,8 +164,8 @@ func rows(in *Info) (left, right []cell) {
 		if in.Apps == 0 {
 			apps = "none yet"
 		}
-		if in.Databases > 0 {
-			apps += " · " + count(in.Databases, "database", "databases")
+		if in.Asleep > 0 {
+			apps += fmt.Sprintf(" · %d asleep", in.Asleep)
 		}
 		if in.Stopped > 0 {
 			apps += fmt.Sprintf(" · %d stopped", in.Stopped)
@@ -174,8 +174,11 @@ func rows(in *Info) (left, right []cell) {
 		if in.Edges > 0 {
 			nodes += " · " + count(in.Edges, "edge", "edges")
 		}
+		left = append(left, cell{label: "apps", value: apps})
+		if in.Databases > 0 {
+			left = append(left, cell{label: "databases", value: fmt.Sprint(in.Databases)})
+		}
 		left = append(left,
-			cell{label: "apps", value: apps},
 			cell{label: "nodes", value: nodes, warn: in.NodesUp < in.Nodes},
 			cell{label: "instances", value: fmt.Sprintf("%d · %d on this node", in.Instances, in.Here)})
 	case in.Role == "worker" || in.Role == "edge":

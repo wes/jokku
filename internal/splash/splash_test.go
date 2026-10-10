@@ -15,7 +15,7 @@ var now = time.Date(2026, 10, 10, 14, 0, 0, 0, time.UTC)
 func controlNode() *Info {
 	return &Info{
 		Host: "jokku1", Role: "control", Running: true, Status: "ready", Version: "v0.8.3", Mesh: "10.210.1.1",
-		Cluster: true, Apps: 15, Databases: 3, Stopped: 2, Nodes: 6, NodesUp: 5, Down: []string{"jokku4"},
+		Cluster: true, Apps: 15, Databases: 3, Asleep: 1, Stopped: 2, Nodes: 6, NodesUp: 5, Down: []string{"jokku4"},
 		Unhealthy: []AppHealth{{"api", 0, 1}}, Instances: 19, Here: 8,
 		LastDeploy: &types.Deploy{App: "blog", Status: "succeeded", CreatedAt: now.Add(-2 * time.Hour)},
 		IP:         "192.168.86.113", CPUs: 8, Load: []float64{0.18, 0.15, 0.10}, MemoryMB: 29 * 1024, MemoryUsedMB: 3584,
@@ -68,11 +68,12 @@ func TestTheSplashFitsAnEightyColumnLogin(t *testing.T) {
 func TestTheGridPutsTheClusterLeftAndTheMachineRight(t *testing.T) {
 	text := plain(render(controlNode(), Options{}))
 	want := []string{
-		"  apps       15 · 3 databases · 2 stopped     ip      192.168.86.113",
-		"  nodes      5 of 6 ready                     load    0.18 0.15 0.10 · 8 cpus",
-		"  instances  19 · 8 on this node              memory  3.5G of 29G",
-		"  mesh       10.210.1.1                       disk    11% of 387G",
-		"  deployed   blog, 2 hours ago                uptime  1 day, 21 hours",
+		"  apps       15 · 1 asleep · 2 stopped        ip      192.168.86.113",
+		"  databases  3                                load    0.18 0.15 0.10 · 8 cpus",
+		"  nodes      5 of 6 ready                     memory  3.5G of 29G",
+		"  instances  19 · 8 on this node              disk    11% of 387G",
+		"  mesh       10.210.1.1                       uptime  1 day, 21 hours",
+		"  deployed   blog, 2 hours ago",
 		"",
 		"  ▲ jokku4 is down",
 		"  ▲ api is unhealthy: 0 of 1 instances up",

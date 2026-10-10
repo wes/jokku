@@ -97,11 +97,15 @@ func readCluster(in *Info, st *types.ClusterStatus) {
 			in.Databases++
 		} else {
 			in.Apps++
-			if a.Stopped {
+			switch {
+			case a.Stopped:
 				in.Stopped++
+			case a.Asleep:
+				in.Asleep++
 			}
 		}
-		if !a.Stopped && a.Healthy < a.Wanted {
+		// A sleeping app's instances are stopped until a request wakes it.
+		if !a.Stopped && !a.Asleep && a.Healthy < a.Wanted {
 			in.Unhealthy = append(in.Unhealthy, AppHealth{Name: a.Name, Healthy: a.Healthy, Wanted: a.Wanted})
 		}
 		if d := a.Deploy; d != nil && a.Kind == "" && (in.LastDeploy == nil || d.CreatedAt.After(in.LastDeploy.CreatedAt)) {

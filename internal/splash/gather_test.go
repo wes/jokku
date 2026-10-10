@@ -108,6 +108,7 @@ func TestGatherAsksTheControlNode(t *testing.T) {
 					{Name: "blog", Healthy: 1, Wanted: 1, Deploy: &types.Deploy{App: "blog", Status: "succeeded", CreatedAt: deployed}},
 					{Name: "api", Healthy: 0, Wanted: 2, Deploy: &types.Deploy{App: "api", CreatedAt: deployed.Add(-time.Hour)}},
 					{Name: "old", Stopped: true},
+					{Name: "docs", Asleep: true, Healthy: 0, Wanted: 1},
 					{Name: "pg-main", Kind: "postgres", Healthy: 1, Wanted: 1,
 						Deploy: &types.Deploy{App: "pg-main", CreatedAt: deployed.Add(time.Hour)}},
 				},
@@ -130,9 +131,10 @@ func TestGatherAsksTheControlNode(t *testing.T) {
 	if in.Nodes != 3 || in.NodesUp != 2 || in.Edges != 1 || !slices.Equal(in.Down, []string{"jokku4"}) {
 		t.Errorf("nodes %d of %d up, %d edges, down %v", in.NodesUp, in.Nodes, in.Edges, in.Down)
 	}
-	if in.Apps != 3 || in.Databases != 1 || in.Stopped != 1 {
-		t.Errorf("%d apps, %d databases, %d stopped", in.Apps, in.Databases, in.Stopped)
+	if in.Apps != 4 || in.Databases != 1 || in.Asleep != 1 || in.Stopped != 1 {
+		t.Errorf("%d apps, %d databases, %d asleep, %d stopped", in.Apps, in.Databases, in.Asleep, in.Stopped)
 	}
+	// A sleeping app isn't unhealthy.
 	if fmt.Sprint(in.Unhealthy) != "[{api 0 2}]" {
 		t.Errorf("unhealthy %v", in.Unhealthy)
 	}

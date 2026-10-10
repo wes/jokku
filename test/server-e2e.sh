@@ -414,6 +414,19 @@ if jssh apps:list | grep -q postgres-shopdb; then fail "apps:list shows the data
 jssh db:postgres:unlink shopdb hello >/dev/null
 for db in postgres:shopdb redis:cache mysql:orders; do jssh "db:${db%%:*}:destroy" "${db#*:}" --force; done
 
+step "the login splash screen"
+had_header=no
+[ -x /etc/update-motd.d/00-header ] && had_header=yes
+sudo jokku splash:enable
+[ -x /etc/update-motd.d/00-jokku ] || fail "splash:enable didn't install the banner script"
+# What pam_motd shows at login.
+motd=$(sudo run-parts --lsbsysinit /etc/update-motd.d | sed 's/\x1b\[[0-9;]*m//g')
+printf '%s\n' "$motd"
+grep -q "control node  ● ready" <<<"$motd" || fail "the splash doesn't show this node ready"
+grep -qE "^  apps +[0-9]" <<<"$motd" || fail "the splash has no cluster figures"
+grep -q "https://jokku.dev" <<<"$motd" || fail "the splash doesn't point to the docs"
+if [ "$had_header" = yes ] && grep -q "Welcome to Ubuntu" <<<"$motd"; then fail "Ubuntu's welcome text still shows"; fi
+
 step "running install.sh again changes nothing"
 out=$(sudo JOKKU_DOWNLOAD_URL="file://$dist/new" sh ./install.sh)
 grep -q "already installed" <<<"$out" || fail "reinstall should point to update.sh"
@@ -428,6 +441,12 @@ watch_stop "the update"
 [ "$(jssh config:get hello GREETING)" = "world" ] || fail "state lost on update"
 [ "$(sudo jokku ssh-keys:list | wc -l)" -eq "$keys_before" ] || fail "keys changed on update"
 sudo ls -d /var/lib/jokku/backups/*-ci-old >/dev/null || fail "no backup taken"
+grep -q "splash --color" /etc/update-motd.d/00-jokku || fail "the update dropped the login splash"
+
+step "splash:disable brings the welcome text back"
+sudo jokku splash:disable
+[ ! -e /etc/update-motd.d/00-jokku ] || fail "the banner script is still there"
+if [ "$had_header" = yes ] && [ ! -x /etc/update-motd.d/00-header ]; then fail "Ubuntu's welcome text is still off"; fi
 
 step "jokku update asks first"
 out=$(echo n | sudo jokku update --version ci-newer 2>&1 || true)

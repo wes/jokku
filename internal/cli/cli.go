@@ -107,6 +107,7 @@ var namespaceHelp = map[string]string{
 	"top":         "Watch the cluster, apps and machines live",
 	"version":     "Print the jokku version",
 	"update":      "Update jokku on this server",
+	"splash":      "Show Jokku's splash screen, and choose whether it greets you at login",
 	"logs":        "Display an app's log output",
 	"releases":    "List an app's releases",
 	"help":        "Print the list of commands",
@@ -147,6 +148,7 @@ func init() {
 	register(serverCommands...)
 	register(propertyCommands()...)
 	register(updateCommand)
+	register(splashCommands...)
 	register(&Command{Name: "version", Help: namespaceHelp["version"], Local: true, Run: runVersion})
 	register(&Command{Name: "help", Help: namespaceHelp["help"], Local: true, MaxArgs: 1, Flags: []Flag{{Name: "all", Help: "List every command"}}, Run: runHelp})
 }

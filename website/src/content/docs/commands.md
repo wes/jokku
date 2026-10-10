@@ -107,5 +107,6 @@ How an app is built is the one area that departs from Dokku. Dokku has no compos
 | `ssh jokku@host <command>`, with nothing installed locally | ✅ |
 | `jokku update [--yes] [--version vX]` (asks first; backs up and rolls back) | ➕ ✅ |
 | `jokku setup` (repair or reapply server setup) | ➕ ✅ |
+| `jokku splash`, `splash:enable`, `splash:disable` (the logo and live figures about the server and the cluster at login) | ➕ ✅ |
 | `jokku restore-cluster --endpoint --bucket --access-key-id [--path] [--backup]` (as root, on a new control server, from its backups) | ➕ ✅ |
 | `tokens:create`, `tokens:list`, `tokens:remove` (an HTTPS API for CI and tools) | ➕ 🔜 |

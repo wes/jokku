@@ -5,6 +5,13 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update a server with `sudo jokku update`, and every server in a cluster the same way. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.3: A splash screen
+
+October 10, 2026
+
+- **A [splash screen](/docs/installation#the-splash-screen) at login.** It has the Jokku logo, a palm tree, and live figures: the cluster's apps, nodes, instances and last deploy, and the server's address, load, memory, disk and uptime. It also warns about a node that's down, an app short of healthy instances, or system updates waiting.
+- **Install and update ask before turning it on**, once per server. Turn it on or off any time with `sudo jokku splash:enable` and `splash:disable`, and see it with `sudo jokku splash`. It takes the place of the system's welcome text, which comes back when you turn it off, as does a banner of your own.
+
 ## v0.8.2: Serve from home
 
 October 10, 2026

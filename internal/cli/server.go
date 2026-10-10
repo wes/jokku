@@ -50,13 +50,18 @@ var serverCommands = []*Command{
 			{Name: "token", Value: "TOKEN", Help: "Join token from jokku cluster:join-command"},
 			{Name: "name", Value: "NAME", Help: "This node's name in the cluster (default the hostname)"},
 			{Name: "advertise-address", Value: "IP", Help: "Address other nodes reach this one at"},
+			{Name: "edge", Value: "BUNDLE", Help: "Become an edge of a cluster, with the bundle from jokku edge:add"},
 		},
 		Run: func(c *Context) error {
 			if c.Bool("join") != c.Bool("token") {
 				return usageErr("--join and --token go together")
 			}
+			if c.Bool("edge") && c.Bool("join") {
+				return usageErr("--edge and --join don't go together: a server is a worker or an edge")
+			}
 			return setup.Run(c, c.Stdout, setup.Options{
 				Join: c.String("join"), Token: c.String("token"), Name: c.String("name"), Advertise: c.String("advertise-address"),
+				Edge: c.String("edge"),
 			})
 		}},
 	{Name: "ssh-command", Hidden: true, Local: true, serverOnly: true,

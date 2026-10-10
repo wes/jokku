@@ -102,7 +102,7 @@ func (m *model) footer() string {
 	keys := "1-7/tab views  ↑↓ move  enter drill in  l logs  esc back  r refresh  ? help  q quit"
 	switch m.view {
 	case trafficView:
-		keys = "1-7/tab views  p pause  c clear  ? help  q quit"
+		keys = "1-7/tab views  p pause  c clear  f effects  ? help  q quit"
 	case backupsView:
 		keys = "space on/off  b back up now  s schedule  a auto-restore  ↑↓ move  1-7 views  ? help  q quit"
 		if m.width < 100 {
@@ -123,7 +123,9 @@ const helpText = `jokku top shows the cluster live, refreshed every two seconds.
   4 Instances   each microVM: state, node, CPU, memory, uptime, restarts
   5 Events      deploys, crashes, nodes coming and going
   6 Traffic     every request live: dots fly across each app's lane, colored
-                by status, and land on the instance and node that answered
+                by status, and land on the instance and node that answered.
+                Slow requests crawl, trailing amber; failures burst red. p
+                pauses, c clears, f turns the effects off for a slow link
   7 Backups     what is backed up and what isn't: every volume and the cluster
                 itself, their last and next backups, and what they keep. space
                 turns backups on or off, b backs up now, s changes how often,
@@ -198,6 +200,9 @@ func (m *model) apps() string {
 	}
 	for i, a := range m.st.Apps {
 		domains := strings.Join(a.Domains, " ")
+		if a.Kind != "" {
+			domains = sDim.Render(a.Kind + " database (jokku db:" + a.Kind + ":info " + strings.TrimPrefix(a.Name, a.Kind+"-") + ")")
+		}
 		line := fmt.Sprintf("  %s %-20s %-10s %s %-6s %-26s %s", appDot(a), trunc(a.Name, 20), appStatus(a),
 			pad(dots(a.Healthy, a.Wanted), 14), fmt.Sprintf("v%d", a.Release), trunc(deploySummary(a.Deploy), 26), domains)
 		b.WriteString(m.selectable(appsView, i, line) + "\n")

@@ -60,6 +60,11 @@ How an app is built is the one area that departs from Dokku. Dokku has no compos
 | `letsencrypt:enable`, `letsencrypt:disable`, `letsencrypt:set` (`email`), `letsencrypt:report` | ✅ off for new apps, as in Dokku |
 | `certs:add`, `certs:remove`, `certs:report` | 🔜 |
 | `ports:list`, `ports:add`, `ports:set`, `ports:remove`, `ports:clear` | 🔜 apps listen on `$PORT` for now |
+| `external:create <name> <url> [--via NODE] [--insecure]`, `external:list`, `external:info`, `external:set` (`url`, `via`, `insecure`), `external:destroy` (route domains to services Jokku doesn't run, on your network) | ➕ ✅ |
+| `http-auth:enable <app> [<user>...] [--password]`, `http-auth:disable`, `http-auth:set-password`, `http-auth:report` | ✅ a login page instead of basic auth; users can have authenticator codes |
+| `http-auth:add-allowed-ip`, `http-auth:remove-allowed-ip`, `http-auth:add-bypass-path`, `http-auth:remove-bypass-path` | ✅ |
+| `http-auth:share <app> [--expires 24h] [--note]`, `http-auth:shares`, `http-auth:unshare` (links that let their holder in until they expire) | ➕ ✅ |
+| `http-auth:users:add <name> [--totp]`, `http-auth:users:list`, `http-auth:users:passwd`, `http-auth:users:totp [--off]`, `http-auth:users:remove`, `http-auth:set --global` (`login-domain`, `session-days`) | ➕ ✅ |
 | `nginx:*` | ✖ Caddy replaces nginx |
 
 ## Storage and services
@@ -86,6 +91,7 @@ How an app is built is the one area that departs from Dokku. Dokku has no compos
 | `nodes:list`, `nodes:report`, `nodes:set` (`schedulable`, `ingress`) | ➕ ✅ |
 | `nodes:drain`, `nodes:undrain` | ➕ ✅ |
 | `nodes:remove [--force]` | ➕ ✅ |
+| `edge:add [<user>@]<address> [--name] [--print]` (a public server routing your domains to nodes behind NAT; installs it over ssh), `edge:list`, `edge:remove [--force]` | ➕ ✅ |
 | `events [<app>] [-n N]` | ➕ ✅ |
 | `top`, a live dashboard of servers, apps, instances, events and traffic | ➕ ✅ |
 | Updating every server from the control server | 🔜 |

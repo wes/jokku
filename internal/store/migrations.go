@@ -348,4 +348,42 @@ CREATE TABLE cluster_backup_runs (
 	finished_at INTEGER
 );
 `,
+
+	// 10: databases: apps of a kind (postgres, mysql, redis) rather than
+	// apps deployed from code, and the apps they are linked to
+	`
+ALTER TABLE apps ADD COLUMN kind TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE database_links (
+	database_id INTEGER NOT NULL REFERENCES apps (id) ON DELETE CASCADE,
+	app_id      INTEGER NOT NULL REFERENCES apps (id) ON DELETE CASCADE,
+	var         TEXT    NOT NULL,
+	created_at  INTEGER NOT NULL,
+	PRIMARY KEY (database_id, app_id)
+);
+`,
+
+	// 11: edges (a removed one is kept a moment so it can learn it was), and
+	// logins in front of apps: the cluster's users, and links that let
+	// anyone holding one into an app for a while
+	`
+ALTER TABLE nodes ADD COLUMN removed_at INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE auth_users (
+	name          TEXT    PRIMARY KEY,
+	password_hash TEXT    NOT NULL,
+	totp_secret   TEXT    NOT NULL DEFAULT '',
+	created_at    INTEGER NOT NULL,
+	updated_at    INTEGER NOT NULL
+);
+
+CREATE TABLE auth_shares (
+	id         TEXT    PRIMARY KEY,
+	app_id     INTEGER NOT NULL REFERENCES apps (id) ON DELETE CASCADE,
+	token_hash TEXT    NOT NULL UNIQUE,
+	note       TEXT    NOT NULL DEFAULT '',
+	expires_at INTEGER NOT NULL,
+	created_at INTEGER NOT NULL
+);
+`,
 }

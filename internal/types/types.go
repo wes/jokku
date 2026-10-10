@@ -15,12 +15,170 @@ type Error struct {
 }
 
 type App struct {
-	Name           string    `json:"name"`
+	Name string `json:"name"`
+	// Kind is "" for an app deployed from code, the engine of a database
+	// (postgres, mysql, redis), which the db: commands manage, or
+	// KindExternal for a service Jokku routes to but doesn't run.
+	Kind           string    `json:"kind,omitempty"`
 	Locked         bool      `json:"locked"`
 	Stopped        bool      `json:"stopped"` // ps:stop
 	CreatedAt      time.Time `json:"created_at"`
 	CurrentRelease int       `json:"current_release,omitempty"`
 	DeploySource   string    `json:"deploy_source,omitempty"`
+}
+
+// KindExternal is an app Jokku doesn't run: a service elsewhere on the
+// network (Home Assistant on the LAN, say) that its proxies route a domain
+// to. The external: commands manage it.
+const KindExternal = "external"
+
+// External is an external app: its domains are routed to URL, reached
+// through Via (the node that forwards edge traffic to it).
+type External struct {
+	Name      string    `json:"name"`
+	URL       string    `json:"url"` // http(s)://IP:port
+	Via       string    `json:"via"`
+	Insecure  bool      `json:"insecure,omitempty"` // an https target's certificate isn't checked
+	Domains   []string  `json:"domains"`
+	Auth      string    `json:"auth,omitempty"` // its login mode, if it has one
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ExternalRequest creates an external app, or with PATCH changes the fields
+// that are set.
+type ExternalRequest struct {
+	Name     string `json:"name,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Via      string `json:"via,omitempty"`
+	Insecure *bool  `json:"insecure,omitempty"`
+}
+
+// Edge is an edge node, with how to install it.
+type Edge struct {
+	Node
+	Version string `json:"version,omitempty"` // the jokku it runs (or, before it's installed, should)
+	// Command installs it, on the edge itself; it holds the edge's
+	// credentials, so it is only returned when the edge is created.
+	Command string `json:"command,omitempty"`
+	// Bundle is the credentials inside Command, for "jokku setup --edge".
+	Bundle string `json:"bundle,omitempty"`
+}
+
+type CreateEdgeRequest struct {
+	Name    string `json:"name"`
+	Address string `json:"address"` // its public address (IP or DNS name), where the nodes behind it reach it
+}
+
+// AuthSettings is an app's login (http-auth), or the cluster's settings
+// for logins (app "").
+type AuthSettings struct {
+	App         string   `json:"app,omitempty"`
+	Mode        string   `json:"mode"` // off, password or users
+	HasPassword bool     `json:"has_password,omitempty"`
+	Users       []string `json:"users,omitempty"` // allowed users; empty with mode users allows every user
+	AllowIPs    []string `json:"allow_ips,omitempty"`
+	BypassPaths []string `json:"bypass_paths,omitempty"`
+	Shares      int      `json:"shares,omitempty"`
+	// Global settings.
+	LoginDomain string `json:"login_domain,omitempty"`
+	SessionDays int    `json:"session_days,omitempty"`
+}
+
+// AuthPatch changes an app's login: the fields that are set.
+type AuthPatch struct {
+	Mode        string    `json:"mode,omitempty"`     // off, password or users
+	Password    string    `json:"password,omitempty"` // for mode password
+	Users       *[]string `json:"users,omitempty"`
+	AllowIPs    *[]string `json:"allow_ips,omitempty"`
+	BypassPaths *[]string `json:"bypass_paths,omitempty"`
+	// Global settings.
+	LoginDomain *string `json:"login_domain,omitempty"`
+	SessionDays int     `json:"session_days,omitempty"`
+}
+
+type AuthUser struct {
+	Name      string    `json:"name"`
+	TOTP      bool      `json:"totp"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AuthUserRequest creates a user, or changes their password. TOTP turns a
+// second factor on (a new secret, returned once) or, false, off.
+type AuthUserRequest struct {
+	Name     string `json:"name,omitempty"`
+	Password string `json:"password,omitempty"`
+	TOTP     *bool  `json:"totp,omitempty"`
+}
+
+// AuthUserResult is a user, with their new TOTP secret when one was made.
+type AuthUserResult struct {
+	AuthUser
+	TOTPSecret string `json:"totp_secret,omitempty"`
+	TOTPURI    string `json:"totp_uri,omitempty"` // otpauth://, for authenticator apps
+}
+
+type AuthShare struct {
+	ID        string    `json:"id"`
+	App       string    `json:"app"`
+	Note      string    `json:"note,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+	// URL is the link, returned only when the share is created.
+	URL string `json:"url,omitempty"`
+}
+
+type CreateShareRequest struct {
+	TTLSeconds int    `json:"ttl_seconds"`
+	Note       string `json:"note,omitempty"`
+}
+
+// Database is a database Jokku runs (db:<engine>:info).
+type Database struct {
+	Engine    string    `json:"engine"`
+	Name      string    `json:"name"`
+	App       string    `json:"app"`    // the app it runs as
+	Image     string    `json:"image"`  // e.g. postgres:17
+	Status    string    `json:"status"` // running, starting, crashed, stopped, deploying or none
+	Node      string    `json:"node,omitempty"`
+	MemoryMB  int       `json:"memory_mb,omitempty"`
+	Host      string    `json:"host"` // where apps reach it, host:port
+	URL       string    `json:"url"`  // with its password
+	CreatedAt time.Time `json:"created_at"`
+
+	Links   []DatabaseLink `json:"links"`
+	Volume  *Volume        `json:"volume,omitempty"`
+	Backups *VolumeBackups `json:"backups,omitempty"`
+	// Vars are its config vars (passwords among them), for connecting from
+	// the CLI; only a single database's info has them.
+	Vars map[string]string `json:"vars,omitempty"`
+}
+
+// DatabaseLink is an app a database is linked to, and the config var on it
+// that holds the database's URL.
+type DatabaseLink struct {
+	App string `json:"app"`
+	Var string `json:"var"`
+}
+
+// CreateDatabaseRequest creates a database: Image (default the engine's
+// official one) at ImageVersion (default its current major version), with
+// a SizeMB volume and MemoryMB of memory (defaults when 0).
+type CreateDatabaseRequest struct {
+	Name         string `json:"name"`
+	Image        string `json:"image,omitempty"`
+	ImageVersion string `json:"image_version,omitempty"`
+	SizeMB       int    `json:"size_mb,omitempty"`
+	MemoryMB     int    `json:"memory_mb,omitempty"`
+}
+
+// LinkDatabaseRequest links a database to App, setting <Alias>_URL (default
+// the engine's DATABASE_URL or REDIS_URL) on it, and restarting it unless
+// NoRestart.
+type LinkDatabaseRequest struct {
+	App       string `json:"app"`
+	Alias     string `json:"alias,omitempty"`
+	NoRestart bool   `json:"no_restart,omitempty"`
 }
 
 type CreateAppRequest struct {
@@ -146,7 +304,7 @@ type BuilderRequest struct {
 
 type Node struct {
 	Name        string    `json:"name"`
-	Role        string    `json:"role"`   // control | worker
+	Role        string    `json:"role"`   // control | worker | edge
 	Status      string    `json:"status"` // ready | down | draining
 	Address     string    `json:"address"`
 	MeshIP      string    `json:"mesh_ip"`

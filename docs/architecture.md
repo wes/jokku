@@ -85,6 +85,11 @@ curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo sh
   They hold no authoritative state; wipe one and re-join it and it
   converges.
 
+- **Edge nodes.** Public machines that only receive traffic: they run the
+  proxy and nothing else, and the other nodes dial them, so a cluster behind
+  NAT (a home lab) can serve the internet with no port open. See
+  [Edges](#edges).
+
 Every node is an ingress node by default (`nodes:set <node> ingress false`
 turns it off). Point DNS at whichever nodes you want to receive traffic.
 
@@ -320,6 +325,13 @@ address. A node behind NAT works as long as the control node is reachable,
 because `PersistentKeepalive` keeps its tunnel open. Outbound internet from
 VMs is masqueraded on each node (nftables).
 
+Peers are updated in place, never replaced, and a peer that handshook in
+the last three minutes keeps the address it talks from rather than being
+sent back to its configured endpoint: a node behind NAT may come from any
+port. Edges have no endpoint for their peers at all (see [Edges](#edges)).
+The firewall is applied with one `iptables-restore --noflush`, so no packet
+meets a half-written chain.
+
 ### Internal DNS
 
 Apps reach each other by name. `<process>.<app>.internal` resolves to the
@@ -373,6 +385,37 @@ installs a custom certificate.
 
 `ports:set app http:80:5000 https:443:5000` mirrors Dokku's port mapping.
 Raw TCP/UDP ports are a later addition.
+
+**External apps** (`external:create ha http://192.168.1.50:8123`) are apps
+of kind `external`: a target address instead of releases, stored as
+properties (`external` plugin: `url`, `via`, `insecure`). Their domains
+route to the target like any app's, so domains, certificates, logins and
+router logs work unchanged; deploys, processes and volumes are refused.
+Targets are private IPv4 addresses outside the cluster network, since edges
+reach them through a node (`via`, the control node by default) that
+forwards and masquerades; only edges and that node route them. An edge
+leaves out a target route that would capture its own tunnel's packets.
+
+**Logins** (`http-auth:*`) are a Caddy handler embedded like the storage
+module, `jokku_auth`, placed before `reverse_proxy` on routes with a login.
+Its config carries everything it checks: the app's mode (one shared
+password, or the cluster's users, allowed all or by name), allowed CIDRs,
+bypass paths, share links (token hashes and expiries), the users' bcrypt
+hashes and TOTP secrets, and the session key. Sessions are HMAC-signed
+cookies bound to the host and to a fingerprint of the credential they were
+made with, so a changed password, a removed user or a revoked link ends them
+at once, and any ingress node, an edge included, checks them on its own.
+With a login domain, users log in there once: it posts a one-minute,
+host-bound, single-use hand-off to the app domain's `/.jokku/callback`
+(over HTTPS for a domain served so, and never to another port), which sets
+that domain's cookie. The app gets `X-Jokku-User`, which a small handler on
+every route strips from incoming requests in every spelling, and never the
+session cookie. Failed logins are limited per client (an IPv6 /64 counting
+as one), per app and per user, in each node's memory, and a TOTP code works
+once. Removing an edge replaces the session key, since the edge held it.
+
+When an app's instances can't be reached (they're restarting, or the nodes
+behind an edge are offline), the proxy answers 502 with a page saying so.
 
 ## Control loop
 
@@ -650,6 +693,33 @@ starts jokku again. Workers reconnect if the server has the old address;
 volumes on the control node are found missing and restored, and those on
 nodes that are gone are restored elsewhere once the nodes are removed.
 
+## Databases
+
+`db:<engine>:create <name>` (Postgres, MySQL, Redis) creates an app named
+`<engine>-<name>` of that kind and deploys it from a compose file Jokku
+writes (`internal/database`): one service, the engine's official image, a
+`data` volume, and memory set in the file. Its config vars hold its image,
+its name and generated passwords, and fill in the file. Services get only
+the environment the file gives them, so nothing else leaks into the VM. With
+no published ports, there is no HTTP route; other apps reach it at
+`<engine>-<name>.internal`, where it is the app's only process.
+
+- Postgres keeps its data in `pgdata` inside the volume and MySQL in `data`,
+  since both refuse a volume's own root, which holds `lost+found`. Redis
+  runs with append-only persistence and a password.
+- Linking (`database_links`) sets the engine's variable (`DATABASE_URL`,
+  `REDIS_URL`, or `<ALIAS>_URL`) on the app and restarts it; a linked
+  database can't be destroyed.
+- `connect`, `export` and `import` are `jokku enter` sessions in the
+  database's VM: psql, pg_dump and pg_restore; mysql and mysqldump; and
+  redis-cli. Passwords go in the session's environment, not its arguments,
+  so `jokku events` never shows them.
+- With a backup destination, the new volume is backed up at once, to where
+  the cluster is backed up, with the defaults. Snapshots taken with writes
+  frozen are crash-consistent, which all three recover from.
+- A database's app is left out of `apps:list` (`?all=true` lists it), and
+  can't be pushed to, renamed or cloned.
+
 ## Compose apps
 
 `builder:compose app [<path>]` deploys the app from a compose file instead
@@ -725,6 +795,47 @@ new-node$ <paste it>
 
 The same one-liner works unattended, for example in cloud-init user-data for
 autoscaling groups.
+
+### Edges
+
+An edge is a public machine in front of nodes that the internet can't
+reach. Joining works the other way round from a worker's, because the edge
+can't reach the control node:
+
+```
+control$ jokku edge:add root@203.0.113.7
+```
+
+1. The control node makes the edge's identity (a `/24` like any node's),
+   its credentials and its WireGuard key pair, records the edge with its
+   public key and endpoint, and returns a bundle: identity, tokens, the
+   private key, and the control node as its first peer (no endpoint).
+2. The CLI runs `install.sh --edge <bundle>` on the edge over ssh (or prints
+   the command, with `--print`). `jokku setup --edge` writes `node.json`
+   (role `edge`, control at its mesh address `10.210.1.1:7443`) and the key,
+   and starts only `jokku` and `jokku-proxy`.
+3. Every other node now has the edge as a peer, with its endpoint, and dials
+   it; `PersistentKeepalive` keeps retrying until the edge is up, and keeps
+   NAT open after. The edge's agent starts from the bundle's peer, so its
+   first poll goes over the tunnel the control node opened.
+
+An edge's state has the proxy routes of every app, its peers without
+endpoints or agent addresses, and through each node the external targets
+that node forwards to (extra `AllowedIPs` and `/32` routes). It runs no VMs
+(no KVM needed), no DNS service, is never scheduled, gets no root
+filesystems (the API refuses), and has no vote in fencing or the restore
+quorum.
+
+The nodes behind an edge firewall it (`types.EdgeAccess`): over the mesh it
+may reach the control node's API, and on or through each node only the
+`IP:port` of that node's web instances and the external targets it
+forwards to; everything else from the edge is dropped, ahead of the VM
+network's rule that accepts mesh traffic. The edge in turn accepts only
+nodes and replies over the mesh.
+
+Removing an edge revokes its token at once but keeps it a peer for two
+minutes, so its next poll gets a 401 and it drops its routes; then it is
+deleted. An edge that never connected is deleted at once.
 
 ## State
 
@@ -820,6 +931,9 @@ stays the stable entry point, including for versions that predate the command.
 | 51820/udp | all nodes | WireGuard |
 | 53/udp, 53/tcp | VM bridge only | `jokku-dns`: internal names for microVMs |
 | 7444/tcp | mesh only | agent API: log streams, sessions with VMs, volume copies between nodes |
+
+An edge needs only 80 and 443/tcp and 51820/udp open; the nodes behind it
+need no open port at all.
 
 ## Differences from Dokku
 

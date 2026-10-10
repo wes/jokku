@@ -7,16 +7,39 @@ import (
 	"github.com/wes/jokku/internal/types"
 )
 
+// listApps lists the apps; databases too with ?all=true (db:list lists
+// them on their own).
 func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
-	apps, err := s.Store.Apps(r.Context())
+	all, err := s.Store.Apps(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	if apps == nil {
-		apps = []types.App{}
+	apps := []types.App{}
+	for _, a := range all {
+		if a.Kind == "" || r.URL.Query().Get("all") == "true" {
+			apps = append(apps, a)
+		}
 	}
 	writeJSON(w, http.StatusOK, apps)
+}
+
+// notDatabase refuses what would break a database's app (renaming it,
+// cloning it): it is managed with db:<engine>:*. An external app is
+// managed with external:*.
+func (s *Server) notDatabase(ctx context.Context, name string) error {
+	app, err := s.Store.App(ctx, name)
+	if err != nil {
+		return err
+	}
+	switch app.Kind {
+	case "":
+	case types.KindExternal:
+		return httpErrorf(http.StatusConflict, "%s is an external app; manage it with jokku external:*", name)
+	default:
+		return httpErrorf(http.StatusConflict, "%s is a %s database; manage it with jokku db:%s:*", name, app.Kind, app.Kind)
+	}
+	return nil
 }
 
 func (s *Server) getApp(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +104,10 @@ func (s *Server) destroyApp(w http.ResponseWriter, r *http.Request) {
 func (s *Server) renameApp(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	name := r.PathValue("app")
+	if err := s.notDatabase(ctx, name); err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	var req types.RenameAppRequest
 	if err := decode(r, &req); err != nil {
 		s.fail(w, r, err)
@@ -117,6 +144,10 @@ func (s *Server) renameApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cloneApp(w http.ResponseWriter, r *http.Request) {
+	if err := s.notDatabase(r.Context(), r.PathValue("app")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	var req types.CloneAppRequest
 	if err := decode(r, &req); err != nil {
 		s.fail(w, r, err)

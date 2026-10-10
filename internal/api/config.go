@@ -2,7 +2,9 @@ package api
 
 import (
 	"net/http"
+	"slices"
 
+	"github.com/wes/jokku/internal/cluster"
 	"github.com/wes/jokku/internal/types"
 )
 
@@ -80,6 +82,18 @@ func (s *Server) patchDomains(w http.ResponseWriter, r *http.Request) {
 		}
 		if *list, err = normalizeDomains(*list); err != nil {
 			s.fail(w, r, err)
+			return
+		}
+	}
+	if app != "" {
+		// The login domain is served by the proxies themselves.
+		global, err := s.Store.Properties(r.Context(), "", cluster.AuthPlugin)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		if d := global["login-domain"]; d != "" && (slices.Contains(p.Add, d) || slices.Contains(p.Set, d)) {
+			s.fail(w, r, badRequest("%s is the login domain (http-auth:set --global login-domain); it can't be an app's too", d))
 			return
 		}
 	}

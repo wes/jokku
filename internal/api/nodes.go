@@ -18,7 +18,9 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	out := make([]types.Node, 0, len(nodes))
 	for _, n := range nodes {
-		out = append(out, s.Cluster.NodeInfo(n, now))
+		if !n.Removed() {
+			out = append(out, s.Cluster.NodeInfo(n, now))
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -44,6 +46,10 @@ func (s *Server) patchNode(w http.ResponseWriter, r *http.Request) {
 	var p nodePatch
 	if err := decode(r, &p); err != nil {
 		s.fail(w, r, err)
+		return
+	}
+	if n, err := s.Store.Node(ctx, name); err == nil && n.Edge() && ((p.Schedulable != nil && *p.Schedulable) || (p.Draining != nil && *p.Draining)) {
+		s.fail(w, r, badRequest("%s is an edge: it only routes traffic, and runs no apps", name))
 		return
 	}
 	for flag, v := range map[string]*bool{"schedulable": p.Schedulable, "ingress": p.Ingress, "draining": p.Draining} {
@@ -78,6 +84,10 @@ func (s *Server) removeNode(w http.ResponseWriter, r *http.Request) {
 	}
 	if n.Role == store.RoleControl {
 		s.fail(w, r, badRequest("The control node cannot be removed"))
+		return
+	}
+	if n.Edge() {
+		s.removeEdge(w, r)
 		return
 	}
 	if r.URL.Query().Get("force") != "true" {

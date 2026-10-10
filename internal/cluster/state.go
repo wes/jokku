@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -59,27 +60,22 @@ func (c *Controller) ComputeState(ctx context.Context, name string) (*types.Node
 	}
 	subnet, meshIP := NodeSubnet(c.ClusterCIDR, node.SubnetIndex)
 	st := &types.NodeState{
-		Version:   c.Version,
-		Node:      types.NodeIdentity{Name: node.Name, Subnet: subnet.String(), MeshIP: meshIP.String(), ClusterCIDR: c.ClusterCIDR.String()},
+		Version: c.Version,
+		Node: types.NodeIdentity{Name: node.Name, Role: node.Role, Subnet: subnet.String(), MeshIP: meshIP.String(),
+			ClusterCIDR: c.ClusterCIDR.String()},
 		Peers:     []types.Peer{},
 		Instances: []types.InstanceSpec{},
 	}
-	if node.WGPublicKey != "" {
-		for _, n := range nodes {
-			if n.Name == node.Name || n.WGPublicKey == "" || n.WGEndpoint == "" {
-				continue
-			}
-			sub, ip := NodeSubnet(c.ClusterCIDR, n.SubnetIndex)
-			st.Peers = append(st.Peers, types.Peer{
-				Name: n.Name, PublicKey: n.WGPublicKey, Endpoint: n.WGEndpoint, Subnet: sub.String(), MeshIP: ip.String(),
-				AgentAddr: c.agentAddr(n),
-			})
-		}
-	}
-
 	apps, err := c.Store.Apps(ctx)
 	if err != nil {
 		return nil, err
+	}
+	ext, err := c.externals(ctx, apps, nodes)
+	if err != nil {
+		return nil, err
+	}
+	if node.WGPublicKey != "" {
+		st.Peers = c.peers(*node, nodes, ext)
 	}
 	stopped := map[string]bool{}
 	for _, a := range apps {
@@ -133,9 +129,14 @@ func (c *Controller) ComputeState(ctx context.Context, name string) (*types.Node
 			current[a.Name] = cur
 		}
 	}
-	st.DNS = dnsRecords(apps, current, insts, nodes, now)
+	if !node.Edge() { // it runs no VMs to look names up
+		st.DNS = dnsRecords(apps, current, insts, nodes, now)
+		if st.EdgeAccess, err = c.edgeAccess(ctx, *node, nodes, apps, current, insts, ext); err != nil {
+			return nil, err
+		}
+	}
 	if node.Ingress {
-		if st.Proxy, err = c.proxyState(ctx, apps, current, insts, nodes, now); err != nil {
+		if st.Proxy, err = c.proxyState(ctx, *node, apps, current, insts, nodes, now, ext); err != nil {
 			return nil, err
 		}
 	}
@@ -182,8 +183,11 @@ func held(in store.Instance, now time.Time) bool {
 }
 
 // proxyState routes each deployed app's domains to the healthy web instances
-// of its current release, on whichever nodes they run.
-func (c *Controller) proxyState(ctx context.Context, apps []types.App, current map[string]*store.Release, insts []store.Instance, nodes []store.Node, now time.Time) (*types.ProxyState, error) {
+// of its current release, on whichever nodes they run, and each external
+// app's to its target. Only edges and the node an external app goes through
+// route it: they are the ones that reach its network.
+func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []types.App, current map[string]*store.Release,
+	insts []store.Instance, nodes []store.Node, now time.Time, ext map[string]External) (*types.ProxyState, error) {
 	ready := map[string]bool{}
 	for _, n := range nodes {
 		ready[n.Name] = n.Ready(now)
@@ -198,9 +202,14 @@ func (c *Controller) proxyState(ctx context.Context, apps []types.App, current m
 	if err != nil {
 		return nil, err
 	}
-	ps := &types.ProxyState{Routes: []types.ProxyRoute{}, Email: globalLE["email"]}
+	auth, logins, err := c.authState(ctx, apps)
+	if err != nil {
+		return nil, err
+	}
+	ps := &types.ProxyState{Routes: []types.ProxyRoute{}, Email: globalLE["email"], Auth: auth}
 	for _, app := range apps {
-		if app.CurrentRelease == 0 {
+		e, external := ext[app.Name]
+		if (app.CurrentRelease == 0 && !external) || (external && !node.Edge() && node.Name != e.Via) {
 			continue
 		}
 		appProxy, _ := c.Store.Properties(ctx, app.Name, "proxy")
@@ -208,7 +217,7 @@ func (c *Controller) proxyState(ctx context.Context, apps []types.App, current m
 			continue
 		}
 		cur := current[app.Name]
-		if cur == nil {
+		if cur == nil && !external {
 			continue
 		}
 		domains, err := c.Store.Domains(ctx, app.Name)
@@ -216,7 +225,10 @@ func (c *Controller) proxyState(ctx context.Context, apps []types.App, current m
 			return nil, err
 		}
 		upstreams := []string{}
-		if !app.Stopped {
+		switch {
+		case external:
+			upstreams = append(upstreams, e.Target.String())
+		case !app.Stopped:
 			for _, in := range insts {
 				// Only wanted instances get new requests; retiring ones are
 				// left to finish what they have.
@@ -229,8 +241,12 @@ func (c *Controller) proxyState(ctx context.Context, apps []types.App, current m
 		sort.Strings(upstreams)
 		appLE, _ := c.Store.Properties(ctx, app.Name, "letsencrypt")
 		tlsOn := props.Compute(le, appLE, globalLE)["enabled"] == "true"
-		plain := types.ProxyRoute{App: app.Name, Upstreams: upstreams, Hosts: []string{}}
-		secure := types.ProxyRoute{App: app.Name, Upstreams: upstreams, Hosts: []string{}, TLS: true}
+		plain := types.ProxyRoute{App: app.Name, Upstreams: upstreams, Hosts: []string{}, Auth: logins[app.Name]}
+		if external {
+			plain.UpstreamTLS, plain.Insecure = e.TLS, e.Insecure
+		}
+		secure := plain
+		secure.Hosts, secure.TLS = []string{}, true
 		for _, d := range domains {
 			if tlsOn && proxy.PublicHost(d) {
 				secure.Hosts = append(secure.Hosts, d)
@@ -241,6 +257,102 @@ func (c *Controller) proxyState(ctx context.Context, apps []types.App, current m
 		ps.Routes = append(ps.Routes, plain, secure)
 	}
 	return ps, nil
+}
+
+// peers is node's WireGuard peer list. Edges don't peer with each other,
+// and dial nobody: every other node dials them, since those nodes may be
+// behind NAT. An edge reaches each external app's target through its via
+// node. Edges have no say in fencing (see agent/fence.go), so they get no
+// agent address.
+func (c *Controller) peers(node store.Node, nodes []store.Node, ext map[string]External) []types.Peer {
+	via := map[string][]string{}
+	if node.Edge() {
+		seen := map[netip.Addr]bool{}
+		for _, app := range sortedKeys(ext) {
+			e := ext[app]
+			if ip := e.Target.Addr(); !seen[ip] {
+				seen[ip] = true
+				via[e.Via] = append(via[e.Via], netip.PrefixFrom(ip, 32).String())
+			}
+		}
+	}
+	peers := []types.Peer{}
+	for _, n := range nodes {
+		if n.Name == node.Name || n.WGPublicKey == "" || n.WGEndpoint == "" || (node.Edge() && n.Edge()) {
+			continue
+		}
+		sub, ip := NodeSubnet(c.ClusterCIDR, n.SubnetIndex)
+		p := types.Peer{Name: n.Name, PublicKey: n.WGPublicKey, Endpoint: n.WGEndpoint, Subnet: sub.String(), MeshIP: ip.String()}
+		switch {
+		case node.Edge():
+			p.Endpoint, p.Routes = "", via[n.Name]
+		case n.Edge():
+			p.Role = types.RoleEdge
+		default:
+			p.AgentAddr = c.agentAddr(n)
+		}
+		peers = append(peers, p)
+	}
+	return peers
+}
+
+// edgeAccess is what the cluster's edges may reach on or through node: the
+// web ports of the instances it runs for routed apps, the external apps'
+// targets it forwards to and, on the control node, the API. Nil without
+// edges.
+func (c *Controller) edgeAccess(ctx context.Context, node store.Node, nodes []store.Node, apps []types.App,
+	current map[string]*store.Release, insts []store.Instance, ext map[string]External) (*types.EdgeAccess, error) {
+	acc := &types.EdgeAccess{Control: node.Role == store.RoleControl}
+	for _, n := range nodes {
+		if n.Edge() {
+			sub, _ := NodeSubnet(c.ClusterCIDR, n.SubnetIndex)
+			acc.Edges = append(acc.Edges, sub.String())
+		}
+	}
+	if len(acc.Edges) == 0 {
+		return nil, nil
+	}
+	px, _ := props.Lookup("proxy")
+	globalProxy, err := c.Store.Properties(ctx, "", "proxy")
+	if err != nil {
+		return nil, err
+	}
+	routed := map[string]bool{}
+	for _, a := range apps {
+		appProxy, err := c.Store.Properties(ctx, a.Name, "proxy")
+		if err != nil {
+			return nil, err
+		}
+		routed[a.Name] = props.Compute(px, appProxy, globalProxy)["enabled"] == "true"
+	}
+	allow := map[string]bool{}
+	for _, in := range insts {
+		cur := current[in.App]
+		// Every wanted web instance, healthy or not yet, so the firewall
+		// is ready before an edge routes to it.
+		if in.Node == node.Name && routed[in.App] && cur != nil && in.ProcessType == cur.WebProcess() &&
+			in.Desired == store.DesiredRunning && in.IP != "" && in.Port > 0 {
+			allow[fmt.Sprintf("%s:%d", in.IP, in.Port)] = true
+		}
+	}
+	targets := map[string]bool{}
+	for _, e := range ext {
+		if e.Via == node.Name && routed[e.App] {
+			allow[e.Target.String()] = true
+			targets[e.Target.Addr().String()] = true
+		}
+	}
+	acc.Allow, acc.Targets = sortedKeys(allow), sortedKeys(targets)
+	return acc, nil
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // maxRestarts turns the app's restart policy into a restart budget: -1 for

@@ -27,14 +27,21 @@ func enter(c *Context) error {
 	if len(c.Args) > 0 {
 		process, argv = c.Args[0], c.Args[1:]
 	}
-	conn, err := c.API.Enter(c, c.App, process)
+	return runSession(c, c.App, process, argv, nil, c.Bool("root"))
+}
+
+// runSession runs argv (a shell when empty) in one of app's instances, with
+// env added to its environment: interactive with a terminal on both ends,
+// plain pipes otherwise. It returns the command's exit status as an error.
+func runSession(c *Context, app, process string, argv, env []string, root bool) error {
+	conn, err := c.API.Enter(c, app, process)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 	s := session.New(conn)
 	tty := isTerminal(c.Stdin) && isTerminal(c.Stdout)
-	req := session.Request{Op: session.OpExec, Argv: argv, TTY: tty, Root: c.Bool("root")}
+	req := session.Request{Op: session.OpExec, Argv: argv, TTY: tty, Root: root, Env: env}
 	restore := func() {}
 	if tty {
 		in, out := int(c.Stdin.(*os.File).Fd()), int(c.Stdout.(*os.File).Fd())
@@ -45,7 +52,7 @@ func enter(c *Context) error {
 		if name == "" {
 			name = "xterm-256color"
 		}
-		req.Env = []string{"TERM=" + name}
+		req.Env = append(req.Env, "TERM="+name)
 		if old, err := term.MakeRaw(in); err == nil {
 			restore = func() { term.Restore(in, old) }
 		}

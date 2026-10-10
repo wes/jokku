@@ -134,8 +134,14 @@ func (s *Server) agentStatus(w http.ResponseWriter, r *http.Request, n *store.No
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// agentArtifact streams a root filesystem to a node that needs it.
-func (s *Server) agentArtifact(w http.ResponseWriter, r *http.Request, _ *store.Node) {
+// agentArtifact streams a root filesystem to a node that needs it. Edges
+// run no apps, so they never need one: the most exposed machine gets no
+// app's code.
+func (s *Server) agentArtifact(w http.ResponseWriter, r *http.Request, n *store.Node) {
+	if n.Edge() {
+		s.fail(w, r, httpErrorf(http.StatusForbidden, "edges run no apps"))
+		return
+	}
 	name := filepath.Base(r.PathValue("name"))
 	if !strings.HasSuffix(name, ".ext4") {
 		s.fail(w, r, httpErrorf(http.StatusNotFound, "no such artifact"))

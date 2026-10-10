@@ -53,11 +53,16 @@ type Options struct {
 	// Advertise is the address other nodes reach this one at (default: the
 	// address used to reach the internet).
 	Advertise string
+	// Edge makes this server an edge of a cluster, with the bundle from
+	// "jokku edge:add": a public machine that only routes traffic to the
+	// nodes behind it.
+	Edge string
 }
 
 // Run brings the server to the state this version of jokku needs and leaves
 // its services running this binary. A control node (the default) gets
-// everything; a worker gets only what running microVMs needs.
+// everything; a worker gets only what running microVMs needs, and an edge
+// only the daemon and the proxy.
 func Run(ctx context.Context, out io.Writer, o Options) error {
 	if runtime.GOOS != "linux" {
 		return errors.New("jokku setup prepares Linux servers")
@@ -75,15 +80,24 @@ func Run(ctx context.Context, out io.Writer, o Options) error {
 	if exe, err = filepath.EvalSymlinks(exe); err != nil {
 		return err
 	}
-	_, joined := joinedCluster()
-	worker := joined || o.Join != ""
-	if o.Join != "" && !joined && exists(filepath.Join(daemon.DefaultDataDir, "jokku.db")) {
+	nf, joined := joinedCluster()
+	edge := o.Edge != "" || (joined && nf.Role == store.RoleEdge)
+	worker := (joined || o.Join != "") && !edge
+	switch {
+	case (o.Join != "" || o.Edge != "") && !joined && exists(filepath.Join(daemon.DefaultDataDir, "jokku.db")):
 		return errors.New("this server already runs Jokku as its own cluster, so it cannot join another; " +
 			"use a fresh server, or remove /var/lib/jokku to start over")
+	case o.Edge != "" && joined && nf.Role != store.RoleEdge:
+		return errors.New("this server is already a worker in a cluster, so it cannot become an edge; use a fresh server")
+	case o.Join != "" && joined && nf.Role == store.RoleEdge:
+		return errors.New("this server is an edge, so it cannot join as a worker; use a fresh server")
 	}
-	s := &setup{out: out, exe: exe, opts: o, worker: worker}
+	s := &setup{out: out, exe: exe, opts: o, worker: worker || edge, edge: edge}
 	steps := []func(context.Context) error{s.packages, s.user, s.dirs, s.deps, s.sysctl, s.units, s.start, s.defaultDomain}
-	if worker {
+	switch {
+	case edge:
+		steps = []func(context.Context) error{s.packages, s.wireguard, s.dirs, s.edgeJoin, s.units, s.start, s.edgeConnected}
+	case worker:
 		steps = []func(context.Context) error{s.packages, s.wireguard, s.dirs, s.deps, s.join, s.sysctl, s.units, s.start}
 	}
 	for _, step := range steps {
@@ -91,23 +105,25 @@ func Run(ctx context.Context, out io.Writer, o Options) error {
 			return err
 		}
 	}
-	if err := (&vm.Host{}).Available(); err != nil {
+	if err := (&vm.Host{}).Available(); err != nil && !edge {
 		fmt.Fprintln(out, " !     Apps cannot run on this server yet: "+err.Error())
 	}
 	return nil
 }
 
-// joinedCluster reports whether this server is a worker in a cluster.
+// joinedCluster reports whether this server is a worker or an edge in a
+// cluster.
 func joinedCluster() (*daemon.NodeFile, bool) {
 	nf, err := daemon.LoadNodeFile(daemon.DefaultDataDir)
-	return nf, err == nil && nf.Role == store.RoleWorker
+	return nf, err == nil && (nf.Role == store.RoleWorker || nf.Role == store.RoleEdge)
 }
 
 type setup struct {
 	out          io.Writer
 	exe          string
 	opts         Options
-	worker       bool
+	worker       bool // a worker or an edge: not the control node
+	edge         bool
 	uid, gid     int
 	changedUnits map[string]bool
 }
@@ -120,9 +136,9 @@ func (s *setup) step(format string, args ...any) {
 // networking, e2fsprogs to build root filesystems.
 func (s *setup) packages(ctx context.Context) error {
 	var missing []string
-	need := map[string]bool{
-		"iptables":  have("iptables"),
-		"e2fsprogs": have("mkfs.ext4"),
+	need := map[string]bool{"iptables": have("iptables") && have("iptables-restore")}
+	if !s.edge { // disks for root filesystems and volumes
+		need["e2fsprogs"] = have("mkfs.ext4")
 	}
 	if !s.worker { // pushes land on the control node
 		need["git"] = have("git")
@@ -253,6 +269,9 @@ func (s *setup) units(ctx context.Context) error {
 	if s.worker {
 		delete(units, "jokku-buildkitd")
 	}
+	if s.edge {
+		delete(units, "jokku-dns") // no VMs to look names up
+	}
 	for name, content := range units {
 		changed, err := writeFileIfChanged("/etc/systemd/system/"+name+".service", content, 0o644)
 		if err != nil {
@@ -313,7 +332,11 @@ func (s *setup) start(ctx context.Context) error {
 		restart[svc] = s.changedUnits[svc] || string(running) != m.version
 	}
 	services := []string{"jokku-buildkitd", "jokku-proxy", "jokku-dns"}
-	if s.worker {
+	switch {
+	case s.edge:
+		services = services[1:2]
+		delete(markers, "jokku-dns")
+	case s.worker:
 		services = services[1:]
 	}
 	for _, svc := range services {
@@ -343,7 +366,7 @@ func (s *setup) start(ctx context.Context) error {
 	if run(ctx, "systemctl", "is-active", "--quiet", "jokku-proxy") != nil {
 		fmt.Fprintln(s.out, " !     jokku-proxy is not running. Is another web server using ports 80 or 443? See: journalctl -u jokku-proxy -n 20")
 	}
-	if run(ctx, "systemctl", "is-active", "--quiet", "jokku-dns") != nil {
+	if !s.edge && run(ctx, "systemctl", "is-active", "--quiet", "jokku-dns") != nil {
 		fmt.Fprintln(s.out, " !     jokku-dns is not running, so apps can't find each other by name. See: journalctl -u jokku-dns -n 20")
 	}
 	return nil
@@ -421,6 +444,55 @@ func (s *setup) join(ctx context.Context) error {
 		return err
 	}
 	fmt.Fprintf(s.out, "       %s joined with subnet %s\n", res.Node.Name, res.Node.Subnet)
+	return nil
+}
+
+// edgeJoin makes this server the edge the bundle describes: its identity,
+// its credentials and its WireGuard key, all made by the control node, which
+// this server can't reach until the nodes behind it dial in. A server that
+// already is an edge keeps its identity.
+func (s *setup) edgeJoin(ctx context.Context) error {
+	if nf, joined := joinedCluster(); joined {
+		if s.opts.Edge != "" {
+			s.step("Already an edge of the cluster, as %s", nf.Node.Name)
+		}
+		return nil
+	}
+	b, err := cluster.ParseEdgeBundle(s.opts.Edge)
+	if err != nil {
+		return err
+	}
+	if b.Version != version.Version && strings.HasPrefix(b.Version, "v") {
+		fmt.Fprintf(s.out, " !     The control node runs jokku %s and this server %s; install %s with JOKKU_VERSION=%s\n",
+			b.Version, version.Version, b.Version, b.Version)
+	}
+	s.step("Becoming edge %s of the cluster", b.Node.Name)
+	if err := mesh.SaveKey(filepath.Join(daemon.DefaultDataDir, "wireguard.key"), b.PrivateKey); err != nil {
+		return err
+	}
+	b.Node.Role = store.RoleEdge
+	return daemon.SaveNodeFile(daemon.DefaultDataDir, &daemon.NodeFile{
+		Role: store.RoleEdge, Control: b.Control, Pin: b.Pin, NodeToken: b.NodeToken, AgentToken: b.AgentToken,
+		Node: b.Node, Peers: b.Peers,
+	})
+}
+
+// edgeConnected waits for the nodes behind this edge to dial in, and says
+// what to check if they don't.
+func (s *setup) edgeConnected(ctx context.Context) error {
+	nf, _ := joinedCluster()
+	state := filepath.Join(daemon.DefaultDataDir, "agent-state.json")
+	deadline := time.Now().Add(90 * time.Second)
+	s.step("Waiting for the control node to connect")
+	for time.Now().Before(deadline) {
+		if b, err := os.ReadFile(state); err == nil && bytes.Contains(b, []byte(`"etag":"`)) && !bytes.Contains(b, []byte(`"etag":""`)) {
+			fmt.Fprintf(s.out, "       Connected: %s routes the cluster's domains\n", nf.Node.Name)
+			return nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+	fmt.Fprintln(s.out, " !     The control node hasn't connected yet. It dials this server on UDP port 51820:")
+	fmt.Fprintln(s.out, " !     open it (and TCP 80 and 443) in this server's firewall, then check with jokku edge:list on the control node.")
 	return nil
 }
 

@@ -351,17 +351,27 @@ func (h *Host) Units(ctx context.Context) (map[string]string, error) {
 
 // Usage is a VM's resource use as systemd accounts it.
 type Usage struct {
-	CPUNanos    uint64 // total CPU time used so far
+	CPUNanos uint64 // total CPU time used so far
+	// MemoryBytes is the VM's memory: its RAM (at most its size, once the
+	// guest has touched it all) and Firecracker's own.
 	MemoryBytes uint64
 }
 
+// cgroupRoot is where the cgroup v2 hierarchy is mounted.
+var cgroupRoot = "/sys/fs/cgroup"
+
 // Usage reads CPU time and memory for running VMs in one systemctl call.
+//
+// Memory is the anonymous memory of the VM's unit, not its MemoryCurrent:
+// that also counts the host's page cache for the VM's disks (every block it
+// reads or writes passes through it), which can be well over the VM's size
+// and is the host's to reclaim, not the VM's.
 func (h *Host) Usage(ctx context.Context, ids []string) (map[string]Usage, error) {
 	out := map[string]Usage{}
 	if len(ids) == 0 {
 		return out, nil
 	}
-	args := []string{"show", "-p", "Id", "-p", "CPUUsageNSec", "-p", "MemoryCurrent"}
+	args := []string{"show", "-p", "Id", "-p", "CPUUsageNSec", "-p", "MemoryCurrent", "-p", "ControlGroup"}
 	for _, id := range ids {
 		args = append(args, unit(id))
 	}
@@ -370,7 +380,7 @@ func (h *Host) Usage(ctx context.Context, ids []string) (map[string]Usage, error
 		return nil, err
 	}
 	for _, block := range strings.Split(string(b), "\n\n") {
-		var id string
+		var id, cgroup string
 		var u Usage
 		for _, line := range strings.Split(block, "\n") {
 			k, v, _ := strings.Cut(line, "=")
@@ -385,6 +395,13 @@ func (h *Host) Usage(ctx context.Context, ids []string) (map[string]Usage, error
 				u.CPUNanos = n
 			case "MemoryCurrent":
 				u.MemoryBytes = n
+			case "ControlGroup":
+				cgroup = v
+			}
+		}
+		if cgroup != "" {
+			if anon, ok := anonBytes(filepath.Join(cgroupRoot, cgroup, "memory.stat")); ok {
+				u.MemoryBytes = anon
 			}
 		}
 		if id != "" {
@@ -590,4 +607,19 @@ func run(ctx context.Context, name string, args ...string) error {
 		return fmt.Errorf("%s %s: %v: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// anonBytes reads the anonymous memory a cgroup's memory.stat counts.
+func anonBytes(path string) (uint64, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(line, "anon "); ok {
+			n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
+			return n, err == nil
+		}
+	}
+	return 0, false
 }

@@ -53,12 +53,15 @@ func init() {
 	cluster.RescheduleAfter = 2 * time.Second
 	cluster.RetryAfter = time.Second
 	cluster.DrainGrace = 0
-	cluster.PollTimeout = 2 * time.Second
+	// Well under agent.FenceAfter, as in production (25s against 2m): an
+	// idle node hears from the control node at least once per poll.
+	cluster.PollTimeout = 300 * time.Millisecond
 	cluster.PollRecheck = 200 * time.Millisecond
 	cluster.FailoverAfter = 4 * time.Second
 	cluster.RetryFailoverAfter = time.Second
 	agent.FenceAfter = time.Second
 	agent.FenceCheckEvery = 200 * time.Millisecond
+	cluster.EdgeRemovalGrace = time.Second
 }
 
 // cuttable is a node's way to the control node, which a test can cut, as a
@@ -346,15 +349,23 @@ func (f *fakeRuntime) apps() map[string]int {
 }
 
 type fakeMesh struct {
-	mu    sync.Mutex
-	peers []types.Peer
+	mu     sync.Mutex
+	self   types.NodeIdentity
+	peers  []types.Peer
+	access *types.EdgeAccess
 }
 
-func (m *fakeMesh) Sync(_ context.Context, _ types.NodeIdentity, peers []types.Peer) error {
+func (m *fakeMesh) Sync(_ context.Context, self types.NodeIdentity, peers []types.Peer, access *types.EdgeAccess) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.peers = peers
+	m.self, m.peers, m.access = self, peers, access
 	return nil
+}
+
+func (m *fakeMesh) get() ([]types.Peer, *types.EdgeAccess) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.peers, m.access
 }
 
 func (m *fakeMesh) names() []string {

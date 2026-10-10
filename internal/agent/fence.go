@@ -23,7 +23,8 @@ import (
 // sides of a split never both run an app.
 
 // The timings are variables so tests can shorten them. FenceAfter must stay
-// well under cluster.FailoverAfter.
+// well under cluster.FailoverAfter, and well over cluster.PollTimeout: an
+// idle node only hears from the control node when a long poll returns.
 var (
 	FenceAfter      = 2 * time.Minute
 	FenceCheckEvery = 5 * time.Second
@@ -153,7 +154,12 @@ func (a *Agent) askPeers(ctx context.Context, client *http.Client) bool {
 		}(p.AgentAddr)
 	}
 	wg.Wait()
-	nodes := len(st.Peers) + 1
+	nodes := 1 // edges have no vote: they run nothing, and sit outside
+	for _, p := range st.Peers {
+		if p.Role != types.RoleEdge {
+			nodes++
+		}
+	}
 	return heard > 0 || (1+reached)*2 <= nodes
 }
 

@@ -62,6 +62,11 @@ several namespaces. In Jokku it is one command, `builder:dockerfile`,
 | `letsencrypt:enable`, `letsencrypt:disable`, `letsencrypt:set` (`email`), `letsencrypt:report` | ✅ off for new apps, as in Dokku |
 | `ports:list`, `ports:add`, `ports:set`, `ports:remove`, `ports:clear` | 🔜 later (apps listen on `$PORT`) |
 | `certs:add`, `certs:remove`, `certs:report` | 🔜 M3 |
+| `external:create <name> <url> [--via NODE] [--insecure]`, `external:list`, `external:info`, `external:set` (`url`, `via`, `insecure`), `external:destroy` (route domains to services Jokku doesn't run, on your network) | ➕ ✅ |
+| `http-auth:enable <app> [<user>...] [--password]`, `http-auth:disable`, `http-auth:set-password`, `http-auth:report` | ✅ a login page instead of basic auth; users can have authenticator codes |
+| `http-auth:add-allowed-ip`, `http-auth:remove-allowed-ip`, `http-auth:add-bypass-path`, `http-auth:remove-bypass-path` | ✅ |
+| `http-auth:share <app> [--expires 24h] [--note]`, `http-auth:shares`, `http-auth:unshare` (links that let their holder in until they expire) | ➕ ✅ |
+| `http-auth:users:add <name> [--totp]`, `http-auth:users:list`, `http-auth:users:passwd`, `http-auth:users:totp [--off]`, `http-auth:users:remove`, `http-auth:set --global` (`login-domain`, `session-days`) | ➕ ✅ |
 | `nginx:*` | ✖ Caddy replaces nginx |
 
 ## Server
@@ -90,6 +95,7 @@ several namespaces. In Jokku it is one command, `builder:dockerfile`,
 | `nodes:list`, `nodes:report`, `nodes:set` (`schedulable`, `ingress`) | ➕ ✅ |
 | `nodes:drain`, `nodes:undrain` (moves instances off with no downtime; instances with volumes stop briefly while their disks move) | ➕ ✅ |
 | `nodes:remove [--force]` | ➕ ✅ |
+| `edge:add [<user>@]<address> [--name] [--print]` (a public server routing your domains to nodes behind NAT; installs it over ssh), `edge:list`, `edge:remove [--force]` | ➕ ✅ |
 | `events [<app>] [-n N]` | ➕ ✅ |
 | `top` (live terminal dashboard of nodes, apps, instances, events, and a real-time Traffic view of requests) | ➕ ✅ |
 | Rolling update of every node from the control node | 🔜 (for now: `sudo jokku update` on each node) |
@@ -109,5 +115,6 @@ several namespaces. In Jokku it is one command, `builder:dockerfile`,
 | `backups:cluster <destination> [<path>] [--every] [--keep-recent] [--keep-daily]`, `backups:cluster-unset`, `backups:cluster-run`, `backups:cluster-list` (the control node's database, identity and recent releases; hourly once a destination exists) | ➕ ✅ |
 | `jokku restore-cluster --endpoint --bucket --access-key-id [--path] [--backup]` (as root, on a new control node) | ➕ ✅ |
 | Object-storage volumes (`--type s3`), shared by many instances | 🔜 later |
-| `postgres:*`, `redis:*`, ... | 🔜 later, as apps plus volumes plus `*:link` |
+| `db:postgres:*`, `db:mysql:*`, `db:redis:*`: `create [--image] [--image-version] [--size] [--memory]`, `link [--alias] [--no-restart]`, `unlink`, `connect`, `export`, `import` (Postgres, MySQL), `info [--dsn]`, `list`, `logs`, `restart`, `stop`, `start`, `destroy`; and `db:list` | ✏️ ✅ replaces Dokku's `postgres:*`, `mysql:*` and `redis:*` plugins |
+| `db:sqlite:*` (a SQLite file on an app's volume) | ➕ 🔜 next |
 | `plugin:*` | ✖ |

@@ -81,6 +81,9 @@ func (c *Controller) Status(ctx context.Context) (*types.ClusterStatus, error) {
 		})
 	}
 	for _, n := range nodes {
+		if n.Removed() {
+			continue
+		}
 		st.Nodes = append(st.Nodes, types.NodeView{
 			Node: c.NodeInfo(n, now), Version: n.Version, CanRun: n.CanRun, Metrics: n.Metrics,
 			AllocatedMB: allocated[n.Name], Instances: count[n.Name],
@@ -89,7 +92,7 @@ func (c *Controller) Status(ctx context.Context) (*types.ClusterStatus, error) {
 			st.Totals.NodesReady++
 		}
 	}
-	st.Totals.Nodes = len(nodes)
+	st.Totals.Nodes = len(st.Nodes)
 	st.Totals.Apps = len(apps)
 	for _, a := range apps {
 		domains, err := c.Store.Domains(ctx, a.Name)
@@ -97,7 +100,7 @@ func (c *Controller) Status(ctx context.Context) (*types.ClusterStatus, error) {
 			return nil, err
 		}
 		view := types.AppView{
-			Name: a.Name, Release: a.CurrentRelease, Stopped: a.Stopped, Locked: a.Locked, Domains: domains,
+			Name: a.Name, Kind: a.Kind, Release: a.CurrentRelease, Stopped: a.Stopped, Locked: a.Locked, Domains: domains,
 			Healthy: healthy[a.Name], Wanted: wanted[a.Name], CreatedAt: a.CreatedAt,
 		}
 		if ds, err := c.Store.Deploys(ctx, a.Name, 1); err == nil && len(ds) > 0 {

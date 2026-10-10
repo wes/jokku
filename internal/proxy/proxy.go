@@ -32,17 +32,23 @@ const (
 	// AdminSocket is Caddy's admin API, reachable only by root.
 	AdminSocket = "/run/jokku-proxy/admin.sock"
 	// Version changes when a release needs the proxy process restarted;
-	// "jokku setup" compares it to the running one.
-	Version = "1"
+	// "jokku setup" compares it to the running one. 2: the jokku_auth and
+	// jokku_strip_identity handlers, which configs from now on use.
+	Version = "2"
 )
 
 // Route sends requests for Hosts to Upstreams (IP:port of healthy web
-// instances). An empty Upstreams answers 502.
+// instances, or an external app's target). An empty Upstreams answers 502.
 type Route struct {
 	App       string
 	Hosts     []string
 	Upstreams []string
 	TLS       bool
+	// UpstreamTLS: the upstreams speak HTTPS, with any certificate if
+	// Insecure.
+	UpstreamTLS, Insecure bool
+	// Auth puts a login in front of the route (with Settings.Auth).
+	Auth *types.RouteAuth
 }
 
 type Settings struct {
@@ -55,6 +61,9 @@ type Settings struct {
 	// Storage keeps certificates on the control node (shared by every
 	// ingress node); nil keeps them on local disk.
 	Storage *ClusterStorage
+	// Auth is what routes with a login need; with a login domain, that
+	// domain gets the login page every users login shares.
+	Auth *types.ProxyAuth
 }
 
 // ConfigPath is where the last loaded config is saved.
@@ -76,13 +85,19 @@ func Config(s Settings) ([]byte, error) {
 
 	var httpRoutes, httpsRoutes []any
 	var tlsHosts []string
+	portal := portalHandler(s)
 	for _, r := range routes {
 		if len(r.Hosts) == 0 {
 			continue
 		}
+		handle := append(tags(r.App), map[string]any{"handler": "jokku_strip_identity"})
+		if r.Auth != nil && s.Auth != nil {
+			handle = append(handle, map[string]any{"handler": "jokku_auth", "app": r.App, "auth": r.Auth, "global": s.Auth,
+				"portal_url": portal.url})
+		}
 		route := map[string]any{
 			"match":    []any{map[string]any{"host": r.Hosts}},
-			"handle":   append(tags(r.App), handler(r)),
+			"handle":   append(handle, handler(r)),
 			"terminal": true,
 		}
 		if r.TLS {
@@ -90,6 +105,14 @@ func Config(s Settings) ([]byte, error) {
 			tlsHosts = append(tlsHosts, r.Hosts...)
 		} else {
 			httpRoutes = append(httpRoutes, route)
+		}
+	}
+	if portal.route != nil {
+		if portal.tls {
+			httpsRoutes = append([]any{portal.route}, httpsRoutes...)
+			tlsHosts = append(tlsHosts, s.Auth.LoginDomain)
+		} else {
+			httpRoutes = append([]any{portal.route}, httpRoutes...)
 		}
 	}
 	if len(tlsHosts) > 0 {
@@ -114,6 +137,7 @@ func Config(s Settings) ([]byte, error) {
 		"http": map[string]any{
 			"listen": []string{fmt.Sprintf(":%d", s.HTTPPort)},
 			"routes": httpRoutes,
+			"errors": unreachable,
 			"logs":   map[string]any{},
 		},
 	}
@@ -121,6 +145,7 @@ func Config(s Settings) ([]byte, error) {
 		servers["https"] = map[string]any{
 			"listen": []string{fmt.Sprintf(":%d", s.HTTPSPort)},
 			"routes": httpsRoutes,
+			"errors": unreachable,
 			"logs":   map[string]any{},
 			// The http server above already redirects, after ACME challenges
 			// (which Caddy answers before any route).
@@ -191,11 +216,12 @@ type Applier struct {
 func (a *Applier) Apply(ctx context.Context, ps *types.ProxyState) error {
 	routes := make([]Route, len(ps.Routes))
 	for i, r := range ps.Routes {
-		routes[i] = Route{App: r.App, Hosts: r.Hosts, Upstreams: r.Upstreams, TLS: r.TLS}
+		routes[i] = Route{App: r.App, Hosts: r.Hosts, Upstreams: r.Upstreams, TLS: r.TLS,
+			UpstreamTLS: r.UpstreamTLS, Insecure: r.Insecure, Auth: r.Auth}
 	}
 	cfg, err := Config(Settings{
 		Routes: routes, Email: ps.Email, DataDir: a.DataDir, HTTPPort: 80, HTTPSPort: 443,
-		AdminSocket: a.AdminSocket, Storage: a.Storage,
+		AdminSocket: a.AdminSocket, Storage: a.Storage, Auth: ps.Auth,
 	})
 	if err != nil {
 		return err
@@ -229,11 +255,19 @@ func handler(r Route) map[string]any {
 	for i, u := range r.Upstreams {
 		upstreams[i] = map[string]any{"dial": u}
 	}
+	transport := map[string]any{"protocol": "http", "dial_timeout": "2s"}
+	if r.UpstreamTLS {
+		tls := map[string]any{}
+		if r.Insecure {
+			tls["insecure_skip_verify"] = true
+		}
+		transport["tls"] = tls
+	}
 	// An instance on a node that just died stops answering before the
 	// control node notices (up to 30s). Failing the dial fast and retrying
 	// on another instance turns that into latency instead of errors, and
 	// passive health checks then skip it until routes catch up.
-	return map[string]any{
+	rp := map[string]any{
 		"handler":   "reverse_proxy",
 		"upstreams": upstreams,
 		"load_balancing": map[string]any{
@@ -242,9 +276,65 @@ func handler(r Route) map[string]any {
 			"try_interval":     "250ms",
 		},
 		"health_checks": map[string]any{"passive": map[string]any{"fail_duration": "30s", "max_fails": 1}},
-		"transport":     map[string]any{"protocol": "http", "dial_timeout": "2s"},
+		"transport":     transport,
 	}
+	if len(r.Upstreams) == 1 {
+		// With nowhere else to go, marking the one upstream down would only
+		// turn a blip into 30 seconds of errors.
+		delete(rp, "health_checks")
+	}
+	return rp
 }
+
+// portal is the login domain's route, and its address for the routes whose
+// login sends users there.
+type portalRoute struct {
+	route map[string]any
+	url   string
+	tls   bool
+}
+
+func portalHandler(s Settings) portalRoute {
+	if s.Auth == nil || s.Auth.LoginDomain == "" {
+		return portalRoute{}
+	}
+	d := s.Auth.LoginDomain
+	hosts := map[string]PortalHost{}
+	for _, r := range s.Routes {
+		if r.Auth == nil || r.Auth.Mode != types.AuthUsers {
+			continue
+		}
+		for _, h := range r.Hosts {
+			users := r.Auth.Users
+			if users == nil {
+				users = []string{}
+			}
+			hosts[strings.ToLower(h)] = PortalHost{Users: users, TLS: r.TLS}
+		}
+	}
+	p := portalRoute{tls: PublicHost(d), url: "http://" + d}
+	if p.tls {
+		p.url = "https://" + d
+	}
+	p.route = map[string]any{
+		"match":    []any{map[string]any{"host": []string{d}}},
+		"handle":   append(tags(""), map[string]any{"handler": "jokku_auth", "portal": true, "global": s.Auth, "hosts": hosts}),
+		"terminal": true,
+	}
+	return p
+}
+
+// unreachable is the page for a request whose app didn't answer: the
+// instances (or the nodes behind an edge) can't be reached right now.
+var unreachable = map[string]any{"routes": []any{map[string]any{
+	"match": []any{map[string]any{"expression": "{http.error.status_code} >= 502 && {http.error.status_code} <= 504"}},
+	"handle": []any{map[string]any{
+		"handler":     "static_response",
+		"status_code": "{http.error.status_code}",
+		"headers":     map[string]any{"Content-Type": []string{"text/html; charset=utf-8"}, "Cache-Control": []string{"no-store"}},
+		"body":        unreachablePage,
+	}},
+}}}
 
 func hasWildcard(hosts []string) bool {
 	for _, h := range hosts {

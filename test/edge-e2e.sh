@@ -179,7 +179,9 @@ step "a share link"
 url=$(sudo jokku http-auth:share ha --expires 1h --note e2e | tail -n 1)
 token=${url##*/}
 [ -n "$token" ] || fail "no share link: $url"
-via ha.home.test "/.jokku/share/$token" -c "$work/share-jar" -o /dev/null -w '%{http_code}' | grep -qx 303 || fail "the share link was refused"
+# The link reaches the edge with its next state, a moment after it's made.
+eventually 30 "the share link works on the edge" bash -c \
+  "curl -s -o /dev/null -w '%{http_code}' -c '$work/share-jar' -H 'Host: ha.home.test' http://$edge_ip/.jokku/share/$token | grep -qx 303"
 via ha.home.test / -b "$work/share-jar" | grep -q "home assistant" || fail "in with the link, but no app"
 id=$(sudo jokku http-auth:shares ha | awk 'NR == 2 {print $1}')
 sudo jokku http-auth:unshare ha "$id"

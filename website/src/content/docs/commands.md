@@ -41,7 +41,8 @@ How an app is built is the one area that departs from Dokku. Dokku has no compos
 | Command | Status |
 | --- | --- |
 | `ps:scale <app> [type=n ...] [--skip-deploy]`, `ps:report`, `ps:set` (`restart-policy`) | ✅ |
-| `ps:start`, `ps:stop`, `ps:restart` | ✅ |
+| `ps:set <app> sleep-after <duration>` | ➕ ✅ the app's instances stop after that long without requests, and the next request starts them again ([how](/docs/processes#sleep-when-idle)) |
+| `ps:start`, `ps:stop`, `ps:restart` | ✅ `ps:start` also wakes a sleeping app |
 | `resource:limit [--process-type] [--cpu] [--memory]`, `resource:limit-clear`, `resource:report` | ✅ applied with a rolling restart |
 | `checks:set` (`wait-to-retire`, `timeout`), `checks:report` | ✅ |
 | `logs [-t] [-n N] [-p type] [-q]`, with `app[router]` lines per request (`-p router` for only those) | ✅ |

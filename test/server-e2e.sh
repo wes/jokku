@@ -177,6 +177,28 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $domain" http://127.0.0.
 jssh ps:start hello
 get | grep -q "hello world" || fail "app did not come back after ps:start"
 
+step "an idle app sleeps, and a request wakes it"
+jssh ps:set hello sleep-after 30s
+for _ in $(seq 1 90); do
+  case $(jssh ps:report hello --asleep) in true*) break ;; esac
+  sleep 1
+done
+report=$(jssh ps:report hello)
+printf '%s\n' "$report"
+grep -q "Asleep: *true" <<<"$report" || fail "hello did not go to sleep"
+for _ in $(seq 1 30); do
+  sudo systemctl list-units --plain --no-legend 'jokku-vm-*' | grep -q "Jokku hello " || break
+  sleep 1
+done
+if sudo systemctl list-units --plain --no-legend 'jokku-vm-*' | grep "Jokku hello "; then fail "hello's microVMs run while it sleeps"; fi
+start=$(date +%s%N)
+body=$(curl -fsS --max-time 60 -H "Host: $domain" http://127.0.0.1/) || fail "a request did not wake hello"
+printf 'woke in %d ms\n' $((($(date +%s%N) - start) / 1000000))
+grep -q "hello world" <<<"$body" || fail "unexpected body after waking: $body"
+jssh ps:report hello | grep -q "Asleep: *false" || fail "hello is still marked asleep"
+sudo jokku events | grep -q "woke up for a request" || fail "no event for the wake-up"
+jssh ps:set hello sleep-after
+
 step "cluster commands on a single server"
 sudo jokku nodes:list | grep -q "control" || fail "nodes:list does not show the control node"
 sudo jokku events | grep -q "deployed v" || fail "no deploy events"

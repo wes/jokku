@@ -528,6 +528,23 @@ everything. Process types start in dependency order (a compose file's
   is back.
 - **An agent restarts** (a crash, an update): it adopts the VMs that are
   running instead of starting them again, so apps don't notice.
+- **Idle apps sleep:** `ps:set app sleep-after 15m` lets an app scale to
+  zero. Every proxy counts requests to such apps (open ones too, so a
+  websocket keeps its app awake) and tells the control node every 10s which
+  it served. Once an app has gone `sleep-after` without one, the control node
+  marks it asleep. Its instances keep their place, address, volumes and
+  memory reservation, but stop running, and its routes have no upstreams. A
+  request that finds none asks the control node to wake the app
+  (`POST /v1/agent/activity` with the node's token) and waits, for up to a
+  minute. The instances boot where they were, and their agent checks booting
+  instances every 250ms instead of every 2s. Once they pass checks, every
+  proxy is sent routes to them. The waiting request is still in a handler of
+  the config loaded while the app slept, so its reverse proxy takes upstreams
+  from a record every config shares (a dynamic upstream source), not from
+  its own config. Deploys and restarts wake the app and keep it awake until
+  they finish. The control node keeps when each app was last used only in
+  memory, so after it restarts, every app gets a whole `sleep-after` before
+  sleeping.
 
 ## Volumes
 

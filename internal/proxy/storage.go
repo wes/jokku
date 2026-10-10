@@ -59,16 +59,7 @@ func (ClusterStorage) CaddyModule() caddy.ModuleInfo {
 }
 
 func (s *ClusterStorage) Provision(caddy.Context) error {
-	pin := s.Pin
-	s.client = &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		InsecureSkipVerify: true, // replaced by the pin check
-		VerifyConnection: func(cs tls.ConnectionState) error {
-			if len(cs.PeerCertificates) == 0 || spkiPin(cs.PeerCertificates[0]) != pin {
-				return errors.New("the control node's TLS key does not match")
-			}
-			return nil
-		},
-	}}}
+	s.client = pinnedClient(s.Pin, 30*time.Second)
 	s.local = &certmagic.FileStorage{Path: s.Cache}
 	if s.Legacy != "" {
 		s.legacy = &certmagic.FileStorage{Path: s.Legacy}
@@ -79,6 +70,19 @@ func (s *ClusterStorage) Provision(caddy.Context) error {
 	rand.Read(b)
 	s.owner = host + "-" + hex.EncodeToString(b)
 	return nil
+}
+
+// pinnedClient reaches the control node, whose TLS key has pin.
+func pinnedClient(pin string, timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		InsecureSkipVerify: true, // replaced by the pin check
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 || spkiPin(cs.PeerCertificates[0]) != pin {
+				return errors.New("the control node's TLS key does not match")
+			}
+			return nil
+		},
+	}}}
 }
 
 func spkiPin(c *x509.Certificate) string {

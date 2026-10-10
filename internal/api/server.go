@@ -189,6 +189,7 @@ func (s *Server) routes() {
 	p.HandleFunc("POST /v1/cluster/join", s.join)
 	p.HandleFunc("GET /v1/agent/state", s.agentAuth(s.agentState))
 	p.HandleFunc("POST /v1/agent/status", s.agentAuth(s.agentStatus))
+	p.HandleFunc("POST /v1/agent/activity", s.agentAuth(s.agentActivity))
 	p.HandleFunc("GET /v1/agent/artifacts/{name}", s.agentAuth(s.agentArtifact))
 	p.HandleFunc("GET /v1/agent/certs", s.agentAuth(s.certGet))
 	p.HandleFunc("PUT /v1/agent/certs", s.agentAuth(s.certPut))

@@ -63,6 +63,9 @@ func (s *Server) pickInstance(ctx context.Context, app, process string) (*store.
 	if a.Stopped {
 		return nil, httpErrorf(http.StatusConflict, "%s is stopped; start it with: jokku ps:start %s", app, app)
 	}
+	if a.AsleepSince != nil {
+		return nil, httpErrorf(http.StatusConflict, "%s is asleep; a request wakes it, or: jokku ps:start %s", app, app)
+	}
 	insts, err := s.Store.Instances(ctx, app)
 	if err != nil {
 		return nil, err

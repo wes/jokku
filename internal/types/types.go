@@ -19,12 +19,15 @@ type App struct {
 	// Kind is "" for an app deployed from code, the engine of a database
 	// (postgres, mysql, redis), which the db: commands manage, or
 	// KindExternal for a service Jokku routes to but doesn't run.
-	Kind           string    `json:"kind,omitempty"`
-	Locked         bool      `json:"locked"`
-	Stopped        bool      `json:"stopped"` // ps:stop
-	CreatedAt      time.Time `json:"created_at"`
-	CurrentRelease int       `json:"current_release,omitempty"`
-	DeploySource   string    `json:"deploy_source,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	Locked  bool   `json:"locked"`
+	Stopped bool   `json:"stopped"` // ps:stop
+	// AsleepSince is when the app went to sleep for want of requests
+	// (ps:set sleep-after); nil while it's awake.
+	AsleepSince    *time.Time `json:"asleep_since,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	CurrentRelease int        `json:"current_release,omitempty"`
+	DeploySource   string     `json:"deploy_source,omitempty"`
 }
 
 // KindExternal is an app Jokku doesn't run: a service elsewhere on the

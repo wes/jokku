@@ -43,7 +43,8 @@ several namespaces. In Jokku it is one command, `builder:dockerfile`,
 | Command | Status |
 | --- | --- |
 | `ps:scale <app> [type=n ...] [--skip-deploy]`, `ps:report`, `ps:set` (`restart-policy`; the Procfile path is `builder:set procfile`) | ✅ |
-| `ps:start`, `ps:stop`, `ps:restart` | ✅ |
+| `ps:set <app> sleep-after <duration>` | ➕ ✅ the app's instances stop after that long without requests (30s at least); the next request starts them again and waits for them |
+| `ps:start`, `ps:stop`, `ps:restart` | ✅ `ps:start` also wakes a sleeping app |
 | `ps:inspect` | ✖ use `ps:report` |
 | `resource:limit [--process-type] [--cpu] [--memory]`, `resource:limit-clear`, `resource:report` | ✅ applied with a rolling restart |
 | `resource:reserve` | ✖ in a microVM the limit *is* the reservation |

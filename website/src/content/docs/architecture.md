@@ -114,8 +114,8 @@ Certificates, ACME accounts and challenge tokens are stored on the control serve
 /var/lib/jokku/git/<app>.git      bare repos (control)
 /var/lib/jokku/artifacts/         root filesystems by digest
 /var/lib/jokku/instances/<id>/    per-VM scratch disk, config drive, sockets
-/var/lib/jokku/volumes/           volume disks
-/var/lib/jokku/backups/           database backups taken by updates
+/var/lib/jokku/volumes/           volume disks, and old copies (.stale) kept after a volume was restored elsewhere
+/var/lib/jokku/backups/           database backups taken by updates (backups to S3 go straight to the bucket)
 ```
 
 | Port | Where | What |
@@ -125,6 +125,6 @@ Certificates, ACME accounts and challenge tokens are stored on the control serve
 | 7443/tcp | control | HTTPS API (joining servers) |
 | 51820/udp | every server | WireGuard |
 | 53 | VM bridge only | `jokku-dns`, internal names for microVMs |
-| 7444/tcp | mesh only | Agent API: log streams, sessions, volume copies |
+| 7444/tcp | mesh only | Agent API: log streams, sessions, volume copies and backups, and whether a server still hears from the control server |
 
 The full design document, with every decision recorded, lives in the repo at [docs/architecture.md](https://github.com/wes/jokku/blob/main/docs/architecture.md).

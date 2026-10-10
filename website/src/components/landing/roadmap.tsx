@@ -6,7 +6,7 @@ const MILESTONES: Array<{ id: string; title: string; status: Status; items: stri
   { id: 'M1', title: 'Single-server deploys', status: 'done', items: 'BuildKit builds, Firecracker microVMs, embedded Caddy, rollouts, logs, ps:*' },
   { id: 'M2', title: 'Clusters', status: 'done', items: 'WireGuard mesh, one-command joins, scheduling, failover, jokku top' },
   { id: 'M3', title: 'Remote API', status: 'building', items: 'Registry images and logins are done; HTTPS API tokens, git:sync and deploy keys are next' },
-  { id: 'M4', title: 'Depth', status: 'building', items: 'enter, volumes and S3 backups are done; scheduled backups, the jailer, run, rollbacks and services are next' },
+  { id: 'M4', title: 'Depth', status: 'building', items: 'enter, volumes and S3 backups (scheduled, restored automatically when a server dies) are done; the jailer, run, rollbacks and services are next' },
 ];
 
 export const Roadmap = () => (

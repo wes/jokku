@@ -230,8 +230,8 @@ export const Features = () => (
       image from a registry.
     </Card>
     <Card title="Volumes that move" href="/docs/storage" visual={<VolumeVisual />}>
-      Give a database a disk that moves with it when its server is drained, and back it up,
-      encrypted, to any S3-compatible bucket.
+      Give a database a disk that moves with it when its server is drained, backed up every 15
+      minutes, encrypted, to any S3-compatible bucket, and back on another server if its own dies.
     </Card>
     <Card title="Apps find each other by name" href="/docs/networking" visual={<NetworkVisual />}>
       <code className="font-mono text-[13px]">cache.internal</code> reaches your cache app from

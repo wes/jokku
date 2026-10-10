@@ -19,10 +19,10 @@ Volumes mount in the `web` process unless you pass `--process-type worker`.
 
 - **One instance per volume.** A process with a volume runs a single instance, so `ps:scale myapp web=2` is refused. Deploys stop the old instance before starting the new one, so expect a few seconds of downtime instead of a zero-downtime switch.
 - **Moving servers.** `jokku nodes:drain` brings volumes along: the disk is copied while the app keeps running, then the app stops briefly for a final copy and starts on the new server.
-- **If a server dies,** apps with volumes on it wait for it to come back instead of starting elsewhere, because their data is there.
+- **If a server dies,** apps with volumes on it wait for it to come back instead of starting elsewhere, because their data is there. Volumes that are [backed up](/docs/backups) don't wait: after five minutes they're restored onto another server from their latest backup, and their apps start there.
 
 > [!WARNING]
-> A volume lives on one server. Keep [backups](/docs/backups) of anything that matters: they go to an S3-compatible bucket and can be restored onto another server.
+> A volume lives on one server. [Back up](/docs/backups) anything that matters: backups go to an S3-compatible bucket every 15 minutes, and bring the volume back on another server if its own dies.
 
 ## Move a volume
 
@@ -56,9 +56,10 @@ jokku storage:create myapp uploads --size 20g   # create without mounting
 jokku storage:resize myapp data 20g             # grow it
 jokku storage:unmount myapp data                # detach it; the data stays
 jokku storage:destroy myapp data                # delete it and its data
-jokku storage:report myapp                      # where each volume's disk is
+jokku storage:report myapp                      # where each volume's disk is, and any old copy kept aside
+jokku storage:discard-old-copy myapp data       # delete the copy a server kept after its volume was restored elsewhere
 ```
 
 ## Coming later
 
-Scheduled [backups](/docs/backups), object-storage volumes (`--type s3`) that many instances can share, and services like `postgres:*` and `redis:*` built from apps plus volumes.
+Object-storage volumes (`--type s3`) that many instances can share, and services like `postgres:*` and `redis:*` built from apps plus volumes.

@@ -7,6 +7,8 @@ const COMMANDS = [
   'ps:scale myapp web=3 worker=1',
   'logs myapp -t',
   'ps:report myapp',
+  'storage:mount myapp data:/app/data',
+  'http-auth:enable myapp',
 ];
 
 const DIFFERENCES = [
@@ -15,6 +17,8 @@ const DIFFERENCES = [
   ['Proxy', 'nginx', 'Caddy, built in'],
   ['storage:mount', 'A host directory', 'A disk that moves with its app'],
   ['Builds', 'Buildpacks, Dockerfile, …', 'Dockerfile, compose, images'],
+  ['Databases', 'postgres:* plugins', 'db:postgres:*, built in'],
+  ['Behind NAT', 'Open your ports', 'An edge your servers dial'],
 ];
 
 export const DokkuCompare = () => (
@@ -51,17 +55,17 @@ export const DokkuCompare = () => (
       <table className="w-full text-left text-[14px]">
         <thead>
           <tr className="border-b border-line bg-surface/60 text-[12px] text-subtle">
-            <th className="px-5 py-3 font-medium" />
-            <th className="px-5 py-3 font-mono font-medium">dokku</th>
-            <th className="px-5 py-3 font-mono font-medium text-accent">jokku</th>
+            <th className="px-3 py-3 font-medium sm:px-5" />
+            <th className="px-3 py-3 font-mono font-medium sm:px-5">dokku</th>
+            <th className="px-3 py-3 font-mono font-medium text-accent sm:px-5">jokku</th>
           </tr>
         </thead>
         <tbody>
           {DIFFERENCES.map(([area, dokku, jokku]) => (
             <tr key={area} className="border-b border-line last:border-0">
-              <td className="px-5 py-3.5 text-muted">{area}</td>
-              <td className="px-5 py-3.5 text-subtle">{dokku}</td>
-              <td className="px-5 py-3.5 font-medium text-fg">{jokku}</td>
+              <td className="px-3 py-3.5 text-muted sm:px-5">{area}</td>
+              <td className="px-3 py-3.5 text-subtle sm:px-5">{dokku}</td>
+              <td className="px-3 py-3.5 font-medium text-fg sm:px-5">{jokku}</td>
             </tr>
           ))}
         </tbody>

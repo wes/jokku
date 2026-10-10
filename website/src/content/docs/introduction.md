@@ -43,14 +43,17 @@ ssh jokku@your-server resource:limit myapp --cpu 2 --memory 1g --process-type we
 - **Dockerfiles, compose files and registry images.** Build from a Dockerfile, deploy a whole `compose.yaml`, or run an image from a registry.
 - **Automatic HTTPS** from Let's Encrypt, served by Caddy, which is built into Jokku.
 - **Scaling** across processes, instances and servers with `ps:scale` and `resource:limit`.
-- **Volumes** for data that must last, which move with their app when it changes servers.
+- **Volumes** for data that must last, which move with their app when it changes servers, and **backups** to any S3-compatible bucket that bring them back on another server if theirs dies.
+- **Databases.** Postgres, MySQL and Redis, linked to your apps with a connection URL.
+- **Edges** for home labs: serve your domains from a small public server that your servers dial, with nothing open at home, including services on your network that Jokku doesn't run.
+- **Logins** in front of any app: a shared password, or your users with authenticator codes.
 - **Private networking.** Apps reach each other by name, such as `cache.internal`, on any server in the cluster.
 - **`jokku top`**, a live view of your servers, apps and every request.
 
 ## Status
 
 > [!NOTE]
-> Jokku is in early development. `git push` builds your Dockerfile and runs it in Firecracker microVMs behind the proxy, with zero-downtime deploys, scaling, logs and updates, on one server or a cluster. The [command reference](/docs/commands) shows what works today and what's planned.
+> Jokku is in early development. `git push` builds your Dockerfile and runs it in Firecracker microVMs behind the proxy, with zero-downtime deploys, scaling, logs, volumes, backups, databases and updates, on one server or a cluster, even at home behind an edge. [What's new](/docs/changelog) lists every release, and the [command reference](/docs/commands) shows what works today and what's planned.
 
 ## Where to next
 

@@ -13,6 +13,9 @@ description: Install Jokku on a fresh server with one command, then run commands
 > [!TIP]
 > Setup warns you if the CPU can't run Firecracker, and a deploy on such a server stops right away with the reason, rather than after a full build.
 
+> [!NOTE]
+> At home, behind a router? Ports 80 and 443 don't need to be open to the internet: install Jokku as usual, then add an [edge](/docs/edges), a small public server that receives your domains' traffic and sends it home.
+
 ## Install
 
 ```sh
@@ -27,11 +30,11 @@ You can set a few options in the environment:
 
 | Variable | What it does |
 | --- | --- |
-| `JOKKU_VERSION=v0.5.0` | Install a specific release instead of the latest. |
+| `JOKKU_VERSION=v0.8.2` | Install a specific release instead of the latest. |
 | `JOKKU_IMPORT_KEYS=0` | Don't give the SSH keys you logged in with access to Jokku. |
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo JOKKU_VERSION=v0.5.0 sh
+curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo JOKKU_VERSION=v0.8.2 sh
 ```
 
 ## Run commands
@@ -74,7 +77,7 @@ Every key is an admin, as in Dokku without its ACL plugin. The key's name is rec
 | 7443/tcp | first server | Servers joining the cluster |
 | 51820/udp | every server | The encrypted network between servers |
 
-The last two only matter once you [add more servers](/docs/cluster).
+The last two only matter once you [add more servers](/docs/cluster). An [edge](/docs/edges) needs only 80, 443 and 51820 open, and the servers behind it none.
 
 ## Repair a server
 

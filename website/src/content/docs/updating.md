@@ -15,7 +15,7 @@ It shows the new version and asks before changing anything.
 
 ```sh
 sudo jokku update --yes               # don't ask
-sudo jokku update --version v0.5.0    # pick a release
+sudo jokku update --version v0.8.2    # pick a release
 ```
 
 ## What happens

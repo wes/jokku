@@ -1,18 +1,20 @@
 import { Link } from 'waku';
-import { GITHUB_URL, VERSION } from '../lib/site';
+import { releaseStats } from '../lib/releases';
+import { GITHUB_URL } from '../lib/site';
 import { HeaderNav } from './header-nav';
 import { GitHubIcon } from './icons';
 import { Logo } from './logo';
+import { LatestVersion } from './release-stats';
 import { Search } from './search';
 import { ThemeToggle } from './theme-toggle';
 
-export const SiteHeader = () => (
+export const SiteHeader = async () => (
   <header className="sticky top-0 z-50 border-b border-line/80 bg-bg/80 backdrop-blur-xl backdrop-saturate-150">
     <div className="mx-auto grid h-16 max-w-[88rem] grid-cols-[1fr_auto] items-center gap-3 px-4 sm:px-6 md:grid-cols-[1fr_auto_1fr] lg:px-8">
       <Link to="/" aria-label="Jokku home" className="flex items-center gap-2.5 justify-self-start">
         <Logo />
         <span className="hidden rounded-md border border-line px-1.5 py-0.5 font-mono text-[11px] text-subtle sm:inline">
-          {VERSION}
+          <LatestVersion initial={await releaseStats()} />
         </span>
       </Link>
       <HeaderNav />

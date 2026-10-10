@@ -6,3 +6,7 @@ dist
 .DS_Store
 Dockerfile
 .dockerignore
+# Not part of the site; leaving them out means editing them doesn't rebuild it.
+README.md
+og
+scripts

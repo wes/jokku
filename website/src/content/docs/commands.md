@@ -74,11 +74,13 @@ How an app is built is the one area that departs from Dokku. Dokku has no compos
 | `storage:mount <app> <name>:<path> [--process-type] [--size] [--no-restart]`, `storage:unmount`, `storage:list`, `storage:report` | ✅ named volumes instead of host directories |
 | `storage:create [--size] [--type]`, `storage:resize`, `storage:move <app> <name> <node>`, `storage:destroy [--force]` | ➕ ✅ |
 | `storage:export <app> <name> [--live]`, `storage:import <app> <name> [--clear] [--keep-owners]` | ➕ ✅ |
+| `storage:discard-old-copy <app> <name>` (the disk a server kept after its volume was restored elsewhere) | ➕ ✅ |
 | Object-storage volumes (`--type s3`), shared by many instances | 🔜 |
-| `postgres:*`, `redis:*`, ... as apps plus volumes plus `*:link` | 🔜 |
+| `db:postgres:*`, `db:mysql:*`, `db:redis:*`: `create [--image] [--image-version] [--size] [--memory]`, `link [--alias] [--no-restart]`, `unlink`, `connect`, `export`, `import` (Postgres, MySQL), `info [--dsn]`, `list`, `logs`, `restart`, `stop`, `start`, `destroy`; and `db:list` | ✏️ ✅ replaces Dokku's `postgres:*`, `mysql:*` and `redis:*` plugins |
+| `db:sqlite:*` (a SQLite file on an app's volume) | ➕ 🔜 next |
 | `backups:destination-add <name> --endpoint --bucket [--region] --access-key-id [--no-encrypt]`, `backups:destinations`, `backups:destination-remove`, `backups:key` | ➕ ✅ S3-compatible buckets; encrypted with a key you keep |
-| `backups:set <app> <volume> <destination> [<path>]`, `backups:unset`, `backups:run`, `backups:list`, `backups:restore <app> <volume> [<backup>] [--node] [--skip-backup]`, `backups:report` | ➕ ✅ incremental, block by block |
-| Scheduled backups, and restoring onto another server automatically when one dies | ➕ 🔜 |
+| `backups:set <app> <volume> <destination> [<path>] [--every] [--keep-recent] [--keep-daily] [--auto-restore on\|off]`, `backups:unset`, `backups:run`, `backups:list`, `backups:restore <app> <volume> [<backup>] [--node] [--skip-backup]`, `backups:report` | ➕ ✅ incremental, block by block; every 15 minutes by default; restored onto another server when its own has been down five minutes |
+| `backups:cluster <destination> [<path>] [--every] [--keep-recent] [--keep-daily]`, `backups:cluster-run`, `backups:cluster-list`, `backups:cluster-unset` | ➕ ✅ the control server's database, identity and recent releases, hourly once a destination exists |
 | `storage:ensure-directory` | ✖ volumes are disks, created by `storage:mount` |
 | `plugin:*` | ✖ |
 
@@ -93,7 +95,7 @@ How an app is built is the one area that departs from Dokku. Dokku has no compos
 | `nodes:remove [--force]` | ➕ ✅ |
 | `edge:add [<user>@]<address> [--name] [--print]` (a public server routing your domains to nodes behind NAT; installs it over ssh), `edge:list`, `edge:remove [--force]` | ➕ ✅ |
 | `events [<app>] [-n N]` | ➕ ✅ |
-| `top`, a live dashboard of servers, apps, instances, events and traffic | ➕ ✅ |
+| `top`, a live dashboard of servers, apps, instances, events, traffic and backups | ➕ ✅ |
 | Updating every server from the control server | 🔜 |
 | A replicated control server | 🔜 |
 
@@ -105,4 +107,5 @@ How an app is built is the one area that departs from Dokku. Dokku has no compos
 | `ssh jokku@host <command>`, with nothing installed locally | ✅ |
 | `jokku update [--yes] [--version vX]` (asks first; backs up and rolls back) | ➕ ✅ |
 | `jokku setup` (repair or reapply server setup) | ➕ ✅ |
+| `jokku restore-cluster --endpoint --bucket --access-key-id [--path] [--backup]` (as root, on a new control server, from its backups) | ➕ ✅ |
 | `tokens:create`, `tokens:list`, `tokens:remove` (an HTTPS API for CI and tools) | ➕ 🔜 |

@@ -11,7 +11,9 @@ import { Roadmap } from '../components/landing/roadmap';
 import { SectionHeading } from '../components/landing/section-heading';
 import { SocialMeta } from '../components/social-meta';
 import { TrafficDemo } from '../components/landing/traffic-demo';
-import { DESCRIPTION, VERSION } from '../lib/site';
+import { DownloadPill, InstallStats, LatestVersion } from '../components/release-stats';
+import { releaseStats } from '../lib/releases';
+import { DESCRIPTION } from '../lib/site';
 
 const STEPS = [
   { n: '01', title: 'Install', cmd: 'curl -fsSL …/install.sh | sudo sh', text: 'On a fresh Ubuntu or Debian server with KVM. Your SSH keys can deploy right away.' },
@@ -23,6 +25,7 @@ const STEPS = [
 const BUILT_ON = ['Firecracker', 'WireGuard', 'Caddy', 'BuildKit', 'SQLite'];
 
 export default async function HomePage() {
+  const stats = await releaseStats();
   return (
     <>
       <SocialMeta title="Jokku · git push to microVMs on your own servers" description={DESCRIPTION} path="/" />
@@ -34,14 +37,14 @@ export default async function HomePage() {
 
         <div className="relative mx-auto max-w-[88rem] px-4 pt-14 pb-20 sm:px-6 sm:pt-20 lg:px-8">
           <Link
-            to="/docs/commands"
+            to="/docs/changelog"
             className="animate-rise group inline-flex items-center gap-3 text-[14px]"
           >
             <span className="rounded-[4px] bg-fill px-1.5 py-0.5 font-mono text-[11px] font-semibold tracking-wide text-on-fill">
-              {VERSION}
+              <LatestVersion initial={stats} />
             </span>
             <span className="text-accent underline decoration-accent/40 underline-offset-4 transition group-hover:decoration-accent">
-              Early development<span className="max-sm:hidden">: see what works today</span>
+              New: serve from home with edges<span className="max-sm:hidden">, logins and databases</span>
             </span>
             <ArrowRightIcon className="size-4 text-accent transition group-hover:translate-x-0.5" />
           </Link>
@@ -68,6 +71,7 @@ export default async function HomePage() {
               <ArrowRightIcon className="size-4 transition group-hover:translate-x-0.5" />
             </Link>
             <InstallButton />
+            <DownloadPill initial={stats} />
           </div>
 
           <div className="animate-rise mt-20 [animation-delay:380ms]">
@@ -111,8 +115,8 @@ export default async function HomePage() {
       {/* Features */}
       <section className="mx-auto max-w-[88rem] px-4 pb-24 sm:px-6 sm:pb-32 lg:px-8">
         <SectionHeading eyebrow="what you get" title="Everything a platform does. On servers you own.">
-          Deploys, scaling, certificates, volumes and private networking, running on hardware you
-          control, from one binary.
+          Deploys, scaling, certificates, databases, backups, logins and private networking, running
+          on hardware you control, even at home, from one binary.
         </SectionHeading>
         <div className="mt-14">
           <Features />
@@ -189,6 +193,9 @@ export default async function HomePage() {
             does the rest.
           </p>
           <InstallCommand className="mx-auto mt-9 max-w-xl" />
+          <div className="mt-4">
+            <InstallStats initial={stats} />
+          </div>
           <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[14.5px]">
             <Link to="/docs/quickstart" className="inline-flex items-center gap-1.5 font-medium text-accent hover:underline">
               Deploy your first app <ArrowRightIcon className="size-4" />

@@ -37,6 +37,8 @@ The **control server** runs the API, the database, the scheduler, the builder an
 
 Losing the control server stops deploys and changes, not running apps: agents and proxies keep serving their last known state.
 
+An **edge** is a third kind of server: a public machine that runs only the proxy, in front of servers the internet can't reach. Those servers dial it over the mesh, so they need no open port; it reaches the control server's API over the tunnel they open, and they let it reach only the web ports of their instances and the services it routes to. See [Edges & home labs](/docs/edges).
+
 ## From git push to a release
 
 Every deploy, however it starts, becomes the same thing: a source tarball, or an image reference, posted to the API.
@@ -106,6 +108,8 @@ Caddy is built into the jokku binary and runs on every server as its own service
 
 Certificates, ACME accounts and challenge tokens are stored on the control server and shared by the whole cluster.
 
+[Logins](/docs/logins) run inside the proxy too, on every server that serves the app, with sessions signed by a key the cluster shares, so any server checks them on its own.
+
 ## Files and ports
 
 ```text
@@ -114,8 +118,8 @@ Certificates, ACME accounts and challenge tokens are stored on the control serve
 /var/lib/jokku/git/<app>.git      bare repos (control)
 /var/lib/jokku/artifacts/         root filesystems by digest
 /var/lib/jokku/instances/<id>/    per-VM scratch disk, config drive, sockets
-/var/lib/jokku/volumes/           volume disks
-/var/lib/jokku/backups/           database backups taken by updates
+/var/lib/jokku/volumes/           volume disks, and old copies (.stale) kept after a volume was restored elsewhere
+/var/lib/jokku/backups/           database backups taken by updates (backups to S3 go straight to the bucket)
 ```
 
 | Port | Where | What |
@@ -125,6 +129,6 @@ Certificates, ACME accounts and challenge tokens are stored on the control serve
 | 7443/tcp | control | HTTPS API (joining servers) |
 | 51820/udp | every server | WireGuard |
 | 53 | VM bridge only | `jokku-dns`, internal names for microVMs |
-| 7444/tcp | mesh only | Agent API: log streams, sessions, volume copies |
+| 7444/tcp | mesh only | Agent API: log streams, sessions, volume copies and backups, and whether a server still hears from the control server |
 
 The full design document, with every decision recorded, lives in the repo at [docs/architecture.md](https://github.com/wes/jokku/blob/main/docs/architecture.md).

@@ -14,7 +14,11 @@ Jokku keeps Dokku's command names, argument order and output. `apps:create`, `co
 | Builders | herokuish, CNB, Dockerfile, nixpacks, ... | Dockerfiles, compose files and registry images; buildpacks later |
 | Proxy | nginx (pluggable) | Caddy, built in, with certificates shared across servers |
 | `storage:mount` | A host directory, shared by all containers | A named volume attached to one instance; it runs where the disk is, and the disk moves with it |
-| Plugins | The bash plugin ecosystem | None for now; services like Postgres and Redis later, as apps plus volumes |
+| Plugins | The bash plugin ecosystem | None; what the common plugins do is built in |
+| Databases | `postgres:*`, `mysql:*`, `redis:*` plugins | Built in, under one namespace: `db:postgres:*`, `db:mysql:*`, `db:redis:*`. See [Databases](/docs/databases) |
+| Basic auth | The `http-auth` plugin | `http-auth:*`, with a login page, users with authenticator codes and share links. See [Logins](/docs/logins) |
+| Backups | Per plugin, such as `postgres:backup` | Every volume, to S3-compatible buckets, restored onto another server if its own dies. See [Backups](/docs/backups) |
+| Behind NAT | Needs open ports | [Edges](/docs/edges): a public server your servers dial |
 | Releases | No rollback | `releases`, and `releases:rollback` planned |
 | Servers | n/a | `nodes:*` and `cluster:*` |
 
@@ -34,6 +38,7 @@ jokku builder:image myapp ghcr.io/you/myapp:v2     # run a registry image (repla
 ## Things to know
 
 - **Volumes are disks, not directories.** A process with a volume runs one instance, and its deploys stop the old instance first. See [Volumes](/docs/storage).
+- **Databases are `db:<engine>:*`**, not `postgres:*`: `db:postgres:create`, `db:postgres:link` and so on, with the same idea as Dokku's plugins. There are no aliases for the plugin names.
 - **HTTPS is off for new apps**, as in Dokku. Turn it on with `letsencrypt:enable`.
 - **`resource:reserve` isn't needed.** In a microVM, the memory limit is the reservation.
 - **Apps listen on `$PORT`.** `ports:*` mapping is planned.

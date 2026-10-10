@@ -111,7 +111,9 @@ func TestGatherAsksTheControlNode(t *testing.T) {
 					{Name: "pg-main", Kind: "postgres", Healthy: 1, Wanted: 1,
 						Deploy: &types.Deploy{App: "pg-main", CreatedAt: deployed.Add(time.Hour)}},
 				},
-				Totals: types.ClusterTotals{Instances: 11},
+				// Two of jokku1's instances are an old release's, retiring.
+				Instances: make([]types.InstanceView, 11),
+				Totals:    types.ClusterTotals{Instances: 9},
 			})
 		default:
 			http.NotFound(w, r)

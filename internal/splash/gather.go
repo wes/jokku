@@ -108,7 +108,10 @@ func readCluster(in *Info, st *types.ClusterStatus) {
 			in.LastDeploy = d
 		}
 	}
-	in.Instances = st.Totals.Instances
+	// Every instance the nodes hold, counted the way each node's own count
+	// is (and nodes:list's), so this node's share is never more than all:
+	// an old release's instances winding down after a deploy count too.
+	in.Instances = len(st.Instances)
 }
 
 // readNodeState counts, on a worker or an edge, what the control node last

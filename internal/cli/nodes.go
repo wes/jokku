@@ -39,7 +39,7 @@ func nodesList(c *Context) error {
 	fmt.Fprintln(tw, "NAME\tROLE\tSTATUS\tADDRESS\tMESH IP\tCPUS\tMEMORY\tINSTANCES\tVERSION")
 	for _, n := range st.Nodes {
 		status := n.Status
-		if n.CanRun != "" && status == "ready" {
+		if n.CanRun != "" && status == "ready" && n.Role != types.RoleEdge {
 			status = "ready (no microVMs)"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%d\t%s\n",

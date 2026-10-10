@@ -33,6 +33,7 @@ import (
 	"github.com/wes/jokku/internal/proxy"
 	"github.com/wes/jokku/internal/sshkeys"
 	"github.com/wes/jokku/internal/store"
+	"github.com/wes/jokku/internal/types"
 	"github.com/wes/jokku/internal/version"
 	"github.com/wes/jokku/internal/vm"
 )
@@ -86,7 +87,7 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return err
 	}
-	if nf, err := LoadNodeFile(cfg.DataDir); err == nil && nf.Role == store.RoleWorker {
+	if nf, err := LoadNodeFile(cfg.DataDir); err == nil && (nf.Role == store.RoleWorker || nf.Role == store.RoleEdge) {
 		return runWorker(ctx, cfg, nf, log)
 	}
 	return runControl(ctx, cfg, log)
@@ -240,7 +241,7 @@ func runWorker(ctx context.Context, cfg Config, nf *NodeFile, log *slog.Logger) 
 		return fmt.Errorf("node.json: %w", err)
 	}
 	controlURL := "https://" + nf.Control
-	ag := agent.New(agent.Config{
+	cfgAgent := agent.Config{
 		Control: agent.NewRemote(controlURL, nf.NodeToken, cluster.PinnedTLS(nf.Pin)),
 		Runtime: &vm.Host{DataDir: cfg.DataDir, Bridge: "jokku0", Gateway: netip.PrefixFrom(meshIP, subnet.Bits()), Cluster: cidr},
 		Mesh:    &mesh.Mesh{KeyFile: filepath.Join(cfg.DataDir, "wireguard.key")},
@@ -249,7 +250,20 @@ func runWorker(ctx context.Context, cfg Config, nf *NodeFile, log *slog.Logger) 
 		}},
 		Resolver: &dns.Applier{DataDir: cfg.DataDir},
 		DataDir:  cfg.DataDir, DNS: vm.HostDNS(), Version: version.Version, Log: log, GCArtifacts: true,
-	})
+	}
+	role := "worker"
+	if nf.Role == store.RoleEdge {
+		// An edge runs no VMs and has no use for their DNS. It reaches the
+		// control node over the mesh only, so it starts from the peers it
+		// was installed with.
+		role = "edge"
+		cfgAgent.Runtime = &vm.NoVMs{Reason: "edges only route traffic; apps run on the nodes behind them",
+			Device: "jokku0", Address: netip.PrefixFrom(meshIP, subnet.Bits())}
+		cfgAgent.Resolver = nil
+		nf.Node.Role = store.RoleEdge
+		cfgAgent.Seed = &types.NodeState{Node: nf.Node, Peers: nf.Peers}
+	}
+	ag := agent.New(cfgAgent)
 	go ag.Serve(ctx, net.JoinHostPort(nf.Node.MeshIP, strconv.Itoa(cluster.AgentPort)), nf.AgentToken)
 
 	// The local socket answers "jokku version" (and setup's health check);
@@ -263,7 +277,7 @@ func runWorker(ctx context.Context, cfg Config, nf *NodeFile, log *slog.Logger) 
 		host, _, _ := net.SplitHostPort(nf.Control)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		fmt.Fprintf(w, `{"error":"%s is a worker node; run jokku commands on the control node (%s)"}`, nf.Node.Name, host)
+		fmt.Fprintf(w, `{"error":"%s is %s node; run jokku commands on the control node (%s)"}`, nf.Node.Name, map[string]string{"worker": "a worker", "edge": "an edge"}[role], host)
 	})
 	owner, _, _ := lookupGitUser("")
 	ln, err := listenSocket(cfg.Socket, owner)
@@ -271,7 +285,7 @@ func runWorker(ctx context.Context, cfg Config, nf *NodeFile, log *slog.Logger) 
 		return err
 	}
 	go ag.Run(ctx)
-	log.Info("jokku daemon started", "role", "worker", "version", version.Version, "node", nf.Node.Name, "control", nf.Control)
+	log.Info("jokku daemon started", "role", role, "version", version.Version, "node", nf.Node.Name, "control", nf.Control)
 	return serve(ctx, []*http.Server{{Handler: mux, ReadHeaderTimeout: 10 * time.Second}}, []net.Listener{ln})
 }
 

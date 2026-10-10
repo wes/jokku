@@ -24,6 +24,7 @@ export const NAV: NavGroup[] = [
       { slug: 'images', title: 'Registry images' },
       { slug: 'config', title: 'Config vars' },
       { slug: 'domains', title: 'Domains & HTTPS' },
+      { slug: 'logins', title: 'Logins' },
       { slug: 'github-actions', title: 'GitHub Actions' },
     ],
   },
@@ -41,6 +42,7 @@ export const NAV: NavGroup[] = [
     title: 'Servers',
     items: [
       { slug: 'cluster', title: 'Adding servers' },
+      { slug: 'edges', title: 'Edges & home labs' },
       { slug: 'top', title: 'jokku top' },
       { slug: 'updating', title: 'Updating' },
     ],

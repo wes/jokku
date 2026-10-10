@@ -116,9 +116,13 @@ func (c *Controller) tickVolumes(ctx context.Context) (bool, error) {
 	}
 	now := time.Now()
 	byName := map[string]store.Node{}
-	ready := 0
+	ready, voters := 0, 0
 	for _, n := range nodes {
 		byName[n.Name] = n
+		if n.Edge() {
+			continue // edges run nothing, and sit outside, so they don't count
+		}
+		voters++
 		if n.Ready(now) {
 			ready++
 		}
@@ -126,7 +130,7 @@ func (c *Controller) tickVolumes(ctx context.Context) (bool, error) {
 	// Restoring a volume elsewhere needs at least half of the nodes in
 	// view: a control node cut off from most of the cluster can't tell its
 	// nodes are down, and they keep running (see agent/fence.go).
-	quorum := ready*2 >= len(nodes)
+	quorum := ready*2 >= voters
 	byID := map[string]store.Instance{}
 	for _, in := range insts {
 		byID[in.ID] = in

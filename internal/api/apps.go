@@ -25,13 +25,18 @@ func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
 }
 
 // notDatabase refuses what would break a database's app (renaming it,
-// cloning it): it is managed with db:<engine>:*.
+// cloning it): it is managed with db:<engine>:*. An external app is
+// managed with external:*.
 func (s *Server) notDatabase(ctx context.Context, name string) error {
 	app, err := s.Store.App(ctx, name)
 	if err != nil {
 		return err
 	}
-	if app.Kind != "" {
+	switch app.Kind {
+	case "":
+	case types.KindExternal:
+		return httpErrorf(http.StatusConflict, "%s is an external app; manage it with jokku external:*", name)
+	default:
 		return httpErrorf(http.StatusConflict, "%s is a %s database; manage it with jokku db:%s:*", name, app.Kind, app.Kind)
 	}
 	return nil

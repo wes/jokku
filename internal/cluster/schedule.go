@@ -76,7 +76,7 @@ func (c *Controller) Place(ctx context.Context, p Placement) (string, netip.Pref
 		diskFree := n.Metrics.DiskFreeMB - diskReserveMB(n.Metrics.DiskMB)
 		reason := ""
 		switch {
-		case n.Name == p.Exclude || (p.Pin != "" && n.Name != p.Pin):
+		case n.Name == p.Exclude || (p.Pin != "" && n.Name != p.Pin) || n.Edge():
 			continue
 		case !n.Ready(now):
 			reason = "down"
@@ -139,6 +139,8 @@ func (c *Controller) CanSchedule(ctx context.Context) error {
 	var why []string
 	for _, n := range nodes {
 		switch {
+		case n.Edge():
+			continue
 		case !n.Ready(now):
 			why = append(why, n.Name+" is down")
 		case n.CanRun != "":

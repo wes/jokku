@@ -67,3 +67,20 @@ func (s *Store) SetProperties(ctx context.Context, app, plugin string, values ma
 		return nil
 	})
 }
+
+// EnsureProperty stores value unless the key already has one, and returns
+// the value it has now: concurrent callers all get the first one stored.
+func (s *Store) EnsureProperty(ctx context.Context, app, plugin, key, value string) (string, error) {
+	id, err := appID(ctx, s.db, app)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.db.ExecContext(ctx,
+		"INSERT INTO properties (app_id, plugin, key, value) VALUES (?, ?, ?, ?) ON CONFLICT (app_id, plugin, key) DO NOTHING",
+		id, plugin, key, value); err != nil {
+		return "", err
+	}
+	var v string
+	err = s.db.QueryRowContext(ctx, "SELECT value FROM properties WHERE app_id = ? AND plugin = ? AND key = ?", id, plugin, key).Scan(&v)
+	return v, err
+}

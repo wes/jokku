@@ -154,7 +154,12 @@ func (a *Agent) askPeers(ctx context.Context, client *http.Client) bool {
 		}(p.AgentAddr)
 	}
 	wg.Wait()
-	nodes := len(st.Peers) + 1
+	nodes := 1 // edges have no vote: they run nothing, and sit outside
+	for _, p := range st.Peers {
+		if p.Role != types.RoleEdge {
+			nodes++
+		}
+	}
 	return heard > 0 || (1+reached)*2 <= nodes
 }
 

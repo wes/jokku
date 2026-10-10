@@ -20,12 +20,16 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; to: Href }> 
       { label: 'Domains & HTTPS', to: '/docs/domains' },
       { label: 'Volumes', to: '/docs/storage' },
       { label: 'Backups', to: '/docs/backups' },
+      { label: 'Databases', to: '/docs/databases' },
+      { label: 'Logins', to: '/docs/logins' },
       { label: 'Adding servers', to: '/docs/cluster' },
+      { label: 'Edges & home labs', to: '/docs/edges' },
     ],
   },
   {
     title: 'Reference',
     links: [
+      { label: "What's new", to: '/docs/changelog' },
       { label: 'Commands', to: '/docs/commands' },
       { label: 'How it works', to: '/docs/architecture' },
       { label: 'Updating', to: '/docs/updating' },

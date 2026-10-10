@@ -37,6 +37,8 @@ The **control server** runs the API, the database, the scheduler, the builder an
 
 Losing the control server stops deploys and changes, not running apps: agents and proxies keep serving their last known state.
 
+An **edge** is a third kind of server: a public machine that runs only the proxy, in front of servers the internet can't reach. Those servers dial it over the mesh, so they need no open port; it reaches the control server's API over the tunnel they open, and they let it reach only the web ports of their instances and the services it routes to. See [Edges & home labs](/docs/edges).
+
 ## From git push to a release
 
 Every deploy, however it starts, becomes the same thing: a source tarball, or an image reference, posted to the API.
@@ -105,6 +107,8 @@ agent                                         control
 Caddy is built into the jokku binary and runs on every server as its own service, so restarting Jokku never interrupts traffic. The control server computes routes: each app's domains map to every healthy `web` instance of its current release. Caddy load-balances across them and stops sending traffic to instances that fail.
 
 Certificates, ACME accounts and challenge tokens are stored on the control server and shared by the whole cluster.
+
+[Logins](/docs/logins) run inside the proxy too, on every server that serves the app, with sessions signed by a key the cluster shares, so any server checks them on its own.
 
 ## Files and ports
 

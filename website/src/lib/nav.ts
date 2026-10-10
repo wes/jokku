@@ -35,6 +35,7 @@ export const NAV: NavGroup[] = [
       { slug: 'logs', title: 'Logs & shell access' },
       { slug: 'storage', title: 'Volumes' },
       { slug: 'backups', title: 'Backups' },
+      { slug: 'databases', title: 'Databases' },
       { slug: 'networking', title: 'Private networking' },
     ],
   },
@@ -50,6 +51,7 @@ export const NAV: NavGroup[] = [
   {
     title: 'Reference',
     items: [
+      { slug: 'changelog', title: "What's new" },
       { slug: 'commands', title: 'Commands' },
       { slug: 'architecture', title: 'How it works' },
       { slug: 'dokku', title: 'Coming from Dokku' },

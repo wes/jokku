@@ -6,11 +6,12 @@ const MILESTONES: Array<{ id: string; title: string; status: Status; items: stri
   { id: 'M1', title: 'Single-server deploys', status: 'done', items: 'BuildKit builds, Firecracker microVMs, embedded Caddy, rollouts, logs, ps:*' },
   { id: 'M2', title: 'Clusters', status: 'done', items: 'WireGuard mesh, one-command joins, scheduling, failover, jokku top' },
   { id: 'M3', title: 'Remote API', status: 'building', items: 'Registry images and logins are done; HTTPS API tokens, git:sync and deploy keys are next' },
-  { id: 'M4', title: 'Depth', status: 'building', items: 'enter, volumes and S3 backups (scheduled, restored automatically when a server dies) are done; the jailer, run, rollbacks and services are next' },
+  { id: 'M4', title: 'Depth', status: 'building', items: 'enter, volumes, backups (scheduled, restored automatically when a server dies) and databases are done; the jailer, run, rollbacks and SQLite are next' },
+  { id: 'M5', title: 'Home labs', status: 'done', items: 'Edges your servers dial, so a home lab serves the internet with no open port; external apps; logins with authenticator codes' },
 ];
 
 export const Roadmap = () => (
-  <ol className="grid gap-3 md:grid-cols-5">
+  <ol className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
     {MILESTONES.map((m) => (
       <li
         key={m.id}

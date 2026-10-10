@@ -967,4 +967,10 @@ need no open port at all.
   `storage:export`/`storage:import`), volumes (local disks that move with their instance:
   *done*; object storage next), backups to S3 (*done*: schedules, restores, and automatic restores with
   fencing), `releases:rollback`, app.json health checks,
-  log drains, services.
+  log drains, services (databases: Postgres, MySQL and Redis under `db:`,
+  *done*; SQLite next).
+- **M5 – home labs.** *(done)* Edges (public servers the cluster dials, so
+  nodes behind NAT serve the internet), external apps (domains routed to
+  services on your network), and logins in front of apps (`http-auth:*`).
+  Next: raw TCP/UDP ports through edges, logins with an identity provider
+  (OIDC), and connectors for services at other sites.

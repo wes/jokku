@@ -14,7 +14,7 @@ jokku cluster:join-command
 It prints a one-liner. Run it on the new server, which needs the same [requirements](/docs/installation#requirements) as the first:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo JOKKU_VERSION=v0.5.0 sh -s -- --join 203.0.113.10:7443 --token JOKKU1...
+curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo JOKKU_VERSION=v0.8.2 sh -s -- --join 203.0.113.10:7443 --token JOKKU1...
 ```
 
 The servers connect over an encrypted private network (WireGuard on UDP 51820; the first server also needs TCP 7443 open for joining). Apps are spread across all of them, and every server can receive web traffic, so point your DNS at as many as you like.
@@ -22,8 +22,8 @@ The servers connect over an encrypted private network (WireGuard on UDP 51820; t
 ```console
 $ jokku nodes:list
 NAME      ROLE     STATUS  ADDRESS        MESH IP     CPUS  MEMORY  INSTANCES  VERSION
-server-1  control  ready   203.0.113.10   10.210.1.1  8     16g     3          v0.5.0
-server-2  worker   ready   203.0.113.11   10.210.2.1  8     16g     2          v0.5.0
+server-1  control  ready   203.0.113.10   10.210.1.1  8     16g     3          v0.8.2
+server-2  worker   ready   203.0.113.11   10.210.2.1  8     16g     2          v0.8.2
 ```
 
 A join command works for an hour and adds one server. For autoscaling, make one that adds any number of servers until it expires, and put it in your cloud-init user-data:

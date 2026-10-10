@@ -207,6 +207,117 @@ const LogsVisual = () => (
   </Mono>
 );
 
+const EdgeVisual = () => (
+  <Mono className="flex h-full flex-col text-muted">
+    <Cmd>jokku edge:add root@203.0.113.7</Cmd>
+    <div className="my-auto grid grid-cols-[auto_1fr_auto_1.6fr] items-center gap-2 py-4 max-sm:grid-cols-[auto_1fr_auto]">
+      <span className="rounded-md border border-line bg-elevated px-2 py-1 text-fg">browser</span>
+      <span className="relative h-px bg-line-strong">
+        <span className="absolute top-2 left-1/2 -translate-x-1/2 text-[10px] text-subtle">https</span>
+      </span>
+      <div className="rounded-lg border border-accent/40 bg-accent-soft px-2.5 py-1.5">
+        <div className="text-fg">edge1</div>
+        <div className="text-[10px] text-subtle">public · certs · logins</div>
+      </div>
+      <div className="relative flex items-center gap-2 max-sm:col-span-3">
+        <span className="relative h-px flex-1 bg-accent/50 max-sm:hidden">
+          <span className="absolute top-1/2 left-[70%] size-2 -translate-1/2 rounded-full bg-accent shadow-[0_0_10px] shadow-accent/60" />
+          <span className="absolute top-2 left-1/2 -translate-x-1/2 text-[10px] whitespace-nowrap text-accent">home dials out</span>
+        </span>
+        <div className="flex-[2] rounded-lg border border-line-strong bg-elevated p-2">
+          <div className="mb-1 flex justify-between text-[10px]">
+            <span className="text-fg">home lab</span>
+            <span className="text-subtle">no open ports</span>
+          </div>
+          <div className="space-y-1 text-[10.5px]">
+            <div className="flex justify-between rounded bg-fg/[0.05] px-1.5">
+              <span className="text-fg">shop</span>
+              <span>microVMs</span>
+            </div>
+            <div className="flex justify-between rounded bg-fg/[0.05] px-1.5">
+              <span className="text-fg">ha</span>
+              <span>192.168.1.50:8123</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div className="text-[10.5px] text-subtle">WireGuard · the edge reaches only what it routes</div>
+  </Mono>
+);
+
+const LoginVisual = () => (
+  <Mono className="text-muted">
+    <Cmd>jokku http-auth:enable photos wes sam</Cmd>
+    <div className="mx-auto mt-2.5 max-w-[15rem] rounded-xl border border-line-strong bg-elevated p-3 font-sans shadow-sm">
+      <div className="text-[12.5px] font-semibold text-fg">Log in to photos</div>
+      <div className="mt-2 rounded-md border border-line bg-bg px-2 py-1 text-[11px] text-fg">wes</div>
+      <div className="mt-1.5 rounded-md border border-line bg-bg px-2 py-1 font-mono text-[11px] tracking-[0.3em] text-fg">
+        482 913
+      </div>
+      <div className="mt-2 rounded-md bg-fill py-1 text-center text-[11px] font-semibold text-on-fill">Verify</div>
+    </div>
+  </Mono>
+);
+
+const BackupsVisual = () => (
+  <Mono className="text-muted">
+    <Cmd>jokku backups:list shop data</Cmd>
+    <div className="mt-1.5 grid grid-cols-[1fr_auto_auto] gap-x-3 text-[10.5px]">
+      <span className="text-subtle">BACKUP</span>
+      <span className="text-subtle">TAKEN</span>
+      <span className="text-subtle">ADDED</span>
+      {[
+        ['2026-10-09T14-15-00Z', '2m ago', '1.8 MB'],
+        ['2026-10-09T14-00-00Z', '17m ago', '640 KB'],
+        ['2026-10-09T13-45-00Z', '32m ago', '2.3 MB'],
+      ].map(([name, taken, added]) => (
+        <div key={name} className="contents">
+          <span className="text-fg">{name}</span>
+          <span>{taken}</span>
+          <span className="text-accent">+{added}</span>
+        </div>
+      ))}
+    </div>
+    <div className="mt-2 text-[10.5px]">
+      <span className="text-good">●</span> server-2 down 5m: restored on server-3
+    </div>
+  </Mono>
+);
+
+const DatabaseVisual = () => (
+  <Mono className="text-muted">
+    <Cmd>jokku db:postgres:create shopdb</Cmd>
+    <Cmd>jokku db:postgres:link shopdb shop</Cmd>
+    <div className="mt-2 rounded-lg border border-line bg-elevated p-2.5">
+      <div className="text-subtle"># set on shop</div>
+      <div className="truncate">
+        <span className="text-accent">DATABASE_URL</span>=postgres://…@<span className="text-fg">postgres-shopdb.internal</span>
+      </div>
+    </div>
+    <div className="mt-2 text-[10.5px] text-subtle">Postgres · MySQL · Redis, each on its own volume</div>
+  </Mono>
+);
+
+const UpdateVisual = () => (
+  <Mono className="text-muted">
+    <Cmd>sudo jokku update</Cmd>
+    <div>
+      <span className="text-accent">-----&gt;</span> Updating jokku from v0.8.1 to v0.8.2
+    </div>
+    <div>
+      <span className="text-accent">-----&gt;</span> Backing up the database
+    </div>
+    <div>
+      <span className="text-accent">-----&gt;</span> Restarting jokku
+    </div>
+    <div className="pl-[4.5ch]">jokku v0.8.2 is running</div>
+    <div className="mt-1.5 text-[10.5px]">
+      <span className="text-good">●</span> apps kept serving · rolls back if it fails
+    </div>
+  </Mono>
+);
+
 export const Features = () => (
   <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
     <Card title="A microVM for every instance" href="/docs/architecture" visual={<MicroVMVisual />} className="md:col-span-2">
@@ -229,9 +340,25 @@ export const Features = () => (
       Build a Dockerfile, deploy a whole compose file with each service as a process, or run any
       image from a registry.
     </Card>
+    <Card title="Serve from home, no port open" href="/docs/edges" visual={<EdgeVisual />} className="md:col-span-2">
+      Run Jokku in a home lab and add an edge: a small public server your servers dial. It serves
+      your domains, and the services on your network you route to it, like Home Assistant or a NAS.
+    </Card>
+    <Card title="A login in front of anything" href="/docs/logins" visual={<LoginVisual />}>
+      A shared password, or your users with authenticator codes, before any app. One login for
+      every app, share links that expire, and nothing to change in the app.
+    </Card>
     <Card title="Volumes that move" href="/docs/storage" visual={<VolumeVisual />}>
-      Give a database a disk that moves with it when its server is drained, backed up every 15
-      minutes, encrypted, to any S3-compatible bucket, and back on another server if its own dies.
+      Give a database a disk that moves with it when its server is drained, copied while the app
+      keeps running.
+    </Card>
+    <Card title="Backups that restore themselves" href="/docs/backups" visual={<BackupsVisual />}>
+      Every 15 minutes, incremental and encrypted, to any S3-compatible bucket. If a server dies,
+      its volumes come back on another one from their latest backup.
+    </Card>
+    <Card title="Databases in one command" href="/docs/databases" visual={<DatabaseVisual />}>
+      Postgres, MySQL and Redis from their official images, linked to your apps with a connection
+      URL, reachable only from them, and backed up from the start.
     </Card>
     <Card title="Apps find each other by name" href="/docs/networking" visual={<NetworkVisual />}>
       <code className="font-mono text-[13px]">cache.internal</code> reaches your cache app from
@@ -240,6 +367,10 @@ export const Features = () => (
     <Card title="Logs and a shell, anywhere" href="/docs/logs" visual={<LogsVisual />}>
       Follow every instance and every request in one stream, or open a shell inside a running
       microVM with <code className="font-mono text-[13px]">jokku enter</code>.
+    </Card>
+    <Card title="Updates you don’t worry about" href="/docs/updating" visual={<UpdateVisual />}>
+      One command updates a server. Your apps keep serving, the state is backed up first, and a
+      release that doesn’t come up is rolled back.
     </Card>
   </div>
 );

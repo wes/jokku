@@ -15,7 +15,9 @@ export const OG_IMAGE = {
   alt: 'Jokku: Your apps, your servers. Every instance a microVM. Deploy with git push.',
 };
 
-export const VERSION = 'v0.5.0';
+// The latest release when GitHub can't be asked: the build reads the real one
+// (see releases.ts), and the page checks again in the browser.
+export const VERSION = 'v0.8.2';
 export const GITHUB_URL = 'https://github.com/wes/jokku';
 export const RELEASES_URL = `${GITHUB_URL}/releases`;
 export const INSTALL_COMMAND =

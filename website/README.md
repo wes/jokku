@@ -20,7 +20,8 @@ npm start        # serve the build
 | `src/lib/nav.ts` | The docs sidebar, in reading order |
 | `src/components/markdown.tsx` | Renders the Markdown, with the extras below |
 | `src/lib/highlight.ts` | Build-time syntax highlighting (Shiki) and its color theme |
-| `src/lib/site.ts` | Site URL, version, GitHub URL and install command |
+| `src/lib/site.ts` | Site URL, fallback version, GitHub URL and install command |
+| `src/lib/release-stats.ts` | The latest release and download count, from GitHub |
 | `og/og-image.html` | The link preview image's source; `npm run og` renders it to `public/og-image.jpg` |
 | `src/styles.css` | Color tokens for light and dark |
 
@@ -47,8 +48,15 @@ Beyond standard Markdown:
 
 The docs here are written for readers and follow the repo's own `README.md` and
 `docs/`. When a change to Jokku updates those, update the matching page here too.
-When Jokku ships a release, update `VERSION` in `src/lib/site.ts`, and the version in
-`og/og-image.html` (then `npm run og`).
+When Jokku ships a release, add it to `src/content/docs/changelog.md` (What's new).
+
+The latest version and the download count (how many times the jokku binary was
+downloaded from GitHub releases, by installs and updates) are read from GitHub's
+API when the site builds, and again in the browser, at most once an hour
+(`src/lib/release-stats.ts`). A build without GitHub falls back to `VERSION` in
+`src/lib/site.ts`; set `GITHUB_TOKEN` for a build that would hit the
+unauthenticated rate limit. The link preview's version is in `og/og-image.html`
+(then `npm run og`).
 
 ## Deploy it on Jokku
 

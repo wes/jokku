@@ -76,7 +76,8 @@ How an app is built is the one area that departs from Dokku. Dokku has no compos
 | `storage:export <app> <name> [--live]`, `storage:import <app> <name> [--clear] [--keep-owners]` | ➕ ✅ |
 | `storage:discard-old-copy <app> <name>` (the disk a server kept after its volume was restored elsewhere) | ➕ ✅ |
 | Object-storage volumes (`--type s3`), shared by many instances | 🔜 |
-| `postgres:*`, `redis:*`, ... as apps plus volumes plus `*:link` | 🔜 |
+| `db:postgres:*`, `db:mysql:*`, `db:redis:*`: `create [--image] [--image-version] [--size] [--memory]`, `link [--alias] [--no-restart]`, `unlink`, `connect`, `export`, `import` (Postgres, MySQL), `info [--dsn]`, `list`, `logs`, `restart`, `stop`, `start`, `destroy`; and `db:list` | ✏️ ✅ replaces Dokku's `postgres:*`, `mysql:*` and `redis:*` plugins |
+| `db:sqlite:*` (a SQLite file on an app's volume) | ➕ 🔜 next |
 | `backups:destination-add <name> --endpoint --bucket [--region] --access-key-id [--no-encrypt]`, `backups:destinations`, `backups:destination-remove`, `backups:key` | ➕ ✅ S3-compatible buckets; encrypted with a key you keep |
 | `backups:set <app> <volume> <destination> [<path>] [--every] [--keep-recent] [--keep-daily] [--auto-restore on\|off]`, `backups:unset`, `backups:run`, `backups:list`, `backups:restore <app> <volume> [<backup>] [--node] [--skip-backup]`, `backups:report` | ➕ ✅ incremental, block by block; every 15 minutes by default; restored onto another server when its own has been down five minutes |
 | `backups:cluster <destination> [<path>] [--every] [--keep-recent] [--keep-daily]`, `backups:cluster-run`, `backups:cluster-list`, `backups:cluster-unset` | ➕ ✅ the control server's database, identity and recent releases, hourly once a destination exists |

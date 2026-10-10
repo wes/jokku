@@ -5,10 +5,11 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update a server with `sudo jokku update`, and every server in a cluster the same way. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
-## v0.8.3: A splash screen
+## v0.8.3: Sleep, and a splash screen
 
 October 10, 2026
 
+- **[Sleep when idle](/docs/processes#sleep-when-idle).** `jokku ps:set myapp sleep-after 15m` stops an app's microVMs after 15 minutes without a request, and the next request starts them again where they were. The proxy holds that request until the app answers, so the visitor just waits a moment. Open websockets keep an app awake, and deploys, restarts and `ps:start` wake it.
 - **A [splash screen](/docs/installation#the-splash-screen) at login.** It has the Jokku logo, a palm tree, and live figures: the cluster's apps, nodes, instances and last deploy, and the server's address, load, memory, disk and uptime. It also warns about a node that's down, an app short of healthy instances, or system updates waiting.
 - **Install and update ask before turning it on**, once per server. Turn it on or off any time with `sudo jokku splash:enable` and `splash:disable`, and see it with `sudo jokku splash`. It takes the place of the system's welcome text, which comes back when you turn it off, as does a banner of your own.
 

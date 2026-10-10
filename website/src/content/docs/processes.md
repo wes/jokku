@@ -61,6 +61,25 @@ Crashed instances restart on their own. The policy is `on-failure:10` by default
 jokku ps:set myapp restart-policy always    # always | no | on-failure[:N]
 ```
 
+## Sleep when idle
+
+An app few people visit doesn't need its microVMs running all day. Give it a `sleep-after`, and once it goes that long without a request, its instances stop:
+
+```sh
+jokku ps:set myapp sleep-after 15m   # or 30s, 2h; at least 30s
+jokku ps:set myapp sleep-after       # never sleep (the default)
+```
+
+The next request wakes it. The proxy holds the request while the instances boot where they were, then passes it on, so the visitor just waits a moment: about as long as the app takes to start listening, a second or two for a small one. Requests that arrive meanwhile wait with it, for up to a minute.
+
+- The whole app sleeps and wakes together, every process type. Its volumes stay where they are.
+- Its memory still counts against its servers, so it always has room to wake.
+- Only requests through the proxy keep it awake, and only they wake it. Anything that requests it counts, a monitoring check included. Apps calling it at `myapp.internal` don't count and can't wake it, so leave apps that others call awake.
+- A request that stays open, such as a websocket, keeps it awake.
+- With a [login](/docs/logins) in front, only requests that get past the login wake it: the login page is served without it.
+- `ps:report` says whether it's asleep, and `ps:start` wakes it. Deploys, restarts and config changes wake it too.
+- Databases don't sleep.
+
 ## Zero-downtime deploys
 
 Every deploy, scale or settings change rolls out the same way:

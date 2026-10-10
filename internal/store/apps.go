@@ -75,7 +75,7 @@ func (s *Store) Apps(ctx context.Context) ([]types.App, error) {
 }
 
 const appSelect = `
-SELECT a.name, a.kind, a.locked, a.stopped, a.created_at, COALESCE(r.version, 0),
+SELECT a.name, a.kind, a.locked, a.stopped, a.asleep_at, a.created_at, COALESCE(r.version, 0),
 	COALESCE((SELECT source FROM deploys d WHERE d.app_id = a.id AND d.status = 'succeeded' ORDER BY d.id DESC LIMIT 1), '')
 FROM apps a LEFT JOIN releases r ON r.id = a.current_release_id`
 
@@ -83,12 +83,33 @@ type scanner interface{ Scan(...any) error }
 
 func scanApp(row scanner) (*types.App, error) {
 	var app types.App
-	var created int64
-	if err := row.Scan(&app.Name, &app.Kind, &app.Locked, &app.Stopped, &created, &app.CurrentRelease, &app.DeploySource); err != nil {
+	var asleep, created int64
+	if err := row.Scan(&app.Name, &app.Kind, &app.Locked, &app.Stopped, &asleep, &created, &app.CurrentRelease, &app.DeploySource); err != nil {
 		return nil, err
 	}
 	app.CreatedAt = fromUnix(created)
+	if asleep != 0 {
+		at := fromUnix(asleep)
+		app.AsleepSince = &at
+	}
 	return &app, nil
+}
+
+// SetAppAsleep puts an app to sleep or wakes it, reporting whether that
+// changed anything.
+func (s *Store) SetAppAsleep(ctx context.Context, app string, asleep bool) (bool, error) {
+	var res sql.Result
+	var err error
+	if asleep {
+		res, err = s.db.ExecContext(ctx, "UPDATE apps SET asleep_at = ? WHERE name = ? AND asleep_at = 0", unix(s.now()), app)
+	} else {
+		res, err = s.db.ExecContext(ctx, "UPDATE apps SET asleep_at = 0 WHERE name = ? AND asleep_at != 0", app)
+	}
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // DeleteApp removes an app and everything scoped to it.

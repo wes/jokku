@@ -386,4 +386,10 @@ CREATE TABLE auth_shares (
 	created_at INTEGER NOT NULL
 );
 `,
+
+	// 12: apps that sleep when idle (ps:set sleep-after): when one went to
+	// sleep, 0 while it's awake
+	`
+ALTER TABLE apps ADD COLUMN asleep_at INTEGER NOT NULL DEFAULT 0;
+`,
 }

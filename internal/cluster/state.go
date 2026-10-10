@@ -77,9 +77,10 @@ func (c *Controller) ComputeState(ctx context.Context, name string) (*types.Node
 	if node.WGPublicKey != "" {
 		st.Peers = c.peers(*node, nodes, ext)
 	}
+	// A sleeping app's instances keep their places, but don't run.
 	stopped := map[string]bool{}
 	for _, a := range apps {
-		stopped[a.Name] = a.Stopped
+		stopped[a.Name] = a.Stopped || a.AsleepSince != nil
 	}
 	insts, err := c.Store.Instances(ctx, "")
 	if err != nil {
@@ -158,7 +159,7 @@ func dnsRecords(apps []types.App, current map[string]*store.Release, insts []sto
 	}
 	stopped := map[string]bool{}
 	for _, a := range apps {
-		stopped[a.Name] = a.Stopped
+		stopped[a.Name] = a.Stopped || a.AsleepSince != nil
 	}
 	var running []dns.Instance
 	for _, in := range insts {
@@ -206,6 +207,11 @@ func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []typ
 	if err != nil {
 		return nil, err
 	}
+	psp, _ := props.Lookup("ps")
+	globalPS, err := c.Store.Properties(ctx, "", "ps")
+	if err != nil {
+		return nil, err
+	}
 	ps := &types.ProxyState{Routes: []types.ProxyRoute{}, Email: globalLE["email"], Auth: auth}
 	for _, app := range apps {
 		e, external := ext[app.Name]
@@ -224,11 +230,17 @@ func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []typ
 		if err != nil {
 			return nil, err
 		}
+		appPS, err := c.Store.Properties(ctx, app.Name, "ps")
+		if err != nil {
+			return nil, err
+		}
+		// A request to a sleeping app finds no upstreams, wakes it and waits.
+		sleeps := app.Kind == "" && !app.Stopped && props.SleepAfter(props.Compute(psp, appPS, globalPS)["sleep-after"]) > 0
 		upstreams := []string{}
 		switch {
 		case external:
 			upstreams = append(upstreams, e.Target.String())
-		case !app.Stopped:
+		case !app.Stopped && app.AsleepSince == nil:
 			for _, in := range insts {
 				// Only wanted instances get new requests; retiring ones are
 				// left to finish what they have.
@@ -241,7 +253,7 @@ func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []typ
 		sort.Strings(upstreams)
 		appLE, _ := c.Store.Properties(ctx, app.Name, "letsencrypt")
 		tlsOn := props.Compute(le, appLE, globalLE)["enabled"] == "true"
-		plain := types.ProxyRoute{App: app.Name, Upstreams: upstreams, Hosts: []string{}, Auth: logins[app.Name]}
+		plain := types.ProxyRoute{App: app.Name, Upstreams: upstreams, Hosts: []string{}, Auth: logins[app.Name], Sleeps: sleeps}
 		if external {
 			plain.UpstreamTLS, plain.Insecure = e.TLS, e.Insecure
 		}

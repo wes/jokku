@@ -134,6 +134,21 @@ func (s *Server) agentStatus(w http.ResponseWriter, r *http.Request, n *store.No
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// agentActivity hears from a node's proxy which apps that sleep when idle
+// it served requests for, and which a request is waiting to wake.
+func (s *Server) agentActivity(w http.ResponseWriter, r *http.Request, n *store.Node) {
+	var act types.ProxyActivity
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&act); err != nil {
+		s.fail(w, r, badRequest("invalid activity: %v", err))
+		return
+	}
+	if err := s.Cluster.Activity(r.Context(), n.Name, act); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // agentArtifact streams a root filesystem to a node that needs it. Edges
 // run no apps, so they never need one: the most exposed machine gets no
 // app's code.

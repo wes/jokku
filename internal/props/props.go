@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Key struct {
@@ -60,6 +61,8 @@ var Plugins = []Plugin{
 		Name: "ps", Help: "Manage app processes", Settable: true,
 		Keys: []Key{
 			{Name: "restart-policy", Default: "on-failure:10", Help: "always | no | on-failure[:N]", Validate: isRestartPolicy},
+			{Name: "sleep-after", Help: "Stop the app's instances after this long without requests (15m, 1h); the next request starts them again",
+				Validate: isSleepAfter},
 		},
 	},
 	{
@@ -172,6 +175,28 @@ func isRestartPolicy(v string) error {
 		}
 	}
 	return fmt.Errorf("must be always, no, unless-stopped or on-failure[:N]")
+}
+
+// MinSleepAfter is the shortest sleep-after: proxies report requests every
+// few seconds, so a shorter one could put an app to sleep while it's used.
+// A variable so tests can shorten it.
+var MinSleepAfter = 30 * time.Second
+
+func isSleepAfter(v string) error {
+	d, err := time.ParseDuration(v)
+	if err != nil || d < MinSleepAfter {
+		return fmt.Errorf("must be a duration of at least %s, such as 15m or 1h", MinSleepAfter)
+	}
+	return nil
+}
+
+// SleepAfter reads a computed sleep-after: 0 for never.
+func SleepAfter(v string) time.Duration {
+	if isSleepAfter(v) != nil {
+		return 0
+	}
+	d, _ := time.ParseDuration(v)
+	return d
 }
 
 func oneOf(allowed ...string) func(string) error {

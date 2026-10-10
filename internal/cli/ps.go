@@ -13,7 +13,7 @@ var psCommands = []*Command{
 		Flags: []Flag{{Name: "skip-deploy", Help: "Only record the new scale; apply it on the next deploy"}}, Run: psScale},
 	{Name: "ps:report", Help: "Display process information", App: OptionalApp, AnyFlags: true, Run: psReport},
 	{Name: "ps:restart", Help: "Restart an app, applying config, scale and resource changes", App: NeedsApp, Run: psAction("restart")},
-	{Name: "ps:start", Help: "Start a stopped app", App: NeedsApp, Run: psAction("start")},
+	{Name: "ps:start", Help: "Start a stopped app, or wake a sleeping one", App: NeedsApp, Run: psAction("start")},
 	{Name: "ps:stop", Help: "Stop an app's instances", App: NeedsApp, Run: psAction("stop")},
 	{Name: "ps:rebuild", Help: "Build and deploy the last pushed source again", App: NeedsApp, Run: psAction("rebuild")},
 	{Name: "logs", Help: "Display recent log output", App: NeedsApp, Flags: []Flag{
@@ -159,11 +159,17 @@ func psReport(c *Context) error {
 			status = append(status, row{"status-" + in.Name, "Status " + in.Name,
 				fmt.Sprintf("%s (v%d, %s:%d, %d vCPU, %s, %d restarts)", in.State, in.Release, in.IP, in.Port, in.CPUs, formatMemory(in.MemoryMB), in.Restarts)})
 		}
+		asleep := "false"
+		if a.AsleepSince != nil {
+			asleep = "true (since " + a.AsleepSince.Local().Format("2006-01-02 15:04") + "; the next request wakes it)"
+		}
 		return c.report(a.Name+" ps information", append([]row{
 			{"deployed", "Deployed", yesNo(a.CurrentRelease > 0)},
 			{"processes", "Processes", strconv.Itoa(len(status))},
 			{"running", "Running", yesNo(running > 0 && !a.Stopped)},
+			{"asleep", "Asleep", asleep},
 			{"ps-restart-policy", "Ps restart policy", ps.Computed["restart-policy"]},
+			{"ps-sleep-after", "Ps sleep after", ps.Computed["sleep-after"]},
 			{"ps-scale", "Ps scale", strings.Join(scale, " ")},
 		}, status...))
 	})

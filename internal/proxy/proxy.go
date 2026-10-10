@@ -33,8 +33,9 @@ const (
 	AdminSocket = "/run/jokku-proxy/admin.sock"
 	// Version changes when a release needs the proxy process restarted;
 	// "jokku setup" compares it to the running one. 2: the jokku_auth and
-	// jokku_strip_identity handlers, which configs from now on use.
-	Version = "2"
+	// jokku_strip_identity handlers, which configs from now on use. 3: the
+	// jokku_wake handler and jokku upstreams, for apps that sleep.
+	Version = "3"
 )
 
 // Route sends requests for Hosts to Upstreams (IP:port of healthy web
@@ -49,6 +50,9 @@ type Route struct {
 	UpstreamTLS, Insecure bool
 	// Auth puts a login in front of the route (with Settings.Auth).
 	Auth *types.RouteAuth
+	// Sleeps: the app sleeps when idle, and a request wakes it (after the
+	// login, if it has one).
+	Sleeps bool
 }
 
 type Settings struct {
@@ -94,6 +98,13 @@ func Config(s Settings) ([]byte, error) {
 		if r.Auth != nil && s.Auth != nil {
 			handle = append(handle, map[string]any{"handler": "jokku_auth", "app": r.App, "auth": r.Auth, "global": s.Auth,
 				"portal_url": portal.url})
+		}
+		if r.Sleeps {
+			wake := map[string]any{"handler": "jokku_wake", "app": r.App}
+			if s.Storage != nil {
+				wake["control"] = Control{URL: s.Storage.URL, Token: s.Storage.Token, Pin: s.Storage.Pin}
+			}
+			handle = append(handle, wake)
 		}
 		route := map[string]any{
 			"match":    []any{map[string]any{"host": r.Hosts}},
@@ -217,7 +228,7 @@ func (a *Applier) Apply(ctx context.Context, ps *types.ProxyState) error {
 	routes := make([]Route, len(ps.Routes))
 	for i, r := range ps.Routes {
 		routes[i] = Route{App: r.App, Hosts: r.Hosts, Upstreams: r.Upstreams, TLS: r.TLS,
-			UpstreamTLS: r.UpstreamTLS, Insecure: r.Insecure, Auth: r.Auth}
+			UpstreamTLS: r.UpstreamTLS, Insecure: r.Insecure, Auth: r.Auth, Sleeps: r.Sleeps}
 	}
 	cfg, err := Config(Settings{
 		Routes: routes, Email: ps.Email, DataDir: a.DataDir, HTTPPort: 80, HTTPSPort: 443,
@@ -245,15 +256,11 @@ const (
 )
 
 func handler(r Route) map[string]any {
-	if len(r.Upstreams) == 0 {
+	if len(r.Upstreams) == 0 && !r.Sleeps {
 		return map[string]any{
 			"handler": "static_response", "status_code": 502,
 			"body": "No running instances of " + r.App + ". Check: jokku ps:report " + r.App + "\n",
 		}
-	}
-	upstreams := make([]any, len(r.Upstreams))
-	for i, u := range r.Upstreams {
-		upstreams[i] = map[string]any{"dial": u}
 	}
 	transport := map[string]any{"protocol": "http", "dial_timeout": "2s"}
 	if r.UpstreamTLS {
@@ -268,8 +275,7 @@ func handler(r Route) map[string]any {
 	// on another instance turns that into latency instead of errors, and
 	// passive health checks then skip it until routes catch up.
 	rp := map[string]any{
-		"handler":   "reverse_proxy",
-		"upstreams": upstreams,
+		"handler": "reverse_proxy",
 		"load_balancing": map[string]any{
 			"selection_policy": map[string]any{"policy": "round_robin"},
 			"try_duration":     "5s",
@@ -278,7 +284,19 @@ func handler(r Route) map[string]any {
 		"health_checks": map[string]any{"passive": map[string]any{"fail_duration": "30s", "max_fails": 1}},
 		"transport":     transport,
 	}
-	if len(r.Upstreams) == 1 {
+	if r.Sleeps {
+		// A sleeping app's upstreams come from the newest config, for
+		// requests that waited in an older one for it to wake.
+		ups := append([]string{}, r.Upstreams...)
+		rp["dynamic_upstreams"] = map[string]any{"source": "jokku", "app": r.App, "upstreams": ups}
+	} else {
+		upstreams := make([]any, len(r.Upstreams))
+		for i, u := range r.Upstreams {
+			upstreams[i] = map[string]any{"dial": u}
+		}
+		rp["upstreams"] = upstreams
+	}
+	if len(r.Upstreams) <= 1 {
 		// With nowhere else to go, marking the one upstream down would only
 		// turn a blip into 30 seconds of errors.
 		delete(rp, "health_checks")

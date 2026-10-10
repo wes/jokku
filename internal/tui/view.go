@@ -376,6 +376,8 @@ func appStatus(a types.AppView) string {
 		return "new"
 	case a.Stopped:
 		return "stopped"
+	case a.Asleep:
+		return "asleep"
 	case a.Wanted == 0:
 		return "scaled 0"
 	case a.Healthy == 0:

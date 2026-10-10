@@ -209,6 +209,15 @@ Only `web` runs at first; scale the others to start them, for example
 `jokku ps:scale myapp web=3 worker=1`. For a Procfile somewhere else:
 `jokku builder:set myapp procfile Procfile.prod`.
 
+Or scale it to zero when no one is using it:
+
+```sh
+jokku ps:set myapp sleep-after 15m   # stop its microVMs after 15 minutes without a request
+```
+
+The next request wakes it: the proxy holds the request while the app boots,
+then passes it on.
+
 ### Deploy a compose file
 
 An app can also be a whole compose file: each service runs as one of the

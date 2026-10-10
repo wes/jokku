@@ -209,10 +209,15 @@ func Processes(procfile map[string]string, entrypoint, cmd []string) (map[string
 }
 
 // PS runs a "ps:" action: restart, start, stop or rebuild, or apply (roll
-// out settings changes, restarting only process types they change).
+// out settings changes, restarting only process types they change). Start
+// wakes a sleeping app.
 func (p *Pipeline) PS(ctx context.Context, app, action, actor string, log func(string)) error {
-	if _, err := p.Store.App(ctx, app); err != nil {
+	a, err := p.Store.App(ctx, app)
+	if err != nil {
 		return err
+	}
+	if action == "start" && a.AsleepSince != nil && !a.Stopped {
+		return p.wake(ctx, app, log)
 	}
 	switch action {
 	case "stop":
@@ -307,6 +312,39 @@ func (p *Pipeline) stop(ctx context.Context, app string, log func(string)) error
 		time.Sleep(500 * time.Millisecond)
 	}
 	return errors.New("some instances are still stopping; check jokku ps:report " + app)
+}
+
+// wake starts a sleeping app's instances, where they were, and waits for
+// them to pass checks.
+func (p *Pipeline) wake(ctx context.Context, app string, log func(string)) error {
+	log("-----> Waking " + app)
+	done, err := p.Cluster.KeepAwake(ctx, app, "for jokku ps:start")
+	if err != nil {
+		return err
+	}
+	defer done()
+	cur, err := p.Store.CurrentRelease(ctx, app)
+	if err != nil {
+		return err
+	}
+	if cur == nil {
+		return fmt.Errorf("%s has not been deployed yet: git push to deploy it", app)
+	}
+	insts, err := p.Store.Instances(ctx, app)
+	if err != nil {
+		return err
+	}
+	var waking []store.Instance
+	for _, in := range insts {
+		if in.ReleaseID == cur.ID && in.Desired == store.DesiredRunning {
+			waking = append(waking, in)
+		}
+	}
+	if err := p.waitHealthy(ctx, cur, waking, log); err != nil {
+		return err
+	}
+	log("=====> " + app + " is awake")
+	return nil
 }
 
 func (p *Pipeline) readyNodes(ctx context.Context) (map[string]bool, error) {
@@ -476,6 +514,17 @@ func (p *Pipeline) rollout(ctx context.Context, rel *store.Release, mode rollout
 		p.restore(ctx, first)
 		return err
 	}
+	// A sleeping app wakes for the rollout, and stays awake through it. Its
+	// old instances aren't serving, so they were replaced above.
+	why := "for a deploy"
+	if mode == restartAll {
+		why = "for a restart"
+	}
+	awake, err := p.Cluster.KeepAwake(ctx, app, why)
+	if err != nil {
+		return fail(nil, err)
+	}
+	defer awake()
 	if len(keptProcs) > 0 {
 		log("-----> Unchanged, left running: " + strings.Join(keptProcs, ", "))
 	}

@@ -252,6 +252,18 @@ type ProxyRoute struct {
 	Insecure    bool `json:"insecure,omitempty"`
 	// Auth puts a login in front of the route; nil for none.
 	Auth *RouteAuth `json:"auth,omitempty"`
+	// Sleeps says the app sleeps when idle (ps:set sleep-after): the proxy
+	// tells the control node it is being used, and a request that finds it
+	// asleep (no upstreams) wakes it and waits.
+	Sleeps bool `json:"sleeps,omitempty"`
+}
+
+// ProxyActivity is what a node's proxy tells the control node about apps
+// that sleep when idle: those it handled requests for since it last said,
+// and those a request is waiting to wake.
+type ProxyActivity struct {
+	Active []string `json:"active,omitempty"`
+	Wake   []string `json:"wake,omitempty"`
 }
 
 // ProxyAuth is the cluster's login settings, shared by every route that
@@ -400,6 +412,7 @@ type AppView struct {
 	Kind      string    `json:"kind,omitempty"` // a database's engine
 	Release   int       `json:"release"`
 	Stopped   bool      `json:"stopped"`
+	Asleep    bool      `json:"asleep,omitempty"`
 	Locked    bool      `json:"locked"`
 	Domains   []string  `json:"domains"`
 	Healthy   int       `json:"healthy"`

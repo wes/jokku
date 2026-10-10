@@ -53,6 +53,7 @@ type Controller struct {
 	backups     sync.Map             // volume ID -> true while it is being backed up
 	scheduler   backupScheduler
 	failover    failover
+	sleep       sleeper
 }
 
 func New(c *Controller) *Controller {
@@ -61,6 +62,7 @@ func New(c *Controller) *Controller {
 	c.attempts = map[string]time.Time{}
 	c.pinned = map[string]string{}
 	c.volAttempts = map[string]time.Time{}
+	c.sleep.started = time.Now()
 	return c
 }
 
@@ -117,6 +119,9 @@ func (c *Controller) Run(ctx context.Context) {
 		}
 		if err := c.tickBackups(ctx); err != nil && ctx.Err() == nil {
 			c.Log.Error("scheduling backups", "err", err)
+		}
+		if err := c.tickSleep(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			c.Log.Error("putting idle apps to sleep", "err", err)
 		}
 		select {
 		case <-ctx.Done():

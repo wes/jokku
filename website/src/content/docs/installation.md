@@ -49,11 +49,12 @@ Setup asks whether to greet you with Jokku's splash screen when you log in to th
 ```
   jokku1  control node  ● ready  jokku v0.8.3
 
-  apps       15 · 2 databases                  ip      192.168.86.113
-  nodes      5 of 5 ready                      load    0.52 0.26 0.15 · 6 cpus
-  instances  19 · 7 on this node               memory  3.6G of 29G
-  mesh       10.210.1.1                        disk    11% of 387G
-  deployed   blog, 4 hours ago                 uptime  2 days, 17 hours
+  apps       15 · 1 asleep                    ip      192.168.86.113
+  databases  2                                load    0.52 0.26 0.15 · 6 cpus
+  nodes      5 of 5 ready                     memory  3.6G of 29G
+  instances  19 · 7 on this node              disk    11% of 387G
+  mesh       10.210.1.1                       uptime  2 days, 17 hours
+  deployed   blog, 4 hours ago
 
   jokku help · jokku top · jokku apps:list · docs at https://jokku.dev
 ```

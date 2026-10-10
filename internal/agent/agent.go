@@ -204,17 +204,41 @@ func (a *Agent) Run(ctx context.Context) {
 	go a.watch(ctx)
 	go a.reportLoop(ctx)
 	go a.fenceLoop(ctx)
-	t := time.NewTicker(a.ReconcileEvery)
-	defer t.Stop()
 	for {
 		a.Reconcile(ctx)
+		// An instance that is booting is checked more often, so it gets
+		// traffic (a request waking its app, say) as soon as it answers.
+		wait := a.ReconcileEvery
+		if a.booting() {
+			wait = min(wait, bootCheckEvery)
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-time.After(wait):
 		case <-a.kick:
 		}
 	}
+}
+
+// bootCheckEvery is how often booting instances are checked, for at most
+// bootCheckFor after they start: one that never answers isn't worth it.
+const (
+	bootCheckEvery = 250 * time.Millisecond
+	bootCheckFor   = 2 * time.Minute
+)
+
+// booting reports whether an instance here has just started and not yet
+// passed its checks.
+func (a *Agent) booting() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, l := range a.local {
+		if l.state == "starting" && time.Since(l.startedAt) < bootCheckFor {
+			return true
+		}
+	}
+	return false
 }
 
 // Kick asks for a reconcile pass soon.

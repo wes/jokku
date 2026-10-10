@@ -33,6 +33,7 @@ import (
 	"github.com/wes/jokku/internal/dns"
 	"github.com/wes/jokku/internal/mesh"
 	"github.com/wes/jokku/internal/proxy"
+	"github.com/wes/jokku/internal/splash"
 	"github.com/wes/jokku/internal/store"
 	"github.com/wes/jokku/internal/types"
 	"github.com/wes/jokku/internal/version"
@@ -93,12 +94,12 @@ func Run(ctx context.Context, out io.Writer, o Options) error {
 		return errors.New("this server is an edge, so it cannot join as a worker; use a fresh server")
 	}
 	s := &setup{out: out, exe: exe, opts: o, worker: worker || edge, edge: edge}
-	steps := []func(context.Context) error{s.packages, s.user, s.dirs, s.deps, s.sysctl, s.units, s.start, s.defaultDomain}
+	steps := []func(context.Context) error{s.packages, s.user, s.dirs, s.deps, s.sysctl, s.units, s.start, s.defaultDomain, s.splash}
 	switch {
 	case edge:
-		steps = []func(context.Context) error{s.packages, s.wireguard, s.dirs, s.edgeJoin, s.units, s.start, s.edgeConnected}
+		steps = []func(context.Context) error{s.packages, s.wireguard, s.dirs, s.edgeJoin, s.units, s.start, s.edgeConnected, s.splash}
 	case worker:
-		steps = []func(context.Context) error{s.packages, s.wireguard, s.dirs, s.deps, s.join, s.sysctl, s.units, s.start}
+		steps = []func(context.Context) error{s.packages, s.wireguard, s.dirs, s.deps, s.join, s.sysctl, s.units, s.start, s.splash}
 	}
 	for _, step := range steps {
 		if err := step(ctx); err != nil {
@@ -493,6 +494,16 @@ func (s *setup) edgeConnected(ctx context.Context) error {
 	}
 	fmt.Fprintln(s.out, " !     The control node hasn't connected yet. It dials this server on UDP port 51820:")
 	fmt.Fprintln(s.out, " !     open it (and TCP 80 and 443) in this server's firewall, then check with jokku edge:list on the control node.")
+	return nil
+}
+
+// splash offers the login splash screen the first time, and keeps it up to
+// date where it's on. A problem with it is only a warning: an update must
+// not roll back over a login banner.
+func (s *setup) splash(context.Context) error {
+	if err := splash.Offer(s.out, s.exe, splash.AskTerminal); err != nil {
+		fmt.Fprintln(s.out, " !     The login splash screen: "+err.Error())
+	}
 	return nil
 }
 

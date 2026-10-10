@@ -12,6 +12,7 @@
 #   JOKKU_VERSION=v0.0.2   update to a specific release (default: latest)
 #   JOKKU_FORCE=1          reinstall even if already on that version
 #   JOKKU_DOWNLOAD_URL=... fetch binaries from elsewhere; requires JOKKU_VERSION
+#   JOKKU_SPLASH=1         show Jokku's splash screen at login without asking (0: don't)
 set -eu
 
 REPO=wes/jokku

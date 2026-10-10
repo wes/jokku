@@ -30,12 +30,43 @@ You can set a few options in the environment:
 
 | Variable | What it does |
 | --- | --- |
-| `JOKKU_VERSION=v0.8.2` | Install a specific release instead of the latest. |
+| `JOKKU_VERSION=v0.8.3` | Install a specific release instead of the latest. |
 | `JOKKU_IMPORT_KEYS=0` | Don't give the SSH keys you logged in with access to Jokku. |
+| `JOKKU_SPLASH=1` or `0` | Answer the splash screen question in advance: show it at login, or don't. |
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo JOKKU_VERSION=v0.8.2 sh
+curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo JOKKU_VERSION=v0.8.3 sh
 ```
+
+## The splash screen
+
+Setup asks whether to greet you with Jokku's splash screen when you log in to the server. It shows the logo and live figures:
+
+- The cluster: apps, nodes, instances and the last deploy.
+- The server itself: address, load, memory, disk and uptime.
+- Anything that needs a look: a node that's down, an app short of healthy instances, or system updates waiting.
+
+```
+  jokku1  control node  ● ready  jokku v0.8.3
+
+  apps       15 · 2 databases                  ip      192.168.86.113
+  nodes      5 of 5 ready                      load    0.52 0.26 0.15 · 6 cpus
+  instances  19 · 7 on this node               memory  3.6G of 29G
+  mesh       10.210.1.1                        disk    11% of 387G
+  deployed   blog, 4 hours ago                 uptime  2 days, 17 hours
+
+  jokku help · jokku top · jokku apps:list · docs at https://jokku.dev
+```
+
+It takes the place of the system's own welcome text. Warnings, such as a restart needed after updates, still show. You can turn it on or off at any time:
+
+```sh
+sudo jokku splash            # show it now
+sudo jokku splash:enable     # show it at every login
+sudo jokku splash:disable    # stop, and bring back the system's welcome text
+```
+
+If you already had your own `/etc/update-motd.d/00-jokku`, Jokku keeps it, and `splash:disable` puts it back. Setup asks once per server: during the install, or during the next update if nobody was at a terminal to answer.
 
 ## Run commands
 

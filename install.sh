@@ -10,6 +10,7 @@
 # Environment:
 #   JOKKU_VERSION=v0.0.2   install a specific release (default: latest)
 #   JOKKU_IMPORT_KEYS=0    don't give your SSH keys access to jokku
+#   JOKKU_SPLASH=1         show Jokku's splash screen at login without asking (0: don't)
 #   JOKKU_DOWNLOAD_URL=... fetch binaries from elsewhere (a mirror, file:///dist)
 #
 # To add this server to a cluster, run the command "jokku cluster:join-command"

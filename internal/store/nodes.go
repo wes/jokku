@@ -36,12 +36,24 @@ type Node struct {
 	CanRun      string   // why microVMs cannot run there; empty if they can
 	Features    []string // what its agent supports, e.g. types.FeatureVolumes
 	Metrics     types.NodeMetrics
+	// RemovedAt is when an edge was removed. Its credentials are revoked,
+	// but it stays a peer for a moment, so its next poll tells it to stop
+	// routing; then it is deleted.
+	RemovedAt time.Time
 }
+
+// Removed reports whether the node is an edge on its way out.
+func (n Node) Removed() bool { return !n.RemovedAt.IsZero() }
 
 const (
 	RoleControl = "control"
 	RoleWorker  = "worker"
+	RoleEdge    = types.RoleEdge
 )
+
+// Edge reports whether the node is an edge: it receives traffic and runs
+// nothing.
+func (n Node) Edge() bool { return n.Role == RoleEdge }
 
 // NodeDownAfter is how long a node may go without reporting before it is
 // considered down. (A variable so tests can shorten it.)
@@ -76,8 +88,9 @@ ON CONFLICT (subnet_index) DO UPDATE SET
 	return err
 }
 
-// CreateNode adds a worker with the lowest free subnet index (2 to 254) and
-// fills in SubnetIndex.
+// CreateNode adds a worker (or, with Role set to RoleEdge, an edge) with the
+// lowest free subnet index (2 to 254) and fills in SubnetIndex. Edges are
+// never schedulable.
 func (s *Store) CreateNode(ctx context.Context, n *Node) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		var exists int
@@ -111,13 +124,21 @@ func (s *Store) CreateNode(ctx context.Context, n *Node) error {
 		if n.SubnetIndex == 0 {
 			return errors.New("the cluster is full (254 nodes)")
 		}
-		n.Role = RoleWorker
+		if n.Role != RoleEdge {
+			n.Role = RoleWorker
+		}
+		n.Schedulable, n.Ingress = n.Role != RoleEdge, true
+		// An edge has not reported yet: it is down until its agent does.
+		seen := unix(s.now())
+		if n.Role == RoleEdge {
+			seen = 0
+		}
 		_, err = tx.ExecContext(ctx, `
 INSERT INTO nodes (name, role, subnet_index, address, arch, cpus, memory_mb, wg_public_key, wg_endpoint,
-	token_hash, agent_token, version, last_seen, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	token_hash, agent_token, version, schedulable, ingress, last_seen, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			n.Name, n.Role, n.SubnetIndex, n.Address, n.Arch, n.CPUs, n.MemoryMB, n.WGPublicKey, n.WGEndpoint,
-			n.TokenHash, n.AgentToken, n.Version, unix(s.now()), unix(s.now()))
+			n.TokenHash, n.AgentToken, n.Version, n.Schedulable, n.Ingress, seen, unix(s.now()))
 		return err
 	})
 }
@@ -160,23 +181,23 @@ func (s *Store) NodeByTokenHash(ctx context.Context, hash string) (*Node, error)
 }
 
 const nodeSelect = `SELECT name, role, subnet_index, address, arch, cpus, memory_mb, schedulable, ingress, draining,
-	last_seen, created_at, version, wg_public_key, wg_endpoint, token_hash, agent_token, can_run, metrics, features FROM nodes`
+	last_seen, created_at, version, wg_public_key, wg_endpoint, token_hash, agent_token, can_run, metrics, features, removed_at FROM nodes`
 
 func scanNode(row scanner) (*Node, error) {
 	var n Node
-	var seen, created int64
+	var seen, created, removed int64
 	var metrics []byte
 	var features string
 	err := row.Scan(&n.Name, &n.Role, &n.SubnetIndex, &n.Address, &n.Arch, &n.CPUs, &n.MemoryMB,
 		&n.Schedulable, &n.Ingress, &n.Draining, &seen, &created,
-		&n.Version, &n.WGPublicKey, &n.WGEndpoint, &n.TokenHash, &n.AgentToken, &n.CanRun, &metrics, &features)
+		&n.Version, &n.WGPublicKey, &n.WGEndpoint, &n.TokenHash, &n.AgentToken, &n.CanRun, &metrics, &features, &removed)
 	if err != nil {
 		return nil, err
 	}
 	if features != "" {
 		n.Features = strings.Split(features, ",")
 	}
-	n.LastSeen, n.CreatedAt = fromUnix(seen), fromUnix(created)
+	n.LastSeen, n.CreatedAt, n.RemovedAt = fromUnix(seen), fromUnix(created), fromUnix(removed)
 	json.Unmarshal(metrics, &n.Metrics)
 	return &n, nil
 }
@@ -235,6 +256,38 @@ func (s *Store) DeleteNode(ctx context.Context, name string) error {
 		return errors.New("the control node cannot be removed")
 	}
 	return nil
+}
+
+// RemoveEdge takes an edge out of the cluster. One that never connected is
+// deleted; otherwise its credentials are revoked at once, and DeleteRemovedEdges
+// deletes it later.
+func (s *Store) RemoveEdge(ctx context.Context, name string) error {
+	res, err := s.db.ExecContext(ctx, "DELETE FROM nodes WHERE name = ? AND role = ? AND last_seen = 0", name, RoleEdge)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	res, err = s.db.ExecContext(ctx, "UPDATE nodes SET token_hash = '', removed_at = ? WHERE name = ? AND role = ? AND removed_at = 0",
+		unix(s.now()), name, RoleEdge)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return &NotFoundError{What: "Edge " + name}
+	}
+	return nil
+}
+
+// DeleteRemovedEdges deletes the edges removed before t, and says how many.
+func (s *Store) DeleteRemovedEdges(ctx context.Context, t time.Time) (int, error) {
+	res, err := s.db.ExecContext(ctx, "DELETE FROM nodes WHERE role = ? AND removed_at > 0 AND removed_at < ?", RoleEdge, unix(t))
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 // Join tokens are stored hashed; a non-reusable token works once.

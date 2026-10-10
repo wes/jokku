@@ -8,15 +8,18 @@ import (
 	"github.com/wes/jokku/internal/types"
 )
 
-// NodeFile is a worker's identity and credentials, written when it joins a
-// cluster. Its presence is what makes the daemon run as a worker.
+// NodeFile is a worker's or an edge's identity and credentials, written when
+// it joins a cluster. Its presence is what makes the daemon run as one.
 type NodeFile struct {
-	Role       string             `json:"role"`        // "worker"
-	Control    string             `json:"control"`     // the control node's API, host:7443
+	Role       string             `json:"role"`        // "worker" or "edge"
+	Control    string             `json:"control"`     // the control node's API, host:7443 (an edge's is over the mesh)
 	Pin        string             `json:"pin"`         // its TLS key
 	NodeToken  string             `json:"node_token"`  // this node's credential with the control node
 	AgentToken string             `json:"agent_token"` // the control node's credential with this node
 	Node       types.NodeIdentity `json:"node"`
+	// Peers, on an edge, are the mesh peers to start with (the control
+	// node), until the control node sends the rest.
+	Peers []types.Peer `json:"peers,omitempty"`
 }
 
 func nodeFilePath(dataDir string) string { return filepath.Join(dataDir, "node.json") }

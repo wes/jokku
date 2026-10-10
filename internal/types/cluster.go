@@ -20,25 +20,53 @@ type NodeState struct {
 	// DNS is the cluster's internal names (<process>.<app>.internal,
 	// <app>.internal) and their instances' addresses.
 	DNS map[string][]string `json:"dns,omitempty"`
+	// EdgeAccess is what the cluster's edge nodes may reach on or through
+	// this node; nil without edges, and on edges themselves.
+	EdgeAccess *EdgeAccess `json:"edge_access,omitempty"`
 }
 
 type NodeIdentity struct {
 	Name        string `json:"name"`
-	Subnet      string `json:"subnet"`  // e.g. 10.210.2.0/24
-	MeshIP      string `json:"mesh_ip"` // e.g. 10.210.2.1
+	Role        string `json:"role,omitempty"` // control | worker | edge
+	Subnet      string `json:"subnet"`         // e.g. 10.210.2.0/24
+	MeshIP      string `json:"mesh_ip"`        // e.g. 10.210.2.1
 	ClusterCIDR string `json:"cluster_cidr"`
 }
 
 // Peer is another node on the WireGuard mesh.
 type Peer struct {
 	Name      string `json:"name"`
+	Role      string `json:"role,omitempty"` // RoleEdge for an edge; empty otherwise
 	PublicKey string `json:"public_key"`
-	Endpoint  string `json:"endpoint"` // host:port
-	Subnet    string `json:"subnet"`
-	MeshIP    string `json:"mesh_ip"`
+	// Endpoint is where to reach its WireGuard, host:port. It is empty in an
+	// edge's peer list: the nodes behind an edge may sit behind NAT, so they
+	// dial it, never the other way round.
+	Endpoint string `json:"endpoint,omitempty"`
+	Subnet   string `json:"subnet"`
+	MeshIP   string `json:"mesh_ip"`
+	// Routes are more addresses (IP/32) reached through this peer: the
+	// targets of external apps it forwards to. Only edges get them.
+	Routes []string `json:"routes,omitempty"`
 	// AgentAddr is its agent API, host:port, where nodes ask each other
-	// whether they still hear from the control node.
+	// whether they still hear from the control node. Edges have none: they
+	// take no part in that vote.
 	AgentAddr string `json:"agent_addr,omitempty"`
+}
+
+// RoleEdge is an edge node: a public machine that only receives traffic
+// for the cluster's domains and sends it over the mesh to the nodes behind
+// it, which dial it. It runs no apps.
+const RoleEdge = "edge"
+
+// EdgeAccess is what edge nodes may reach on or through a node over the
+// mesh. An edge faces the internet, so it gets only what its routes need:
+// the web ports of this node's instances, the external-app targets this
+// node forwards to, and on the control node, the API.
+type EdgeAccess struct {
+	Edges   []string `json:"edges"`             // the edges' mesh subnets
+	Allow   []string `json:"allow,omitempty"`   // IP:port they may reach
+	Targets []string `json:"targets,omitempty"` // IPs outside the cluster reached for them (masqueraded)
+	Control bool     `json:"control,omitempty"` // this is the control node: edges may reach its API
 }
 
 // Contact is what a node's agent says about its contact with the control
@@ -208,6 +236,9 @@ const FeatureVolumes = "volumes"
 type ProxyState struct {
 	Routes []ProxyRoute `json:"routes"`
 	Email  string       `json:"email,omitempty"`
+	// Auth is what routes with a login need: the session key, the users and
+	// the login domain. Nil when no route has a login.
+	Auth *ProxyAuth `json:"auth,omitempty"`
 }
 
 type ProxyRoute struct {
@@ -215,7 +246,51 @@ type ProxyRoute struct {
 	Hosts     []string `json:"hosts"`
 	Upstreams []string `json:"upstreams"`
 	TLS       bool     `json:"tls"`
+	// UpstreamTLS says the upstreams speak HTTPS (an external app's target),
+	// and Insecure that their certificates aren't checked.
+	UpstreamTLS bool `json:"upstream_tls,omitempty"`
+	Insecure    bool `json:"insecure,omitempty"`
+	// Auth puts a login in front of the route; nil for none.
+	Auth *RouteAuth `json:"auth,omitempty"`
 }
+
+// ProxyAuth is the cluster's login settings, shared by every route that
+// has a login.
+type ProxyAuth struct {
+	Key         string      `json:"key"`                    // signs sessions, base64
+	LoginDomain string      `json:"login_domain,omitempty"` // one login page for every domain
+	SessionDays int         `json:"session_days"`
+	Users       []ProxyUser `json:"users,omitempty"`
+}
+
+type ProxyUser struct {
+	Name         string `json:"name"`
+	PasswordHash string `json:"password_hash"` // bcrypt
+	TOTPSecret   string `json:"totp_secret,omitempty"`
+}
+
+// RouteAuth is the login in front of one app.
+type RouteAuth struct {
+	Mode         string       `json:"mode"`                    // AuthPassword or AuthUsers
+	PasswordHash string       `json:"password_hash,omitempty"` // bcrypt, for AuthPassword
+	Users        []string     `json:"users,omitempty"`         // allowed users; empty allows every user
+	AllowIPs     []string     `json:"allow_ips,omitempty"`     // CIDRs that skip the login
+	BypassPaths  []string     `json:"bypass_paths,omitempty"`  // paths that skip it: exact, or a prefix ending in *
+	Shares       []ProxyShare `json:"shares,omitempty"`
+}
+
+// ProxyShare is a link that lets anyone holding it in, until it expires.
+type ProxyShare struct {
+	ID        string    `json:"id"`
+	TokenHash string    `json:"token_hash"` // hex SHA-256 of the token in the link
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// Login modes.
+const (
+	AuthPassword = "password" // one shared password (or PIN) for the app
+	AuthUsers    = "users"    // the cluster's users, each with a password and optionally a TOTP code
+)
 
 // NodeStatus is what an agent reports every few seconds.
 type NodeStatus struct {

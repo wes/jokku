@@ -70,9 +70,10 @@ type Runtime interface {
 	Session(ctx context.Context, id string) (io.ReadWriteCloser, string, error)
 }
 
-// Mesh keeps the WireGuard mesh matching the peer list.
+// Mesh keeps the WireGuard mesh matching the peer list, with what edges
+// may reach on this node.
 type Mesh interface {
-	Sync(ctx context.Context, self types.NodeIdentity, peers []types.Peer) error
+	Sync(ctx context.Context, self types.NodeIdentity, peers []types.Peer, access *types.EdgeAccess) error
 }
 
 // Proxy loads routes into this node's proxy.
@@ -100,6 +101,10 @@ type Config struct {
 	// GCArtifacts deletes root filesystems no instance here uses. Off on
 	// the control node, which keeps recent releases for rollbacks.
 	GCArtifacts bool
+	// Seed is the state to start from before the control node has been
+	// heard, when none is cached: an edge reaches the control node only over
+	// the mesh, so it needs its first peer before its first poll.
+	Seed *types.NodeState
 	// Metrics measures the host; nil reads /proc.
 	Metrics func() types.NodeMetrics
 	// ReconcileEvery and ReportEvery default to 2s and 5s.
@@ -184,6 +189,8 @@ func (a *Agent) Run(ctx context.Context) {
 	if st, err := a.loadCachedState(); err == nil {
 		a.setDesired(st, false)
 		a.Log.Info("loaded the cached desired state", "instances", len(st.Instances))
+	} else if a.Seed != nil {
+		a.setDesired(a.Seed, false)
 	}
 	if err := a.Runtime.Available(); err != nil {
 		a.canRun = err.Error()
@@ -237,7 +244,9 @@ func (a *Agent) watch(ctx context.Context) {
 		switch {
 		case errors.Is(err, ErrRemoved):
 			a.logOnce("state", err)
-			a.setDesired(&types.NodeState{ETag: "removed"}, true)
+			// No routes either: nothing should reach the cluster through a
+			// node that left it.
+			a.setDesired(&types.NodeState{ETag: "removed", Proxy: &types.ProxyState{Routes: []types.ProxyRoute{}}}, true)
 			sleep(ctx, 30*time.Second)
 			continue
 		case err != nil:
@@ -670,14 +679,14 @@ func (a *Agent) gcArtifacts(st *types.NodeState) {
 // Mesh and proxy
 
 func (a *Agent) syncMesh(ctx context.Context, st *types.NodeState) error {
-	b, _ := json.Marshal([]any{st.Node, st.Peers})
+	b, _ := json.Marshal([]any{st.Node, st.Peers, st.EdgeAccess})
 	sum := sha256.Sum256(b)
 	key := hex.EncodeToString(sum[:])
 	// Re-apply every minute even without changes, to repair drift.
 	if key == a.lastMesh && time.Since(a.lastSync) < time.Minute {
 		return nil
 	}
-	if err := a.Mesh.Sync(ctx, st.Node, st.Peers); err != nil {
+	if err := a.Mesh.Sync(ctx, st.Node, st.Peers, st.EdgeAccess); err != nil {
 		return err
 	}
 	a.lastMesh, a.lastSync = key, time.Now()

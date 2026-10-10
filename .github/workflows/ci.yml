@@ -58,3 +58,24 @@ jobs:
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils wireguard-tools >/dev/null
       - run: bash test/cluster-e2e.sh dist
+
+  # An edge in front of a home cluster: the runner is the home control node,
+  # dropping every connection the edge opens to it as NAT would, and a QEMU
+  # VM is the public edge.
+  edge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath -ldflags "-X github.com/wes/jokku/internal/version.Version=ci-${GITHUB_SHA::7}" -o dist/jokku-linux-amd64 ./cmd/jokku
+          cd dist && sha256sum jokku-linux-amd64 > checksums.txt
+      - name: Tools for the edge VM
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils wireguard-tools >/dev/null
+      - run: bash test/edge-e2e.sh dist

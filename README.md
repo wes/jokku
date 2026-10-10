@@ -77,6 +77,23 @@ first; `jokku nodes:remove server-2` takes it out of the cluster. The first
 server holds the cluster's state: if it goes down, the others keep running and
 serving what they have, and you can't deploy until it's back.
 
+### Serving from home, with no open port
+
+Jokku can run where the internet can't reach it, such as a home lab behind
+a router. Add an **edge**, a small public server that receives your domains'
+traffic and sends it home over the encrypted network; your servers dial it,
+so nothing at home is exposed:
+
+```sh
+jokku edge:add root@203.0.113.7                    # installs it over ssh
+jokku external:create ha http://192.168.1.50:8123  # route a domain to something on your LAN
+jokku http-auth:enable ha --password               # with a login page in front
+```
+
+An edge needs only TCP 80 and 443 and UDP 51820 open. See
+[Edges](docs/architecture.md#edges) for how it works, and what an edge can
+and can't reach.
+
 ### Watch everything
 
 ```sh

@@ -14,6 +14,10 @@ var DrainGrace = 10 * time.Second
 // RetryAfter spaces out attempts to replace the same instance.
 var RetryAfter = 30 * time.Second
 
+// EdgeRemovalGrace is how long a removed edge stays a peer, so its next
+// poll (every PollTimeout at most) tells it to stop routing.
+var EdgeRemovalGrace = 2 * time.Minute
+
 func (c *Controller) tick(ctx context.Context) error {
 	nodes, err := c.Store.Nodes(ctx)
 	if err != nil {
@@ -24,16 +28,28 @@ func (c *Controller) tick(ctx context.Context) error {
 	changed := false
 	for _, n := range nodes {
 		byName[n.Name] = n
+		if n.Removed() {
+			continue
+		}
 		ready := n.Ready(now)
 		if was, seen := c.lastReady[n.Name]; seen && was != ready {
 			changed = true
-			if ready {
+			switch {
+			case ready:
 				c.Store.AddEvent(ctx, "node", "", n.Name, "%s is back", n.Name)
-			} else {
+			case n.Edge():
+				c.Store.AddEvent(ctx, "node", "", n.Name, "edge %s stopped reporting: domains pointing at it may be unreachable", n.Name)
+			default:
 				c.Store.AddEvent(ctx, "node", "", n.Name, "%s stopped reporting; its instances move elsewhere if it is not back within %s", n.Name, RescheduleAfter)
 			}
 		}
 		c.lastReady[n.Name] = ready
+	}
+	// A removed edge has had time to hear so: it goes for good.
+	if n, err := c.Store.DeleteRemovedEdges(ctx, now.Add(-EdgeRemovalGrace)); err != nil {
+		return err
+	} else if n > 0 {
+		changed = true
 	}
 
 	insts, err := c.Store.Instances(ctx, "")

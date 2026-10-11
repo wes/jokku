@@ -49,6 +49,7 @@ Press `6` for **Traffic**. Every request flies across its app's lane as a dot an
 
 ```console
   42.6 req/s  ·  p50 3.1ms  p95 18ms  ·  0.4% errors  ·  12804 total
+  last hour  p50 3.4ms  p95 21ms  148k requests   ·   last 24h  p50 3.2ms  p95 24ms  3.1M requests
   ▅▆▅▇▆▅▆█▇▆▅▄▅▆▇▆▅▆▇█▆▅▄▅▆▇▆▅ req/s   ▁▁▂▁▃▂▁▁▂▁▁▃▂▁▁▂▁▁▂▁▆▂▁▁▂▁▃▂ p95
 
   api            2 ●●   28.1/s ┄┄━━●┄╌──━●┄┄┄╌─━━●┄┄┄┄╌──━●┄┄ ▶ web.1@server-1 ▮▮▮▮▮▮ 14.2/s  web.2@server-2 ▮▮▮▮▮ 13.9/s
@@ -62,7 +63,9 @@ Dots are green for success, cyan for redirects, yellow for 4xx and red for 5xx, 
 
 After each app's name are its machines: how many, and a dot for each. A dot is green while its machine runs, yellow while it starts, red when it's down, and hollow and dim while the app [sleeps](/docs/processes#sleep-when-idle), when the lane says **asleep**. An app with more than one process group, such as `web` and `worker`, gets a line for each under its lane. An app's name turns orange while one of its requests is on the way.
 
-The headline shows requests per second, latency and error rate over the last ten seconds, and under it the last minute, a second at a time. Below the lanes, you'll see which servers' proxies received the traffic and a list of recent requests.
+The headline shows requests per second, latency and error rate over the last ten seconds. Under it are the p50 and p95 over the last hour and the last 24 hours, for every request any of your servers' proxies handled. Under those is the last minute, a second at a time.
+
+Each server keeps its own record of how long its requests took, rebuilt from its proxy's log when it restarts, and the control server adds them all up. The percentiles are therefore the whole cluster's, to within 5%. A server that's down or doesn't answer is named on the line, and its requests are left out. Below the lanes, you'll see which servers' proxies received the traffic and a list of recent requests.
 
 Press `p` to pause, `c` to clear and `f` to turn the effects off. With them on, the view redraws about 30 times a second: over `ssh -t` on a slow connection, turning them off keeps it responsive. Run on your own computer, `jokku top` draws there and fetches only the requests from your server.
 

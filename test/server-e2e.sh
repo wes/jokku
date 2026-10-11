@@ -128,6 +128,14 @@ all=$(jssh logs hello -n 2000)
 grep -q "app\[web" <<<"$all" || fail "app lines missing next to router lines"
 jssh logs hello -p web -n 20 | grep -q "app\[router\]" && fail "-p web shows router lines"
 sudo curl -fsS --unix-socket /run/jokku/jokku.sock "http://jokku/v1/requests?app=hello&tail=3" | grep -q '"type":"request"' || fail "request stream API"
+# The hour's and day's latency (jokku top's Traffic view) count them, from
+# the proxy's journal.
+latency_counts() {
+  sudo curl -fsS --unix-socket /run/jokku/jokku.sock http://jokku/v1/latency |
+    python3 -c 'import json, sys; l = json.load(sys.stdin); h = l["hour"]["apps"].get("hello", {}); sys.exit(0 if h.get("requests", 0) >= 3 and h.get("p95_ms", 0) > 0 and l["day"]["requests"] >= 3 else 1)'
+}
+for _ in $(seq 1 20); do latency_counts && break; sleep 1; done
+latency_counts || fail "the latency API doesn't count hello's requests: $(sudo curl -sS --unix-socket /run/jokku/jokku.sock http://jokku/v1/latency)"
 
 step "apps find each other by name"
 probe=$(mktemp -d)

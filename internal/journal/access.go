@@ -72,6 +72,22 @@ func requests(ctx context.Context, app string, tail int, follow, grep bool, fn f
 	if follow {
 		args = append(args, "--follow")
 	}
+	return access(ctx, args, app, fn)
+}
+
+// RequestsSince streams the requests this node's proxy handled from since
+// on (to the second), then new ones as they are logged, until ctx is done.
+func RequestsSince(ctx context.Context, since time.Time, fn func(types.Request)) error {
+	// Only the message: a day of a busy proxy's log is a lot to read at
+	// start.
+	args := []string{"--no-pager", "--output=json", "--output-fields=MESSAGE", "--unit=" + proxyUnit, "--follow",
+		"--since=@" + strconv.FormatInt(since.Unix(), 10)}
+	return access(ctx, args, "", fn)
+}
+
+// access runs journalctl with args and hands each access log line it prints
+// (app's only, unless app is empty) to fn.
+func access(ctx context.Context, args []string, app string, fn func(types.Request)) error {
 	cmd := exec.CommandContext(ctx, "journalctl", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

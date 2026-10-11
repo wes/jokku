@@ -491,6 +491,27 @@ type InstanceView struct {
 
 // Request is one HTTP request handled by a node's proxy: the router lines
 // in "jokku logs" and the traffic view in "jokku top".
+// Latency is how long requests took over the last hour and day, from every
+// node's proxy: overall and by app ("" for requests no app served).
+type Latency struct {
+	Hour LatencyWindow `json:"hour"`
+	Day  LatencyWindow `json:"day"`
+	// Missing are the nodes that didn't answer (down, or a release
+	// behind), whose requests aren't counted.
+	Missing []string `json:"missing,omitempty"`
+}
+
+type LatencyWindow struct {
+	LatencyStats
+	Apps map[string]LatencyStats `json:"apps,omitempty"`
+}
+
+type LatencyStats struct {
+	Requests uint64  `json:"requests"`
+	P50      float64 `json:"p50_ms"`
+	P95      float64 `json:"p95_ms"`
+}
+
 type Request struct {
 	At           time.Time `json:"at"`
 	App          string    `json:"app,omitempty"`  // empty for hosts no app serves

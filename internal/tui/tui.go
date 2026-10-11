@@ -73,6 +73,10 @@ type model struct {
 	logErr                error
 
 	tr *traffic
+	// The Traffic view's last hour and day (latency.go).
+	lat    *types.Latency
+	latAt  time.Time // when it was last asked for
+	latErr error
 
 	// The Backups view (backups.go).
 	bk          *types.BackupsOverview
@@ -154,6 +158,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flash("✔ "+msg.what, false)
 		}
 		return m, m.fetchBackups()
+	case latencyMsg:
+		m.lat, m.latErr = msg.l, msg.err
 	case tickMsg:
 		cmds := []tea.Cmd{m.fetch(), tick()}
 		switch m.view {
@@ -161,6 +167,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.fetchLogs(m.logApp))
 		case overview, backupsView:
 			cmds = append(cmds, m.fetchBackups())
+		case trafficView:
+			if time.Since(m.latAt) >= latencyEvery {
+				cmds = append(cmds, m.fetchLatency())
+			}
 		}
 		return m, tea.Batch(cmds...)
 	case tea.KeyMsg:
@@ -168,7 +178,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{m.key(msg.String())}
 		switch {
 		case before != trafficView && m.view == trafficView:
-			cmds = append(cmds, m.startTraffic())
+			cmds = append(cmds, m.startTraffic(), m.fetchLatency())
 		case before == trafficView && m.view != trafficView:
 			m.stopTraffic()
 		}

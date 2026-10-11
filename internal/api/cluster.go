@@ -33,6 +33,16 @@ func (s *Server) createJoinToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, tok)
 }
 
+// latency is how long requests took over the last hour and day.
+func (s *Server) latency(w http.ResponseWriter, r *http.Request) {
+	l, err := s.Cluster.Latency(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, l)
+}
+
 // updateNodes brings the other nodes to the control node's version.
 func (s *Server) updateNodes(w http.ResponseWriter, r *http.Request) {
 	if err := s.Cluster.UpdateNodes(r.Context()); err != nil {

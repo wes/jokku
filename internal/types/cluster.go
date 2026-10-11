@@ -419,6 +419,8 @@ type AppView struct {
 	Wanted    int       `json:"wanted"`
 	Deploy    *Deploy   `json:"deploy,omitempty"` // most recent
 	CreatedAt time.Time `json:"created_at"`
+	// Links are the apps a database is linked to.
+	Links []DatabaseLink `json:"links,omitempty"`
 }
 
 type InstanceView struct {

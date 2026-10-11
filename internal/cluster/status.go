@@ -94,6 +94,14 @@ func (c *Controller) Status(ctx context.Context) (*types.ClusterStatus, error) {
 	}
 	st.Totals.Nodes = len(st.Nodes)
 	st.Totals.Apps = len(apps)
+	links, err := c.Store.DatabaseLinks(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	linked := map[string][]types.DatabaseLink{}
+	for _, l := range links {
+		linked[l.Database] = append(linked[l.Database], types.DatabaseLink{App: l.App, Var: l.Var})
+	}
 	for _, a := range apps {
 		domains, err := c.Store.Domains(ctx, a.Name)
 		if err != nil {
@@ -101,7 +109,7 @@ func (c *Controller) Status(ctx context.Context) (*types.ClusterStatus, error) {
 		}
 		view := types.AppView{
 			Name: a.Name, Kind: a.Kind, Release: a.CurrentRelease, Stopped: a.Stopped, Asleep: a.AsleepSince != nil, Locked: a.Locked, Domains: domains,
-			Healthy: healthy[a.Name], Wanted: wanted[a.Name], CreatedAt: a.CreatedAt,
+			Healthy: healthy[a.Name], Wanted: wanted[a.Name], CreatedAt: a.CreatedAt, Links: linked[a.Name],
 		}
 		if ds, err := c.Store.Deploys(ctx, a.Name, 1); err == nil && len(ds) > 0 {
 			view.Deploy = &ds[0]

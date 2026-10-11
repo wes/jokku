@@ -52,7 +52,7 @@ func TestTheSplashFitsAnEightyColumnLogin(t *testing.T) {
 	for i, l := range text[:8] {
 		r := []rune(l)
 		pic := strings.TrimSpace(string(r[min(len(r), len(indent)+logoWidth+len(artGap)):]))
-		if pic == "" || strings.Trim(pic, " "+string(quadrants)) != "" || (i >= 1 && i <= 6) != strings.ContainsAny(l, "╗╝") {
+		if pic == "" || strings.Trim(pic, " ▀▄█") != "" || (i >= 1 && i <= 6) != strings.ContainsAny(l, "╗╝") {
 			t.Errorf("art line %d: %q", i, l)
 		}
 	}
@@ -69,13 +69,16 @@ func TestTheSplashFitsAnEightyColumnLogin(t *testing.T) {
 
 // TestTheSunIsQuarterBlocks: two pixels across and two down to a
 // character, in at most two colors, an empty pixel counting as one.
-func TestTheSunIsQuarterBlocks(t *testing.T) {
+func TestTheSunIsHalfBlocks(t *testing.T) {
 	if len(sun) != 2*(len(logo)+2) {
 		t.Errorf("the sun is %d pixels tall, want %d", len(sun), 2*(len(logo)+2))
 	}
 	for y, row := range sun {
-		if len(row) != 2*sunWidth {
-			t.Errorf("row %d is %d pixels wide, want %d", y, len(row), 2*sunWidth)
+		if len(row) != sunWidth {
+			t.Errorf("row %d is %d pixels wide, want %d", y, len(row), sunWidth)
+		}
+		if left, right := len(row)-len(strings.TrimLeft(row, ".")), len(row)-len(strings.TrimRight(row, ".")); left != right && left != len(row) {
+			t.Errorf("row %d isn't centered: %q", y, row)
 		}
 		for _, p := range []byte(row) {
 			if _, ok := palette[p]; !ok && p != '.' {
@@ -83,19 +86,12 @@ func TestTheSunIsQuarterBlocks(t *testing.T) {
 			}
 		}
 	}
-	for y := 0; y+1 < len(sun); y += 2 {
-		for x := 0; x+1 < len(sun[y]) && x+1 < len(sun[y+1]); x += 2 {
-			colors := map[byte]bool{sun[y][x]: true, sun[y][x+1]: true, sun[y+1][x]: true, sun[y+1][x+1]: true}
-			if len(colors) > 2 {
-				t.Errorf("the character at line %d, column %d needs %d colors", y/2, x/2, len(colors))
-			}
-		}
-	}
 
-	got := quarterBlocks([]string{"y.ro..oo", "yyrr..oo"})
-	want := fg(yellowOrange) + "▙" + reset + fg(redOrange) + bg(orange) + "▙" + reset + " " + fg(orange) + "█" + reset
+	got := halfBlocks([]string{"yy.r.", "y.yo."})
+	want := fg(yellowOrange) + "█" + reset + fg(yellowOrange) + "▀" + reset + fg(yellowOrange) + "▄" + reset +
+		fg(redOrange) + bg(orange) + "▀" + reset + " "
 	if len(got) != 1 || got[0] != want {
-		t.Errorf("quarterBlocks = %q, want %q", got, want)
+		t.Errorf("halfBlocks = %q, want %q", got, want)
 	}
 }
 

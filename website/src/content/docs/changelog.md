@@ -5,6 +5,15 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update a server with `sudo jokku update`, and every server in a cluster the same way. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.4: Machines on the Traffic view, and a retro sun
+
+October 10, 2026
+
+- **The Traffic view in [`jokku top`](/docs/top#traffic) shows each app's machines:** how many, and a dot for each, dim while the app sleeps. An app with more than one process group gets a line for each.
+- An app's name turns orange while one of its requests is on the way, and the names column widens to fit names of up to 24 characters.
+- The selected row in `jokku top` is a subtle shade instead of red. Over SSH, terminals turned the old brown into red.
+- The [splash screen](/docs/installation#the-splash-screen) has a striped retro sun in place of the palm tree, in the logo's oranges.
+
 ## v0.8.3: Sleep, and a splash screen
 
 October 10, 2026

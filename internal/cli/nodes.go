@@ -43,9 +43,30 @@ func nodesList(c *Context) error {
 			status = "ready (no microVMs)"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%d\t%s\n",
-			n.Name, n.Role, status, n.Address, n.MeshIP, n.CPUs, formatMemory(n.MemoryMB), n.Instances, n.Version)
+			n.Name, n.Role, status, n.Address, n.MeshIP, n.CPUs, formatMemory(n.MemoryMB), n.Instances, nodeVersion(n))
 	}
 	return tw.Flush()
+}
+
+// nodeVersion is the jokku a node runs, and where it is in updating the
+// cluster.
+func nodeVersion(n types.NodeView) string {
+	u := n.Update
+	if u == nil {
+		return n.Version
+	}
+	switch u.State {
+	case types.UpdateRunning:
+		return fmt.Sprintf("%s (updating to %s)", n.Version, u.To)
+	case types.UpdateFailed:
+		return fmt.Sprintf("%s (update to %s failed)", n.Version, u.To)
+	case types.UpdateOnHold:
+		return fmt.Sprintf("%s (update to %s on hold)", n.Version, u.To)
+	case types.UpdateByHand:
+		return fmt.Sprintf("%s (update to %s by hand)", n.Version, u.To)
+	default:
+		return fmt.Sprintf("%s (%s next)", n.Version, u.To)
+	}
 }
 
 func nodesReport(c *Context) error {
@@ -64,10 +85,10 @@ func nodesReport(c *Context) error {
 		if n.CanRun != "" {
 			canRun = "no: " + n.CanRun
 		}
-		err := c.report(n.Name+" node information", []row{
+		rows := []row{
 			{"node-role", "Node role", n.Role},
 			{"node-status", "Node status", n.Status},
-			{"node-version", "Node version", n.Version},
+			{"node-version", "Node version", nodeVersion(n)},
 			{"node-address", "Node address", n.Address},
 			{"node-mesh-ip", "Node mesh ip", n.MeshIP},
 			{"node-subnet", "Node subnet", n.Subnet},
@@ -80,7 +101,11 @@ func nodesReport(c *Context) error {
 			{"node-schedulable", "Node schedulable", yesNo(n.Schedulable)},
 			{"node-ingress", "Node ingress", yesNo(n.Ingress)},
 			{"node-last-seen", "Node last seen", ago(n.LastSeen)},
-		})
+		}
+		if n.Update != nil && n.Update.Error != "" {
+			rows = append(rows, row{"node-update-error", "Node update error", n.Update.Error})
+		}
+		err := c.report(n.Name+" node information", rows)
 		if err != nil {
 			return err
 		}

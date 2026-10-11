@@ -37,6 +37,8 @@ func (c *Controller) tick(ctx context.Context) error {
 			switch {
 			case ready:
 				c.Store.AddEvent(ctx, "node", "", n.Name, "%s is back", n.Name)
+			case c.updating(n.Name, now):
+				c.Store.AddEvent(ctx, "node", "", n.Name, "%s is restarting to update jokku", n.Name)
 			case n.Edge():
 				c.Store.AddEvent(ctx, "node", "", n.Name, "edge %s stopped reporting: domains pointing at it may be unreachable", n.Name)
 			default:
@@ -106,7 +108,7 @@ func (c *Controller) tick(ctx context.Context) error {
 		switch {
 		case !exists:
 			reason = "its node was removed"
-		case !n.Ready(now) && now.Sub(n.LastSeen) > RescheduleAfter:
+		case !n.Ready(now) && now.Sub(n.LastSeen) > RescheduleAfter && !c.updating(n.Name, now):
 			reason = in.Node + " is down"
 		case n.Draining:
 			reason = in.Node + " is draining"

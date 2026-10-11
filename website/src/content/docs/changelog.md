@@ -3,7 +3,16 @@ title: What's new
 description: Every Jokku release, newest first, and what it brought.
 ---
 
-Update a server with `sudo jokku update`, and every server in a cluster the same way. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
+Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
+
+## v0.8.5: One update for the whole cluster, and databases in jokku top
+
+October 11, 2026
+
+- **[`sudo jokku update`](/docs/updating#clusters) on the control server updates the whole cluster.** Once it has updated itself, it updates the other servers one at a time, waiting for each to come back on the new version before starting the next, and shows how each one goes. Apps keep serving, and a server's instances stay put while it restarts.
+- If a server's update fails, that server goes back to the version it had, and the update stops there, so a release that breaks one server isn't rolled onto the rest. Run `sudo jokku update` again to carry on once it's fixed. `--this-node` updates only the control server, and `jokku nodes:list` shows where each server is in an update.
+- Servers update themselves this way from this release on, so update each server by hand one last time to get to v0.8.5.
+- **Databases have their own list in [`jokku top`](/docs/top#apps-and-databases)**, below the apps, on the overview and on the Apps tab. On the Apps tab, each app's databases also show under it, with the variable they're linked as.
 
 ## v0.8.4: Machines on the Traffic view, and a retro sun
 

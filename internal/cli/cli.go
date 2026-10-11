@@ -106,7 +106,7 @@ var namespaceHelp = map[string]string{
 	"enter":       "Open a shell in a running instance of an app",
 	"top":         "Watch the cluster, apps and machines live",
 	"version":     "Print the jokku version",
-	"update":      "Update jokku on this server",
+	"update":      "Update jokku on this server and the rest of the cluster",
 	"splash":      "Show Jokku's splash screen, and choose whether it greets you at login",
 	"logs":        "Display an app's log output",
 	"releases":    "List an app's releases",

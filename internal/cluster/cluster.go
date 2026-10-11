@@ -54,6 +54,7 @@ type Controller struct {
 	scheduler   backupScheduler
 	failover    failover
 	sleep       sleeper
+	rollout     rollout
 }
 
 func New(c *Controller) *Controller {
@@ -122,6 +123,9 @@ func (c *Controller) Run(ctx context.Context) {
 		}
 		if err := c.tickSleep(ctx, time.Now()); err != nil && ctx.Err() == nil {
 			c.Log.Error("putting idle apps to sleep", "err", err)
+		}
+		if err := c.tickUpdate(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			c.Log.Error("updating the cluster", "err", err)
 		}
 		select {
 		case <-ctx.Done():

@@ -15,7 +15,7 @@ It shows the new version and asks before changing anything.
 
 ```sh
 sudo jokku update --yes               # don't ask
-sudo jokku update --version v0.8.4    # pick a release
+sudo jokku update --version v0.8.5    # pick a release
 ```
 
 ## What happens
@@ -29,10 +29,27 @@ sudo jokku update --version v0.8.4    # pick a release
 
 ## Clusters
 
-With more than one server, update the control server first, then run `sudo jokku update` on each of the others. The control server accepts workers one release behind, so you can update them one at a time.
+Run `sudo jokku update` on the control server. Once it has updated itself, it brings the cluster's other servers to the same version, one at a time, and shows how each one goes:
 
-> [!NOTE]
-> Updating every server from the control server in one command is planned.
+```console
+-----> Updating the cluster's other nodes, one at a time
+       Ctrl-C stops watching, not the update; jokku nodes:list shows how it goes
+       server-2: updating from v0.8.5 to v0.8.6
+       server-2: updated to v0.8.6 (38s)
+       server-3: updating from v0.8.5 to v0.8.6
+       server-3: updated to v0.8.6 (41s)
+
+=====> All 3 nodes run v0.8.6
+```
+
+Each server runs the same update as above, by itself, so its apps keep serving. The control server waits for each one to come back on the new version before starting the next, and while a server restarts, its instances stay put rather than being moved elsewhere.
+
+- **If a server's update fails**, that server goes back to the version it had, and the update stops there, so a release that breaks one server isn't rolled onto the rest. The failed update's output is in `journalctl -u jokku-update` on that server. Once it's fixed, run `sudo jokku update` on the control server again to carry on.
+- **Servers that are down** update when they're back.
+- **`jokku nodes:list`** shows each server's version, and where it is in an update.
+- **To update only the control server**, add `--this-node`. Running `sudo jokku update` there again later updates the rest.
+
+Servers update themselves this way from v0.8.5. Run `sudo jokku update` once on each server that's on an older version. The control server accepts workers one release behind, so they keep working in the meantime.
 
 ## Servers on v0.0.2 or older
 

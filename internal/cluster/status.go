@@ -80,13 +80,17 @@ func (c *Controller) Status(ctx context.Context) (*types.ClusterStatus, error) {
 			},
 		})
 	}
+	updates, err := c.nodeUpdates(ctx, nodes)
+	if err != nil {
+		return nil, err
+	}
 	for _, n := range nodes {
 		if n.Removed() {
 			continue
 		}
 		st.Nodes = append(st.Nodes, types.NodeView{
 			Node: c.NodeInfo(n, now), Version: n.Version, CanRun: n.CanRun, Metrics: n.Metrics,
-			AllocatedMB: allocated[n.Name], Instances: count[n.Name],
+			AllocatedMB: allocated[n.Name], Instances: count[n.Name], Update: updates[n.Name],
 		})
 		if ready[n.Name] {
 			st.Totals.NodesReady++

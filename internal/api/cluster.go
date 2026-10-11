@@ -33,6 +33,15 @@ func (s *Server) createJoinToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, tok)
 }
 
+// updateNodes brings the other nodes to the control node's version.
+func (s *Server) updateNodes(w http.ResponseWriter, r *http.Request) {
+	if err := s.Cluster.UpdateNodes(r.Context()); err != nil {
+		s.fail(w, r, badRequest("%v", err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) clusterStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := s.Cluster.Status(r.Context())
 	if err != nil {

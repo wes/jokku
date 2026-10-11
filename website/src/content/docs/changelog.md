@@ -5,6 +5,12 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update a server with `sudo jokku update`, and every server in a cluster the same way. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.4: A retro sun
+
+October 10, 2026
+
+- The [splash screen](/docs/installation#the-splash-screen) has a striped retro sun in place of the palm tree, in the logo's oranges.
+
 ## v0.8.3: Sleep, and a splash screen
 
 October 10, 2026

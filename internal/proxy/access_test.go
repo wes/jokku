@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bufio"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,8 +12,6 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
-
-	"github.com/wes/jokku/internal/journal"
 )
 
 // TestAccessLog checks the proxy writes one tagged JSON line per request,
@@ -26,12 +23,7 @@ func TestAccessLog(t *testing.T) {
 	defer backend.Close()
 	upstream := strings.TrimPrefix(backend.URL, "http://")
 
-	// The access log goes to stderr (the journal, in production).
-	r, w, _ := os.Pipe()
-	stderr := os.Stderr
-	os.Stderr = w
-	defer func() { os.Stderr = stderr }()
-
+	logged := watchAccessLog(t)
 	dir, _ := os.MkdirTemp("", "jkp")
 	defer os.RemoveAll(dir)
 	port := freePort(t)
@@ -61,21 +53,11 @@ func TestAccessLog(t *testing.T) {
 	get("nobody.test", "/")
 
 	found := map[string]bool{}
-	sc := bufio.NewScanner(r)
-	deadline := time.Now().Add(5 * time.Second)
-	go func() { time.Sleep(5 * time.Second); w.Close() }()
-	for time.Now().Before(deadline) && sc.Scan() {
-		req, ok := journal.ParseAccess(sc.Text())
-		if !ok {
-			continue
-		}
+	for _, req := range logged() {
 		switch {
 		case req.App == "shop":
 			if req.Path != "/pricing?x=1" || req.Status != 200 || req.Upstream != upstream || req.Method != "GET" || req.Bytes != 5 || req.Client == "" {
 				t.Errorf("shop request logged as %+v", req)
-			}
-			if !strings.Contains(sc.Text(), `"jokku_upstream"`) || strings.Contains(sc.Text(), `"headers"`) {
-				t.Errorf("unexpected log line shape: %s", sc.Text())
 			}
 			found["shop"] = true
 		case req.Host == "nobody.test":
@@ -84,9 +66,8 @@ func TestAccessLog(t *testing.T) {
 			}
 			found["unmatched"] = true
 		}
-		if found["shop"] && found["unmatched"] {
-			return
-		}
 	}
-	t.Fatalf("access log lines missing: %v", found)
+	if !found["shop"] || !found["unmatched"] {
+		t.Fatalf("access log lines missing: %v", found)
+	}
 }

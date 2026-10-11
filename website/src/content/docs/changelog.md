@@ -5,6 +5,15 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.7: Compressed at home, behind an edge
+
+October 11, 2026
+
+- **Behind an [edge](/docs/edges), the server an app runs on now compresses its responses** before they go up to the edge. Before, the edge compressed them only after the trip from home, which is often the slowest part, so that trip still carried the full size. For a site that serves its files uncompressed, that's about a quarter of the bytes for its pages, styles and scripts.
+- The edge sends each request through the web proxy of a server that runs the app, which passes it on to an instance. Apps still see the visitor's address and that they came over HTTPS, logins still happen on the edge, and `jokku logs` and the Traffic view in `jokku top` show each request once, with the instance that answered.
+- **Turn compression off for an app** with `jokku proxy:set myapp compress false`. It's on for every app by default.
+- An edge on v0.8.6 or older, or a server that is, keeps reaching apps the old way until it's updated.
+
 ## v0.8.6: Compressed responses
 
 October 11, 2026

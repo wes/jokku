@@ -35,9 +35,11 @@ An edge needs no KVM and runs no apps, so the smallest cloud server will do. Add
 
 ## What an edge can reach
 
-An edge faces the internet, so Jokku gives it only what its routes need. Over the encrypted network it can reach the web ports of your apps' instances, the [external apps](#services-jokku-doesnt-run) it routes to, and the control server's API, which it uses to fetch its routes. It can't reach anything else at home: not ssh, not other ports of your apps or databases, not other machines on your network. It never receives an app's code or your backups.
+An edge faces the internet, so Jokku gives it only what its routes need. Over the encrypted network it can reach the web proxy of each of your servers, the web ports of your apps' instances, the [external apps](#services-jokku-doesnt-run) it routes to, and the control server's API, which it uses to fetch its routes. It can't reach anything else at home: not ssh, not other ports of your apps or databases, not other machines on your network. It never receives an app's code or your backups.
 
 Like any HTTPS proxy, an edge holds your certificates and sees the requests it forwards. To check [logins](/docs/logins) on its own, it also holds the users' password hashes and authenticator secrets and the key that signs sessions; removing an edge replaces that key, which logs everyone out.
+
+The edge sends each request through the web proxy of the server at home that runs the app. That server compresses the response before it goes back up your home connection, which is usually much slower than the edge's. See [compression](/docs/domains#compression-and-http3).
 
 When your servers at home can't be reached, the edge answers with a page saying so rather than an error.
 

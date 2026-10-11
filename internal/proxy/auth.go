@@ -537,7 +537,8 @@ func (h *AuthHandler) handOff(w http.ResponseWriter, u types.ProxyUser, back, ho
 // StripIdentity removes X-Jokku-User from requests, in every spelling an
 // app's server might read as it (X_Jokku_User becomes HTTP_X_JOKKU_USER in
 // CGI, Rack and WSGI): on every route, so no app ever trusts one a visitor
-// sent, login or not.
+// sent, login or not. (Relay routes, which only edges reach, pass on what
+// the edge's own route left.)
 type StripIdentity struct{}
 
 func (StripIdentity) CaddyModule() caddy.ModuleInfo {

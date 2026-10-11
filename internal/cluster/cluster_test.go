@@ -23,6 +23,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,10 +66,12 @@ func init() {
 }
 
 // cuttable is a node's way to the control node, which a test can cut, as a
-// network partition would.
+// network partition would. With noRelay, the node reports itself as one
+// from before relays.
 type cuttable struct {
 	agent.ControlPlane
-	cut *atomic.Bool
+	cut     *atomic.Bool
+	noRelay *atomic.Bool
 }
 
 var errCut = errors.New("cut off from the control node")
@@ -84,6 +87,9 @@ func (c cuttable) State(ctx context.Context, etag string) (*types.NodeState, err
 func (c cuttable) Report(ctx context.Context, st *types.NodeStatus) error {
 	if c.cut.Load() {
 		return errCut
+	}
+	if c.noRelay.Load() {
+		st.Features = slices.DeleteFunc(slices.Clone(st.Features), func(f string) bool { return f == types.FeatureRelay })
 	}
 	return c.ControlPlane.Report(ctx, st)
 }
@@ -441,6 +447,7 @@ type node struct {
 	cancel     context.CancelFunc
 	stopped    chan struct{}
 	cut        atomic.Bool   // cut off from the control node
+	noRelay    atomic.Bool   // reports as a node from before relays
 	version    string        // the jokku it runs; "test" if unset
 	updater    agent.Updater // nil: it can't update itself
 }
@@ -597,7 +604,7 @@ func (h *harness) startNode(name, token, agentToken, dir string, plane agent.Con
 	ctx, cancel := context.WithCancel(h.ctx)
 	n.cancel, n.stopped = cancel, make(chan struct{})
 	a := agent.New(agent.Config{
-		Control: cuttable{plane, &n.cut}, Runtime: n.rt, Mesh: n.mesh, Proxy: n.proxy, Resolver: n.resolver, DataDir: dir, Version: n.version, Log: h.log,
+		Control: cuttable{plane, &n.cut, &n.noRelay}, Runtime: n.rt, Mesh: n.mesh, Proxy: n.proxy, Resolver: n.resolver, DataDir: dir, Version: n.version, Log: h.log,
 		Updater:     n.updater,
 		GCArtifacts: name != "control", ReconcileEvery: 100 * time.Millisecond, ReportEvery: 200 * time.Millisecond, UpFor: time.Second,
 		Metrics: func() types.NodeMetrics { return types.NodeMetrics{CPUs: 4, MemoryMB: 4096} },

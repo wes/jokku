@@ -25,8 +25,8 @@ type Plugin struct {
 	Name string
 	Help string
 	Keys []Key
-	// Settable is false for plugins whose properties are only changed by
-	// dedicated commands (proxy:enable, letsencrypt:disable, ...).
+	// Settable plugins get "<plugin>:set"; keys that commands of their own
+	// change say so in SetBy.
 	Settable bool
 }
 
@@ -66,9 +66,10 @@ var Plugins = []Plugin{
 		},
 	},
 	{
-		Name: "proxy", Help: "Manage the HTTP proxy for an app",
+		Name: "proxy", Help: "Manage the HTTP proxy for an app", Settable: true,
 		Keys: []Key{
 			{Name: "enabled", Default: "true", Help: "Route HTTP traffic to the app", Validate: isBool},
+			{Name: "compress", Default: "true", Help: "Compress the text responses the app doesn't compress itself", Validate: isBool},
 		},
 	},
 	{

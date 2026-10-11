@@ -250,6 +250,12 @@ const (
 // behind never starts one without its disk.
 const FeatureVolumes = "volumes"
 
+// FeatureRelay is reported by agents whose proxy relays an edge's requests
+// (ProxyState.Edges), and, on an edge, sends them through the nodes'
+// proxies (ProxyRoute.Relayed), from v0.8.7. An edge reaches nodes without
+// it straight at their instances, as before.
+const FeatureRelay = "relay"
+
 // FeatureUpdate is reported by agents that update jokku when told to
 // (NodeState.Update), from v0.8.5. Older ones are updated by hand.
 const FeatureUpdate = "update"
@@ -260,6 +266,10 @@ type ProxyState struct {
 	// Auth is what routes with a login need: the session key, the users and
 	// the login domain. Nil when no route has a login.
 	Auth *ProxyAuth `json:"auth,omitempty"`
+	// Edges are the edges' mesh subnets, on a node an edge sends requests
+	// through: this node's proxy answers them for the edge, compressing
+	// before they go back over the mesh.
+	Edges []string `json:"edges,omitempty"`
 }
 
 type ProxyRoute struct {
@@ -277,6 +287,12 @@ type ProxyRoute struct {
 	// tells the control node it is being used, and a request that finds it
 	// asleep (no upstreams) wakes it and waits.
 	Sleeps bool `json:"sleeps,omitempty"`
+	// NoCompress: the app opted out of compression (proxy:set compress
+	// false).
+	NoCompress bool `json:"no_compress,omitempty"`
+	// Relayed, on an edge: the upstreams are nodes' proxies, which pass the
+	// request on to an instance and compress the response.
+	Relayed bool `json:"relayed,omitempty"`
 }
 
 // ProxyActivity is what a node's proxy tells the control node about apps

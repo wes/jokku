@@ -75,10 +75,25 @@ func TestEdgeRoutesToTheNodesBehindIt(t *testing.T) {
 	if n := edge.rt.startCount(); n != 0 {
 		t.Errorf("the edge started %d VMs", n)
 	}
-	// It routes to every instance, behind it.
-	eventually(t, 3*time.Second, "the edge routes to every instance", func() error {
-		if got := edge.proxy.upstreams("web"); len(got) != 4 {
+	// It sends the app's requests through the proxies of the nodes it runs
+	// on, which compress the responses before they come back over the
+	// mesh, and those nodes answer the edge.
+	eventually(t, 3*time.Second, "the edge routes through both nodes", func() error {
+		if got := edge.proxy.upstreams("web"); !slices.Equal(got, []string{"10.210.1.1:80", "10.210.2.1:80"}) {
 			return fmt.Errorf("edge routes to %v", got)
+		}
+		for _, r := range edge.proxy.get().Routes {
+			if r.App == "web" && !r.Relayed {
+				return fmt.Errorf("edge's route isn't relayed: %+v", r)
+			}
+		}
+		for _, name := range []string{"control", "w1"} {
+			if ps := h.nodes[name].proxy.get(); ps == nil || !slices.Equal(ps.Edges, []string{"10.210.3.0/24"}) {
+				return fmt.Errorf("%s doesn't answer the edge", name)
+			}
+		}
+		if ps := edge.proxy.get(); len(ps.Edges) != 0 {
+			return fmt.Errorf("the edge answers edges: %v", ps.Edges)
 		}
 		return nil
 	})
@@ -110,15 +125,16 @@ func TestEdgeRoutesToTheNodesBehindIt(t *testing.T) {
 		t.Errorf("the edge's identity has role %q", self.Role)
 	}
 
-	// Each node lets the edge reach its own instances' web ports, and only
-	// the control node its API.
+	// Each node lets the edge reach its proxy and its own instances' web
+	// ports (for an edge a release behind), and only the control node its
+	// API.
 	insts, _ := h.client.Instances(h.ctx, "web")
 	for _, name := range []string{"control", "w1"} {
 		_, access := h.nodes[name].mesh.get()
 		if access == nil || !slices.Equal(access.Edges, []string{"10.210.3.0/24"}) || access.Control != (name == "control") {
 			t.Fatalf("%s's edge access: %+v", name, access)
 		}
-		var want []string
+		want := []string{map[string]string{"control": "10.210.1.1:80", "w1": "10.210.2.1:80"}[name]}
 		for _, in := range insts {
 			if in.Node == name {
 				want = append(want, fmt.Sprintf("%s:%d", in.IP, in.Port))
@@ -218,11 +234,12 @@ func TestExternalAppsAreReachedThroughTheirNode(t *testing.T) {
 	if _, err := h.client.PatchDomains(ctx, "ha", types.DomainsPatch{Add: []string{"ha.example.test"}}); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, 3*time.Second, "the edge and w1 route to the target", func() error {
-		for _, n := range []*node{h.nodes["w1"], edge} {
-			if got := n.proxy.upstreams("ha"); !slices.Equal(got, []string{"192.168.1.50:8123"}) {
-				return fmt.Errorf("%s routes ha to %v", n.name, got)
-			}
+	eventually(t, 3*time.Second, "the edge routes through w1, which routes to the target", func() error {
+		if got := h.nodes["w1"].proxy.upstreams("ha"); !slices.Equal(got, []string{"192.168.1.50:8123"}) {
+			return fmt.Errorf("w1 routes ha to %v", got)
+		}
+		if got := edge.proxy.upstreams("ha"); !slices.Equal(got, []string{"10.210.2.1:80"}) {
+			return fmt.Errorf("the edge routes ha to %v", got)
 		}
 		// The control node isn't on its network.
 		if got := h.nodes["control"].proxy.upstreams("ha"); len(got) != 0 {
@@ -265,10 +282,14 @@ func TestExternalAppsAreReachedThroughTheirNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, 3*time.Second, "the change reaches the edge", func() error {
-		ps := edge.proxy.get()
-		for _, r := range ps.Routes {
-			if r.App == "ha" && len(r.Hosts) > 0 && (!r.UpstreamTLS || !r.Insecure || !slices.Equal(r.Upstreams, []string{"192.168.1.60:8443"})) {
+		for _, r := range edge.proxy.get().Routes {
+			if r.App == "ha" && len(r.Hosts) > 0 && (r.UpstreamTLS || !r.Relayed || !slices.Equal(r.Upstreams, []string{"10.210.1.1:80"})) {
 				return fmt.Errorf("edge's route: %+v", r)
+			}
+		}
+		for _, r := range h.nodes["control"].proxy.get().Routes {
+			if r.App == "ha" && len(r.Hosts) > 0 && (!r.UpstreamTLS || !r.Insecure || !slices.Equal(r.Upstreams, []string{"192.168.1.60:8443"})) {
+				return fmt.Errorf("control's route: %+v", r)
 			}
 		}
 		peers, _ := edge.mesh.get()
@@ -429,4 +450,63 @@ func TestEdgesHaveNoVoteInFencing(t *testing.T) {
 	}
 	h.down.Store(false)
 	eventually(t, 10*time.Second, "db still on w1", func() error { return h.healthy("db", "w1", "") })
+}
+
+// An edge reaches an app on a node a release behind, which can't relay yet,
+// at its instances, as it did before; and so does an edge a release behind.
+func TestEdgesReachOlderNodesDirectly(t *testing.T) {
+	h := newHarness(t)
+	w1 := h.join("w1")
+	edge, _ := h.addEdge("edge1")
+	h.waitReady(3)
+	h.deploy("web", 4)
+	direct := func() error {
+		insts, _ := h.client.Instances(h.ctx, "web")
+		var want []string
+		for _, in := range insts {
+			want = append(want, fmt.Sprintf("%s:%d", in.IP, in.Port))
+		}
+		slices.Sort(want)
+		if got := edge.proxy.upstreams("web"); !slices.Equal(got, want) {
+			return fmt.Errorf("edge routes to %v, want the instances %v", got, want)
+		}
+		for _, r := range edge.proxy.get().Routes {
+			if r.App == "web" && r.Relayed {
+				return fmt.Errorf("edge's route is relayed: %+v", r)
+			}
+		}
+		return nil
+	}
+	relayed := func() error {
+		if got := edge.proxy.upstreams("web"); !slices.Equal(got, []string{"10.210.1.1:80", "10.210.2.1:80"}) {
+			return fmt.Errorf("edge routes to %v", got)
+		}
+		return nil
+	}
+	eventually(t, 3*time.Second, "relayed", relayed)
+	w1.noRelay.Store(true)
+	eventually(t, 3*time.Second, "an older node's app is reached directly", direct)
+	w1.noRelay.Store(false)
+	eventually(t, 3*time.Second, "relayed again", relayed)
+	edge.noRelay.Store(true)
+	eventually(t, 3*time.Second, "an older edge reaches instances directly", direct)
+
+	// An app that opts out of compression is compressed nowhere.
+	compressed := func(want bool) func() error {
+		return func() error {
+			for _, n := range []*node{h.nodes["control"], w1, edge} {
+				for _, r := range n.proxy.get().Routes {
+					if r.App == "web" && r.NoCompress == want {
+						return fmt.Errorf("%s's route: compress is %v", n.name, !r.NoCompress)
+					}
+				}
+			}
+			return nil
+		}
+	}
+	eventually(t, 3*time.Second, "compressed by default", compressed(true))
+	if err := h.client.SetProperty(h.ctx, "web", "proxy", "compress", "false"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 3*time.Second, "not compressed once opted out", compressed(false))
 }

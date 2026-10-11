@@ -58,6 +58,7 @@ How an app is built is the one area that departs from Dokku. Dokku has no compos
 | --- | --- |
 | `domains:add`, `domains:remove`, `domains:set`, `domains:clear`, `domains:report`, and the `-global` variants | ✅ |
 | `proxy:enable`, `proxy:disable`, `proxy:report` | ✅ |
+| `proxy:set` (`compress`: compression, on by default) | ➕ ✅ Dokku's `proxy:set` picks a proxy type instead |
 | `letsencrypt:enable`, `letsencrypt:disable`, `letsencrypt:set` (`email`), `letsencrypt:report` | ✅ off for new apps, as in Dokku |
 | `certs:add`, `certs:remove`, `certs:report` | 🔜 |
 | `ports:list`, `ports:add`, `ports:set`, `ports:remove`, `ports:clear` | 🔜 apps listen on `$PORT` for now |

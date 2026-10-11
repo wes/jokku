@@ -58,6 +58,15 @@ jokku letsencrypt:enable --global    # new apps start with HTTPS on
 
 Jokku's proxy compresses the text your app sends uncompressed, such as HTML, CSS, JavaScript, JSON and SVG. It uses zstd, or gzip for browsers that don't take zstd. Responses the app compressed itself, images and video go out as they are, and server-sent events still arrive as they're sent. There's nothing to set up in the app.
 
+Behind an [edge](/docs/edges), the server the app runs on compresses its responses before they go to the edge, so the trip from home, often the slowest part, carries the smaller size too.
+
+Compression is on for every app. To turn it off for one, for example an HTTPS page that both repeats what visitors type and holds a secret (an attack called BREACH can guess the secret from the compressed size):
+
+```sh
+jokku proxy:set myapp compress false
+jokku proxy:set myapp compress          # back to the default, on
+```
+
 HTTPS domains are served over HTTP/2 and HTTP/3. HTTP/3 runs over UDP, so open UDP port 443 as well as TCP 80 and 443 on every server that takes web traffic, or on your [edge](/docs/edges). Without it, browsers use HTTP/2, which takes one more round trip to connect.
 
 ## Apps without web traffic

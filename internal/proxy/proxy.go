@@ -94,7 +94,7 @@ func Config(s Settings) ([]byte, error) {
 		if len(r.Hosts) == 0 {
 			continue
 		}
-		handle := append(tags(r.App), map[string]any{"handler": "jokku_strip_identity"})
+		handle := append(tags(r.App), compress, map[string]any{"handler": "jokku_strip_identity"})
 		if r.Auth != nil && s.Auth != nil {
 			handle = append(handle, map[string]any{"handler": "jokku_auth", "app": r.App, "auth": r.Auth, "global": s.Auth,
 				"portal_url": portal.url})
@@ -238,6 +238,16 @@ func (a *Applier) Apply(ctx context.Context, ps *types.ProxyState) error {
 		return err
 	}
 	return Load(ctx, a.AdminSocket, a.DataDir, cfg)
+}
+
+// compress encodes the text an app sends uncompressed (HTML, CSS, JS, JSON,
+// SVG and the like), with zstd, or gzip for clients without it. Caddy leaves
+// alone what is already encoded, under 512 bytes, partial (a range),
+// marked no-transform, or a websocket, and streams server-sent events.
+var compress = map[string]any{
+	"handler":   "encode",
+	"encodings": map[string]any{"zstd": map[string]any{}, "gzip": map[string]any{}},
+	"prefer":    []string{"zstd", "gzip"},
 }
 
 // tags label each request's access log line with its app and the instance

@@ -54,6 +54,12 @@ jokku letsencrypt:enable --global    # new apps start with HTTPS on
 > [!TIP]
 > On a cluster, certificates are stored centrally. Any server can answer the Let's Encrypt challenge for a certificate another one requested, and each certificate is issued once for the whole cluster.
 
+## Compression and HTTP/3
+
+Jokku's proxy compresses the text your app sends uncompressed, such as HTML, CSS, JavaScript, JSON and SVG. It uses zstd, or gzip for browsers that don't take zstd. Responses the app compressed itself, images and video go out as they are, and server-sent events still arrive as they're sent. There's nothing to set up in the app.
+
+HTTPS domains are served over HTTP/2 and HTTP/3. HTTP/3 runs over UDP, so open UDP port 443 as well as TCP 80 and 443 on every server that takes web traffic, or on your [edge](/docs/edges). Without it, browsers use HTTP/2, which takes one more round trip to connect.
+
 ## Apps without web traffic
 
 Turn the proxy off for an app that shouldn't be reachable from the internet, such as a database or a queue. Other apps can still reach it over [private networking](/docs/networking).

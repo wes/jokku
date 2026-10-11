@@ -368,7 +368,11 @@ updating or restarting the daemon never interrupts traffic (see
 Routes are computed by the control node: for each app with the proxy
 enabled, its domains map to the `IP:PORT` of every *healthy* `web` instance
 of the current release. Caddy load-balances and does passive health
-checks.
+checks. It also compresses the text an app sends uncompressed (`encode`,
+zstd or gzip), so an app needn't, and a slow link carries a quarter of the
+bytes. That is on whichever node the request arrives at: an edge
+compresses after the trip from home, so an app that compresses its own
+responses saves that leg too.
 
 Default domains: with `domains:set-global example.com`, apps get
 `<app>.example.com`. At install, the global domain defaults to
@@ -944,12 +948,13 @@ stays the stable entry point, including for versions that predate the command.
 | --- | --- | --- |
 | 22/tcp | control | SSH: `git push`, remote CLI |
 | 80, 443/tcp | ingress nodes | Caddy |
+| 443/udp | ingress nodes | Caddy, HTTP/3 (optional) |
 | 7443/tcp | control | HTTPS API (join, tokens) |
 | 51820/udp | all nodes | WireGuard |
 | 53/udp, 53/tcp | VM bridge only | `jokku-dns`: internal names for microVMs |
 | 7444/tcp | mesh only | agent API: log streams, sessions with VMs, volume copies between nodes |
 
-An edge needs only 80 and 443/tcp and 51820/udp open; the nodes behind it
+An edge needs only 80 and 443/tcp and 443 and 51820/udp open; the nodes behind it
 need no open port at all.
 
 ## Differences from Dokku

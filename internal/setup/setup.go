@@ -493,7 +493,7 @@ func (s *setup) edgeConnected(ctx context.Context) error {
 		time.Sleep(2 * time.Second)
 	}
 	fmt.Fprintln(s.out, " !     The control node hasn't connected yet. It dials this server on UDP port 51820:")
-	fmt.Fprintln(s.out, " !     open it (and TCP 80 and 443) in this server's firewall, then check with jokku edge:list on the control node.")
+	fmt.Fprintln(s.out, " !     open it (and TCP 80 and 443, and UDP 443 for HTTP/3) in this server's firewall, then check with jokku edge:list on the control node.")
 	return nil
 }
 

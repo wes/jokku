@@ -19,7 +19,7 @@ Add one from your control server, with the edge's address. Jokku logs in over ss
 jokku edge:add root@203.0.113.7
 ```
 
-On the edge, open UDP port 51820 (the encrypted network) and TCP ports 80 and 443 in its firewall. Then point your domains' DNS at it. That's all: every app's domains, certificates and logins are served from the edge, and you keep managing everything at home.
+On the edge, open TCP ports 80 and 443, and UDP ports 443 (HTTP/3) and 51820 (the encrypted network), in its firewall. Then point your domains' DNS at it. That's all: every app's domains, certificates and logins are served from the edge, and you keep managing everything at home.
 
 | Command | What it does |
 | --- | --- |

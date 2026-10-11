@@ -30,12 +30,12 @@ You can set a few options in the environment:
 
 | Variable | What it does |
 | --- | --- |
-| `JOKKU_VERSION=v0.8.5` | Install a specific release instead of the latest. |
+| `JOKKU_VERSION=v0.8.6` | Install a specific release instead of the latest. |
 | `JOKKU_IMPORT_KEYS=0` | Don't give the SSH keys you logged in with access to Jokku. |
 | `JOKKU_SPLASH=1` or `0` | Answer the splash screen question in advance: show it at login, or don't. |
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo JOKKU_VERSION=v0.8.5 sh
+curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo JOKKU_VERSION=v0.8.6 sh
 ```
 
 ## The splash screen
@@ -47,7 +47,7 @@ Setup asks whether to greet you with Jokku's splash screen when you log in to th
 - Anything that needs a look: a node that's down, an app short of healthy instances, or system updates waiting.
 
 ```
-  jokku1  control node  ● ready  jokku v0.8.5
+  jokku1  control node  ● ready  jokku v0.8.6
 
   apps       15 · 1 asleep                    ip      192.168.86.113
   databases  2                                load    0.52 0.26 0.15 · 6 cpus
@@ -106,10 +106,11 @@ Every key is an admin, as in Dokku without its ACL plugin. The key's name is rec
 | --- | --- | --- |
 | 22/tcp | first server | SSH: `git push` and commands |
 | 80, 443/tcp | every server that takes web traffic | HTTP and HTTPS |
+| 443/udp | every server that takes web traffic | HTTP/3, a faster HTTPS (optional: browsers fall back to HTTP/2) |
 | 7443/tcp | first server | Servers joining the cluster |
 | 51820/udp | every server | The encrypted network between servers |
 
-The last two only matter once you [add more servers](/docs/cluster). An [edge](/docs/edges) needs only 80, 443 and 51820 open, and the servers behind it none.
+The last two only matter once you [add more servers](/docs/cluster). An [edge](/docs/edges) needs only these open: TCP 80 and 443, UDP 443 and UDP 51820. The servers behind it need none.
 
 ## Repair a server
 

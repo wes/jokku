@@ -1,6 +1,9 @@
 package proxy
 
 import (
+	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
@@ -145,5 +148,122 @@ func TestPublicHost(t *testing.T) {
 		if got := PublicHost(host); got != want {
 			t.Errorf("PublicHost(%q) = %v, want %v", host, got, want)
 		}
+	}
+}
+
+// TestProxyCompresses checks that text an app sends uncompressed goes out
+// compressed, and that everything else passes through as it was.
+func TestProxyCompresses(t *testing.T) {
+	css := strings.Repeat(".card { color: #c95a00; margin: 0 auto; }\n", 500)
+	var pre bytes.Buffer
+	zw := gzip.NewWriter(&pre)
+	io.WriteString(zw, css)
+	zw.Close()
+	png := bytes.Repeat([]byte{0x89, 'P', 'N', 'G'}, 5000)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app.css":
+			w.Header().Set("Content-Type", "text/css")
+			w.Header().Set("ETag", `"v1"`)
+			io.WriteString(w, css)
+		case "/pre.css": // compressed by the app itself
+			w.Header().Set("Content-Type", "text/css")
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Write(pre.Bytes())
+		case "/tiny":
+			w.Header().Set("Content-Type", "text/plain")
+			io.WriteString(w, "ok")
+		case "/logo.png":
+			w.Header().Set("Content-Type", "image/png")
+			w.Write(png)
+		case "/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, "data: first\n\n")
+			w.(http.Flusher).Flush()
+			<-r.Context().Done() // the second event never comes
+		}
+	}))
+	defer backend.Close()
+	port, _ := startProxy(t, Settings{Routes: []Route{
+		{App: "web", Hosts: []string{"web.test"}, Upstreams: []string{strings.TrimPrefix(backend.URL, "http://")}},
+	}})
+	// No transparent decompression: the test sees what goes over the wire.
+	c := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableCompression: true}}
+	get := func(path, accept string) (*http.Response, []byte) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", "http://127.0.0.1:"+strconv.Itoa(port)+path, nil)
+		req.Host = "web.test"
+		if accept != "" {
+			req.Header.Set("Accept-Encoding", accept)
+		}
+		var resp *http.Response
+		var err error
+		for i := 0; i < 50; i++ {
+			if resp, err = c.Do(req); err == nil {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp, b
+	}
+
+	resp, body := get("/app.css", "gzip")
+	if resp.Header.Get("Content-Encoding") != "gzip" {
+		t.Fatalf("app.css: Content-Encoding %q, want gzip", resp.Header.Get("Content-Encoding"))
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := io.ReadAll(zr); string(got) != css {
+		t.Error("app.css doesn't decompress to what the app sent")
+	}
+	if len(body) > len(css)/10 {
+		t.Errorf("app.css is %d bytes compressed, from %d", len(body), len(css))
+	}
+	if !strings.Contains(resp.Header.Get("Vary"), "Accept-Encoding") || resp.Header.Get("ETag") != `"v1-gzip"` {
+		t.Errorf("app.css: Vary %q, ETag %q", resp.Header.Get("Vary"), resp.Header.Get("ETag"))
+	}
+	if resp, _ := get("/app.css", "zstd, gzip"); resp.Header.Get("Content-Encoding") != "zstd" {
+		t.Errorf("a client taking zstd gets %q", resp.Header.Get("Content-Encoding"))
+	}
+	if resp, body := get("/app.css", ""); resp.Header.Get("Content-Encoding") != "" || string(body) != css {
+		t.Errorf("a client taking no encoding gets %q", resp.Header.Get("Content-Encoding"))
+	}
+	if resp, body := get("/pre.css", "gzip"); resp.Header.Get("Content-Encoding") != "gzip" || !bytes.Equal(body, pre.Bytes()) {
+		t.Error("what the app compressed itself is compressed again")
+	}
+	if resp, _ := get("/tiny", "gzip"); resp.Header.Get("Content-Encoding") != "" {
+		t.Error("a tiny response is compressed")
+	}
+	if resp, body := get("/logo.png", "gzip"); resp.Header.Get("Content-Encoding") != "" || !bytes.Equal(body, png) {
+		t.Error("an image is compressed")
+	}
+
+	// Server-sent events still arrive as they are sent.
+	req, _ := http.NewRequest("GET", "http://127.0.0.1:"+strconv.Itoa(port)+"/events", nil)
+	req.Host = "web.test"
+	req.Header.Set("Accept-Encoding", "gzip")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	resp, err = c.Do(req.WithContext(ctx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var r io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		if r, err = gzip.NewReader(resp.Body); err != nil {
+			t.Fatalf("the first event didn't arrive: %v", err)
+		}
+	}
+	line, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil || line != "data: first\n" {
+		t.Errorf("first event: %q, %v", line, err)
 	}
 }

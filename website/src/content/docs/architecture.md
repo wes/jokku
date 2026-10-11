@@ -126,6 +126,7 @@ Certificates, ACME accounts and challenge tokens are stored on the control serve
 | --- | --- | --- |
 | 22/tcp | control | SSH: `git push` and commands |
 | 80, 443/tcp | every server that takes traffic | Caddy |
+| 443/udp | every server that takes traffic | Caddy, HTTP/3 |
 | 7443/tcp | control | HTTPS API (joining servers) |
 | 51820/udp | every server | WireGuard |
 | 53 | VM bridge only | `jokku-dns`, internal names for microVMs |

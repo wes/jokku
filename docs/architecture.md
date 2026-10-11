@@ -370,9 +370,9 @@ enabled, its domains map to the `IP:PORT` of every *healthy* `web` instance
 of the current release. Caddy load-balances and does passive health
 checks. It also compresses the text an app sends uncompressed (`encode`,
 zstd or gzip), so an app needn't, and a slow link carries a quarter of the
-bytes. That is on whichever node the request arrives at: an edge
-compresses after the trip from home, so an app that compresses its own
-responses saves that leg too.
+bytes. An app turns that off with `proxy:set <app> compress false`. Behind
+an edge, the node an app runs on does it, before the trip home-to-edge
+(see [Edges](#edges)).
 
 Default domains: with `domains:set-global example.com`, apps get
 `<app>.example.com`. At install, the global domain defaults to
@@ -847,10 +847,24 @@ that node forwards to (extra `AllowedIPs` and `/32` routes). It runs no VMs
 filesystems (the API refuses), and has no vote in fencing or the restore
 quorum.
 
+An edge sends an app's requests through the proxies of the nodes it runs
+on (`<mesh IP>:80`; an external app's, through the node it goes through),
+not straight to its instances: the node's proxy passes each on to an
+instance and compresses the response before it crosses the mesh, which
+from a home lab is a trip up a home connection, often the slowest link of
+all. The node's plain HTTP server answers the edges' subnets (and only
+those) with relay routes: no login (the edge did it), no access log line
+(the edge writes it, with the instance the node names in
+`X-Jokku-Upstream`), and the edge's `X-Forwarded-*` headers passed on as
+they are (`trusted_proxies`). A host it doesn't route yet gets a 502
+rather than the redirect to HTTPS. Nodes a release behind (no `relay`
+feature), and edges a release behind, are reached and reach the instances
+directly, as before.
+
 The nodes behind an edge firewall it (`types.EdgeAccess`): over the mesh it
-may reach the control node's API, and on or through each node only the
-`IP:port` of that node's web instances and the external targets it
-forwards to; everything else from the edge is dropped, ahead of the VM
+may reach the control node's API, and on or through each node only that
+node's proxy, the `IP:port` of its web instances and the external targets
+it forwards to; everything else from the edge is dropped, ahead of the VM
 network's rule that accepts mesh traffic. The edge in turn accepts only
 nodes and replies over the mesh.
 

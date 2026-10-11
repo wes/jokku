@@ -213,13 +213,27 @@ func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []typ
 		return nil, err
 	}
 	ps := &types.ProxyState{Routes: []types.ProxyRoute{}, Email: globalLE["email"], Auth: auth}
+	// Nodes answer the edges' requests for them (proxy.relayRoute); an edge
+	// sends them through the nodes that can.
+	relays := map[string]string{} // node -> its proxy's mesh address
+	for _, n := range nodes {
+		if !n.Edge() && n.Ingress && ready[n.Name] && n.Has(types.FeatureRelay) {
+			_, ip := NodeSubnet(c.ClusterCIDR, n.SubnetIndex)
+			relays[n.Name] = netip.AddrPortFrom(ip, proxy.RelayPort).String()
+		}
+	}
+	relaying := node.Edge() && node.Has(types.FeatureRelay)
+	if !node.Edge() {
+		ps.Edges = edgeSubnets(c.ClusterCIDR, nodes)
+	}
 	for _, app := range apps {
 		e, external := ext[app.Name]
 		if (app.CurrentRelease == 0 && !external) || (external && !node.Edge() && node.Name != e.Via) {
 			continue
 		}
 		appProxy, _ := c.Store.Properties(ctx, app.Name, "proxy")
-		if props.Compute(px, appProxy, globalProxy)["enabled"] != "true" {
+		proxied := props.Compute(px, appProxy, globalProxy)
+		if proxied["enabled"] != "true" {
 			continue
 		}
 		cur := current[app.Name]
@@ -237,9 +251,11 @@ func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []typ
 		// A request to a sleeping app finds no upstreams, wakes it and waits.
 		sleeps := app.Kind == "" && !app.Stopped && props.SleepAfter(props.Compute(psp, appPS, globalPS)["sleep-after"]) > 0
 		upstreams := []string{}
+		var through []string // the nodes it runs on (an external app: the one it is reached through)
 		switch {
 		case external:
 			upstreams = append(upstreams, e.Target.String())
+			through = append(through, e.Via)
 		case !app.Stopped && app.AsleepSince == nil:
 			for _, in := range insts {
 				// Only wanted instances get new requests; retiring ones are
@@ -247,15 +263,22 @@ func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []typ
 				if in.App == app.Name && in.ReleaseID == cur.ID && in.ProcessType == cur.WebProcess() &&
 					in.Desired == store.DesiredRunning && in.State == store.StateHealthy && ready[in.Node] {
 					upstreams = append(upstreams, fmt.Sprintf("%s:%d", in.IP, in.Port))
+					through = append(through, in.Node)
 				}
 			}
 		}
 		sort.Strings(upstreams)
 		appLE, _ := c.Store.Properties(ctx, app.Name, "letsencrypt")
 		tlsOn := props.Compute(le, appLE, globalLE)["enabled"] == "true"
-		plain := types.ProxyRoute{App: app.Name, Upstreams: upstreams, Hosts: []string{}, Auth: logins[app.Name], Sleeps: sleeps}
+		plain := types.ProxyRoute{App: app.Name, Upstreams: upstreams, Hosts: []string{}, Auth: logins[app.Name], Sleeps: sleeps,
+			NoCompress: proxied["compress"] != "true"}
 		if external {
 			plain.UpstreamTLS, plain.Insecure = e.TLS, e.Insecure
+		}
+		if relaying {
+			if via, ok := relayedThrough(through, relays); ok {
+				plain.Upstreams, plain.Relayed, plain.UpstreamTLS, plain.Insecure = via, true, false, false
+			}
 		}
 		secure := plain
 		secure.Hosts, secure.TLS = []string{}, true
@@ -347,6 +370,11 @@ func (c *Controller) edgeAccess(ctx context.Context, node store.Node, nodes []st
 			allow[fmt.Sprintf("%s:%d", in.IP, in.Port)] = true
 		}
 	}
+	// This node's proxy, for the requests the edges send through it.
+	if node.Ingress && node.Has(types.FeatureRelay) {
+		_, ip := NodeSubnet(c.ClusterCIDR, node.SubnetIndex)
+		allow[netip.AddrPortFrom(ip, proxy.RelayPort).String()] = true
+	}
 	targets := map[string]bool{}
 	for _, e := range ext {
 		if e.Via == node.Name && routed[e.App] {
@@ -356,6 +384,38 @@ func (c *Controller) edgeAccess(ctx context.Context, node store.Node, nodes []st
 	}
 	acc.Allow, acc.Targets = sortedKeys(allow), sortedKeys(targets)
 	return acc, nil
+}
+
+// relayedThrough is the proxies an edge sends an app's requests through:
+// those of the nodes it runs on, when every one of them can relay. (While a
+// node is a release behind, the edge reaches the app's instances directly,
+// as it did before.)
+func relayedThrough(nodes []string, relays map[string]string) ([]string, bool) {
+	if len(nodes) == 0 {
+		return nil, false
+	}
+	seen := map[string]bool{}
+	for _, n := range nodes {
+		addr, ok := relays[n]
+		if !ok {
+			return nil, false
+		}
+		seen[addr] = true
+	}
+	return sortedKeys(seen), true
+}
+
+// edgeSubnets are the mesh subnets of the cluster's edges, but not of one
+// on its way out.
+func edgeSubnets(cluster netip.Prefix, nodes []store.Node) []string {
+	var out []string
+	for _, n := range nodes {
+		if n.Edge() && !n.Removed() {
+			sub, _ := NodeSubnet(cluster, n.SubnetIndex)
+			out = append(out, sub.String())
+		}
+	}
+	return out
 }
 
 func sortedKeys[V any](m map[string]V) []string {

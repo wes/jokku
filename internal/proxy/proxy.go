@@ -53,6 +53,11 @@ type Route struct {
 	// Sleeps: the app sleeps when idle, and a request wakes it (after the
 	// login, if it has one).
 	Sleeps bool
+	// NoCompress: the app opted out of compression.
+	NoCompress bool
+	// Relayed, on an edge: the upstreams are nodes' proxies (RelayPort),
+	// which pass requests on to the app's instances.
+	Relayed bool
 }
 
 type Settings struct {
@@ -68,7 +73,28 @@ type Settings struct {
 	// Auth is what routes with a login need; with a login domain, that
 	// domain gets the login page every users login shares.
 	Auth *types.ProxyAuth
+	// Edges are the subnets of the edges that send requests through this
+	// node (see relayRoute).
+	Edges []string
 }
+
+// Relaying
+//
+// An edge sends a request for an app through the proxy of a node that runs
+// it, rather than straight to an instance, so the response is compressed
+// before it crosses the mesh: from a home lab, that trip goes up a home
+// connection, often the slowest link of all. The node's plain HTTP server
+// answers requests from the edges' subnets (and only those) with relay
+// routes, which skip the login (the edge did it) and the access log (the
+// edge writes it), and report the instance that answered back to the edge
+// in RelayHeader, for the edge's log.
+
+// RelayPort is where an edge reaches a node's proxy, over the mesh.
+const RelayPort = 80
+
+// RelayHeader carries the instance that answered a relayed request back to
+// the edge, which drops it.
+const RelayHeader = "X-Jokku-Upstream"
 
 // ConfigPath is where the last loaded config is saved.
 func ConfigPath(dataDir string) string { return filepath.Join(dataDir, "proxy", "config.json") }
@@ -94,17 +120,17 @@ func Config(s Settings) ([]byte, error) {
 		if len(r.Hosts) == 0 {
 			continue
 		}
-		handle := append(tags(r.App), compress, map[string]any{"handler": "jokku_strip_identity"})
+		handle := tags(r)
+		if !r.NoCompress {
+			handle = append(handle, compress)
+		}
+		handle = append(handle, map[string]any{"handler": "jokku_strip_identity"})
 		if r.Auth != nil && s.Auth != nil {
 			handle = append(handle, map[string]any{"handler": "jokku_auth", "app": r.App, "auth": r.Auth, "global": s.Auth,
 				"portal_url": portal.url})
 		}
 		if r.Sleeps {
-			wake := map[string]any{"handler": "jokku_wake", "app": r.App}
-			if s.Storage != nil {
-				wake["control"] = Control{URL: s.Storage.URL, Token: s.Storage.Token, Pin: s.Storage.Pin}
-			}
-			handle = append(handle, wake)
+			handle = append(handle, wake(r, s))
 		}
 		route := map[string]any{
 			"match":    []any{map[string]any{"host": r.Hosts}},
@@ -126,6 +152,26 @@ func Config(s Settings) ([]byte, error) {
 			httpRoutes = append([]any{portal.route}, httpRoutes...)
 		}
 	}
+	if len(s.Edges) > 0 {
+		var relay []any
+		for _, r := range routes {
+			if len(r.Hosts) > 0 {
+				relay = append(relay, relayRoute(r, s))
+			}
+		}
+		// A host this node doesn't route (yet: the edge heard of it first)
+		// gets an error, not the public routes' redirect to HTTPS, which the
+		// edge would hand the visitor, who'd come straight back.
+		relay = append(relay, map[string]any{
+			"match": []any{map[string]any{"remote_ip": map[string]any{"ranges": s.Edges}}},
+			"handle": []any{
+				map[string]any{"handler": "vars", "log_skip": true},
+				map[string]any{"handler": "static_response", "status_code": 502, "body": "This server doesn't route {http.request.host} yet.\n"},
+			},
+			"terminal": true,
+		})
+		httpRoutes = append(relay, httpRoutes...)
+	}
 	if len(tlsHosts) > 0 {
 		httpRoutes = append(httpRoutes, map[string]any{
 			"match": []any{map[string]any{"host": tlsHosts}},
@@ -144,14 +190,18 @@ func Config(s Settings) ([]byte, error) {
 	httpRoutes = append(httpRoutes, notFound)
 	httpsRoutes = append(httpsRoutes, notFound)
 
-	servers := map[string]any{
-		"http": map[string]any{
-			"listen": []string{fmt.Sprintf(":%d", s.HTTPPort)},
-			"routes": httpRoutes,
-			"errors": unreachable,
-			"logs":   map[string]any{},
-		},
+	httpServer := map[string]any{
+		"listen": []string{fmt.Sprintf(":%d", s.HTTPPort)},
+		"routes": httpRoutes,
+		"errors": unreachable,
+		"logs":   map[string]any{},
 	}
+	if len(s.Edges) > 0 {
+		// The edges' X-Forwarded-* headers (the visitor's address, and that
+		// they came over HTTPS) go on to the app as they are.
+		httpServer["trusted_proxies"] = map[string]any{"source": "static", "ranges": s.Edges}
+	}
+	servers := map[string]any{"http": httpServer}
 	if len(tlsHosts) > 0 {
 		servers["https"] = map[string]any{
 			"listen": []string{fmt.Sprintf(":%d", s.HTTPSPort)},
@@ -228,11 +278,12 @@ func (a *Applier) Apply(ctx context.Context, ps *types.ProxyState) error {
 	routes := make([]Route, len(ps.Routes))
 	for i, r := range ps.Routes {
 		routes[i] = Route{App: r.App, Hosts: r.Hosts, Upstreams: r.Upstreams, TLS: r.TLS,
-			UpstreamTLS: r.UpstreamTLS, Insecure: r.Insecure, Auth: r.Auth, Sleeps: r.Sleeps}
+			UpstreamTLS: r.UpstreamTLS, Insecure: r.Insecure, Auth: r.Auth, Sleeps: r.Sleeps,
+			NoCompress: r.NoCompress, Relayed: r.Relayed}
 	}
 	cfg, err := Config(Settings{
-		Routes: routes, Email: ps.Email, DataDir: a.DataDir, HTTPPort: 80, HTTPSPort: 443,
-		AdminSocket: a.AdminSocket, Storage: a.Storage, Auth: ps.Auth,
+		Routes: routes, Email: ps.Email, DataDir: a.DataDir, HTTPPort: RelayPort, HTTPSPort: 443,
+		AdminSocket: a.AdminSocket, Storage: a.Storage, Auth: ps.Auth, Edges: ps.Edges,
 	})
 	if err != nil {
 		return err
@@ -251,11 +302,49 @@ var compress = map[string]any{
 }
 
 // tags label each request's access log line with its app and the instance
-// that answered.
-func tags(app string) []any {
+// that answered: through a relay, the one the node says.
+func tags(r Route) []any {
+	upstream := "{http.reverse_proxy.upstream.hostport}"
+	if r.Relayed {
+		upstream = "{http.reverse_proxy.header." + RelayHeader + "}"
+	}
 	return []any{
-		map[string]any{"handler": "log_append", "key": LogApp, "value": app},
-		map[string]any{"handler": "log_append", "key": LogUpstream, "value": "{http.reverse_proxy.upstream.hostport}"},
+		map[string]any{"handler": "log_append", "key": LogApp, "value": r.App},
+		map[string]any{"handler": "log_append", "key": LogUpstream, "value": upstream},
+	}
+}
+
+// wake holds a request to a sleeping app until it is awake.
+func wake(r Route, s Settings) map[string]any {
+	w := map[string]any{"handler": "jokku_wake", "app": r.App}
+	if s.Storage != nil {
+		w["control"] = Control{URL: s.Storage.URL, Token: s.Storage.Token, Pin: s.Storage.Pin}
+	}
+	return w
+}
+
+// relayRoute answers the requests an edge sends through this node for r's
+// hosts: compressed here, and with the edge's forwarded headers passed on
+// unchanged, so the app sees the visitor as the edge saw them.
+func relayRoute(r Route, s Settings) map[string]any {
+	handle := []any{map[string]any{"handler": "vars", "log_skip": true}}
+	if !r.NoCompress {
+		handle = append(handle, compress)
+	}
+	if r.Sleeps {
+		handle = append(handle, wake(r, s))
+	}
+	h := handler(r)
+	if h["handler"] == "reverse_proxy" {
+		h["headers"] = map[string]any{
+			"request":  map[string]any{"set": map[string][]string{"X-Forwarded-For": {"{http.request.header.X-Forwarded-For}"}}},
+			"response": map[string]any{"set": map[string][]string{RelayHeader: {"{http.reverse_proxy.upstream.hostport}"}}},
+		}
+	}
+	return map[string]any{
+		"match":    []any{map[string]any{"remote_ip": map[string]any{"ranges": s.Edges}, "host": r.Hosts}},
+		"handle":   append(handle, h),
+		"terminal": true,
 	}
 }
 
@@ -311,6 +400,11 @@ func handler(r Route) map[string]any {
 		// turn a blip into 30 seconds of errors.
 		delete(rp, "health_checks")
 	}
+	if r.Relayed {
+		// The node's word for which instance answered is for the log here,
+		// not the visitor.
+		rp["headers"] = map[string]any{"response": map[string]any{"delete": []string{RelayHeader}}}
+	}
 	return rp
 }
 
@@ -346,7 +440,7 @@ func portalHandler(s Settings) portalRoute {
 	}
 	p.route = map[string]any{
 		"match":    []any{map[string]any{"host": []string{d}}},
-		"handle":   append(tags(""), map[string]any{"handler": "jokku_auth", "portal": true, "global": s.Auth, "hosts": hosts}),
+		"handle":   append(tags(Route{}), map[string]any{"handler": "jokku_auth", "portal": true, "global": s.Auth, "hosts": hosts}),
 		"terminal": true,
 	}
 	return p

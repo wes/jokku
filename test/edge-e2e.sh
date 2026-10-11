@@ -120,7 +120,7 @@ step "deploy an app at home, and serve it through the edge"
 mkdir -p "$work/app" && cd "$work/app"
 export GIT_AUTHOR_NAME=e2e GIT_AUTHOR_EMAIL=e2e@example.com GIT_COMMITTER_NAME=e2e GIT_COMMITTER_EMAIL=e2e@example.com
 git init -q -b main
-printf 'FROM public.ecr.aws/docker/library/busybox:1.36\nRUN mkdir /www\n' >Dockerfile
+printf 'FROM public.ecr.aws/docker/library/busybox:1.36\nRUN mkdir /www && seq 1 3000 >/www/big.txt\n' >Dockerfile
 printf 'web: echo "served by $(hostname)" > /www/index.html && exec httpd -f -p "$PORT" -h /www\n' >Procfile
 git add -A && git commit -qm init
 sudo jokku apps:create hello
@@ -131,6 +131,23 @@ sudo curl -fsS --unix-socket /run/jokku/jokku.sock -H "Content-Type: application
 grep -q '"status":"succeeded"' "$work/deploy.log" || fail "deploy failed"
 eventually 60 "the edge serves hello" bash -c "curl -fsS --max-time 5 -H 'Host: hello.home.test' http://$edge_ip/ | grep -q 'served by hello-web-1'"
 eventually 20 "a router line via edge1" bash -c "sudo jokku logs hello -p router -n 50 | grep -q 'via=edge1'"
+sudo jokku logs hello -p router -n 50 | grep 'via=edge1' | grep -q 'instance=web\.1@' || fail "the edge's router line doesn't name the instance"
+
+step "the edge goes through the home node's proxy, which compresses"
+essh "sudo grep -q '10.210.1.1:80' /var/lib/jokku/proxy/config.json" || fail "the edge doesn't route through the control node's proxy"
+headers=$(essh "curl -sS --max-time 5 -o /dev/null -D - -H 'Host: hello.home.test' -H 'Accept-Encoding: gzip' http://10.210.1.1:80/big.txt")
+echo "$headers" | grep -qi '^content-encoding: gzip' || fail "home didn't compress for the edge: $headers"
+echo "$headers" | grep -qi '^x-jokku-upstream: 10\.210\.1\.' || fail "home didn't name the instance: $headers"
+headers=$(via hello.home.test /big.txt -o /dev/null -D - -H 'Accept-Encoding: gzip')
+echo "$headers" | grep -qi '^content-encoding: gzip' || fail "the visitor didn't get it compressed: $headers"
+if echo "$headers" | grep -qi '^x-jokku-upstream'; then fail "the visitor sees X-Jokku-Upstream"; fi
+[ "$(via hello.home.test /big.txt --compressed | tail -n 1)" = 3000 ] || fail "the compressed file isn't whole"
+sudo jokku proxy:set hello compress false
+eventually 30 "an app that opts out isn't compressed" bash -c "! curl -sS --max-time 5 -o /dev/null -D - -H 'Host: hello.home.test' -H 'Accept-Encoding: gzip' http://$edge_ip/big.txt | grep -qi '^content-encoding'"
+sudo jokku proxy:set hello compress
+if sudo journalctl -u jokku-proxy --since "10 min ago" | grep '"jokku_app":"hello"' | grep -q '"remote_ip":"10\.210\.'; then
+  fail "home logged the edge's requests (the edge does)"
+fi
 
 step "the edge reaches only what it routes"
 upstream=$(sudo jokku ps:report hello | sed -n 's/.*healthy (v[0-9]*, \(10\.210\.1\.[0-9]*:[0-9]*\),.*/\1/p' | head -n 1)

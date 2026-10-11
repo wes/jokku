@@ -396,6 +396,8 @@ dbaddr=$(jssh ps:report stack --status-db.1 | grep -oE "10\.[0-9.]+:6379")
 [ -n "$dbaddr" ] || fail "db is not running: $(jssh ps:report stack)"
 out=$(jssh config:set stack WHO=jokku 2>&1) || fail "config:set failed: $out"
 grep -q "Unchanged, left running: db" <<<"$out" || fail "the config change restarted db: $out"
+# The proxy loads the new instance's route a moment after the restart.
+for _ in $(seq 10); do sget | grep -q "hello jokku from compose" && break; sleep 1; done
 sget | grep -q "hello jokku from compose" || fail "web did not pick up the config change"
 [ "$(jssh ps:report stack --status-db.1 | grep -oE "10\.[0-9.]+:6379")" = "$dbaddr" ] || fail "db was replaced by a config change it does not use"
 jssh apps:destroy stack --force

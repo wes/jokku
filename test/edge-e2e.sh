@@ -131,7 +131,7 @@ sudo curl -fsS --unix-socket /run/jokku/jokku.sock -H "Content-Type: application
 grep -q '"status":"succeeded"' "$work/deploy.log" || fail "deploy failed"
 eventually 60 "the edge serves hello" bash -c "curl -fsS --max-time 5 -H 'Host: hello.home.test' http://$edge_ip/ | grep -q 'served by hello-web-1'"
 eventually 20 "a router line via edge1" bash -c "sudo jokku logs hello -p router -n 50 | grep -q 'via=edge1'"
-sudo jokku logs hello -p router -n 50 | grep 'via=edge1' | grep -q 'instance=hello-web-1@' || fail "the edge's router line doesn't name the instance"
+sudo jokku logs hello -p router -n 50 | grep 'via=edge1' | grep -q 'instance=web\.1@' || fail "the edge's router line doesn't name the instance"
 
 step "the edge goes through the home node's proxy, which compresses"
 essh "sudo grep -q '10.210.1.1:80' /var/lib/jokku/proxy/config.json" || fail "the edge doesn't route through the control node's proxy"

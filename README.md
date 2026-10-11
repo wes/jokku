@@ -90,7 +90,7 @@ jokku external:create ha http://192.168.1.50:8123  # route a domain to something
 jokku http-auth:enable ha --password               # with a login page in front
 ```
 
-An edge needs only TCP 80 and 443 and UDP 51820 open. See
+An edge needs only TCP 80 and 443, and UDP 443 and 51820, open. See
 [Edges](docs/architecture.md#edges) for how it works, and what an edge can
 and can't reach.
 

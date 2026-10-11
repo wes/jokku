@@ -5,6 +5,13 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.6: Compressed responses
+
+October 11, 2026
+
+- **[Jokku's proxy compresses](/docs/domains#compression-and-http3) the text your apps send uncompressed,** such as HTML, CSS, JavaScript, JSON and SVG, with zstd or gzip. A site that serves its files raw now sends about a quarter of the bytes for its pages, styles and scripts, so it loads sooner, most of all through an edge or over a slow link. Responses an app compresses itself, images and server-sent events go out as before.
+- The docs list UDP port 443 for HTTP/3, on servers that take web traffic and on edges. Without it, browsers fall back to HTTP/2, which takes one more round trip to connect.
+
 ## v0.8.5: One update for the whole cluster, and databases in jokku top
 
 October 11, 2026

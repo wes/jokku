@@ -29,6 +29,8 @@ import (
 	"github.com/wes/jokku/internal/deploy"
 	"github.com/wes/jokku/internal/dns"
 	"github.com/wes/jokku/internal/gitrepo"
+	"github.com/wes/jokku/internal/journal"
+	"github.com/wes/jokku/internal/latency"
 	"github.com/wes/jokku/internal/mesh"
 	"github.com/wes/jokku/internal/proxy"
 	"github.com/wes/jokku/internal/sshkeys"
@@ -166,9 +168,12 @@ func runControl(ctx context.Context, cfg Config, log *slog.Logger) error {
 		return fmt.Errorf("loading the TLS identity: %w", err)
 	}
 
+	durations := &latency.Recorder{}
+	go recordLatency(ctx, durations, log)
 	ctl := cluster.New(&cluster.Controller{
 		Store: st, Log: log, Self: nodeName, ClusterCIDR: cidr, Version: version.Version,
 		Address: net.JoinHostPort(advertise, strconv.Itoa(cluster.APIPort)), Pin: pin, DataDir: cfg.DataDir,
+		Durations: durations,
 	})
 	go backfillChecksums(ctx, st, filepath.Join(cfg.DataDir, "artifacts"), log)
 
@@ -181,6 +186,7 @@ func runControl(ctx context.Context, cfg Config, log *slog.Logger) error {
 			URL: fmt.Sprintf("https://127.0.0.1:%d", cluster.APIPort), Token: selfToken, Pin: pin,
 		}},
 		Resolver: &dns.Applier{DataDir: cfg.DataDir},
+		Latency:  durations,
 		DataDir:  cfg.DataDir, DNS: vm.HostDNS(), Version: version.Version, Log: log,
 	})
 	pipeline := &deploy.Pipeline{
@@ -251,8 +257,10 @@ func runWorker(ctx context.Context, cfg Config, nf *NodeFile, log *slog.Logger) 
 		}},
 		Resolver: &dns.Applier{DataDir: cfg.DataDir},
 		Updater:  &update.Systemd{DataDir: cfg.DataDir},
+		Latency:  &latency.Recorder{},
 		DataDir:  cfg.DataDir, DNS: vm.HostDNS(), Version: version.Version, Log: log, GCArtifacts: true,
 	}
+	go recordLatency(ctx, cfgAgent.Latency, log)
 	role := "worker"
 	if nf.Role == store.RoleEdge {
 		// An edge runs no VMs and has no use for their DNS. It reaches the
@@ -314,6 +322,36 @@ func serve(ctx context.Context, servers []*http.Server, listeners []net.Listener
 
 // backfillChecksums records the SHA-256 of root filesystems built before
 // clusters existed, so other nodes can verify their downloads.
+// recordLatency feeds the proxy's access log to rec: the last day of it,
+// then each request as it is logged. If journalctl stops, it carries on
+// after the last request it saw.
+func recordLatency(ctx context.Context, rec *latency.Recorder, log *slog.Logger) {
+	since := time.Now().Add(-latency.Keep)
+	var last time.Time
+	for ctx.Err() == nil {
+		err := journal.RequestsSince(ctx, since, func(r types.Request) {
+			if !r.At.After(last) {
+				return // seen before journalctl stopped
+			}
+			last = r.At
+			rec.Add(r.At, r.App, r.DurationMS)
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			log.Warn("reading the proxy's access log for jokku top", "err", err)
+		}
+		if !last.IsZero() {
+			since = last
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(10 * time.Second):
+		}
+	}
+}
+
 func backfillChecksums(ctx context.Context, st *store.Store, dir string, log *slog.Logger) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

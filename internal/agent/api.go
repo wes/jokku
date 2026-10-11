@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -37,6 +38,14 @@ func (a *Agent) Handler(token string) http.Handler {
 				})
 			}))
 		}
+		mux.HandleFunc("GET /v1/latency", authorized(func(w http.ResponseWriter, r *http.Request) {
+			if a.Latency == nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(a.Latency.Report(time.Now()))
+		}))
 		mux.HandleFunc("POST /v1/instances/{id}/session", authorized(a.serveSession))
 		mux.HandleFunc("POST /v1/volumes/{id}/backup", authorized(a.serveBackup))
 	}

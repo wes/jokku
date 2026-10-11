@@ -179,6 +179,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/cluster/update", s.updateNodes)
 	m.HandleFunc("GET /v1/events", s.listEvents)
 	m.HandleFunc("GET /v1/requests", s.requests)
+	m.HandleFunc("GET /v1/latency", s.latency)
 
 	notFound := func(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, httpErrorf(http.StatusNotFound, "no such endpoint: %s %s", r.Method, r.URL.Path))

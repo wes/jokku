@@ -31,6 +31,7 @@ import (
 
 	"github.com/wes/jokku/internal/dns"
 	"github.com/wes/jokku/internal/guest"
+	"github.com/wes/jokku/internal/latency"
 	"github.com/wes/jokku/internal/types"
 	"github.com/wes/jokku/internal/vm"
 )
@@ -105,6 +106,9 @@ type Config struct {
 	// Updater updates jokku here when the control node says to; nil on the
 	// control node, which "jokku update" updates.
 	Updater Updater
+	// Latency is how long the requests this node's proxy handled took, for
+	// the control node (GET /v1/latency); nil serves none.
+	Latency *latency.Recorder
 	// Seed is the state to start from before the control node has been
 	// heard, when none is cached: an edge reaches the control node only over
 	// the mesh, so it needs its first peer before its first poll.

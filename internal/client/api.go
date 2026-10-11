@@ -245,6 +245,12 @@ func (c *Client) ClusterStatus(ctx context.Context) (*types.ClusterStatus, error
 	return &st, c.call(ctx, http.MethodGet, "/v1/cluster/status", nil, &st)
 }
 
+// Latency is how long requests took over the last hour and day.
+func (c *Client) Latency(ctx context.Context) (*types.Latency, error) {
+	var l types.Latency
+	return &l, c.call(ctx, http.MethodGet, "/v1/latency", nil, &l)
+}
+
 // UpdateNodes asks the control node to bring the other nodes to its version.
 func (c *Client) UpdateNodes(ctx context.Context) error {
 	return c.call(ctx, http.MethodPost, "/v1/cluster/update", nil, nil)

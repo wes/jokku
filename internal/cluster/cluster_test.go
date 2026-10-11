@@ -42,6 +42,7 @@ import (
 	"github.com/wes/jokku/internal/deploy"
 	"github.com/wes/jokku/internal/dns"
 	"github.com/wes/jokku/internal/gitrepo"
+	"github.com/wes/jokku/internal/latency"
 	"github.com/wes/jokku/internal/proxy"
 	"github.com/wes/jokku/internal/session"
 	"github.com/wes/jokku/internal/store"
@@ -450,6 +451,7 @@ type node struct {
 	noRelay    atomic.Bool   // reports as a node from before relays
 	version    string        // the jokku it runs; "test" if unset
 	updater    agent.Updater // nil: it can't update itself
+	latency    *latency.Recorder
 }
 
 type harness struct {
@@ -494,11 +496,12 @@ func newHarnessAt(t *testing.T, v string) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
+	durations := &latency.Recorder{}
 	h := &harness{t: t, ctx: ctx, dir: dir, st: st, pin: pin, nodes: map[string]*node{}, log: log, release: map[string]int64{},
 		disks: &diskTracker{attached: map[string]string{}}, apiAddrs: map[string]string{}}
 	h.ctl = cluster.New(&cluster.Controller{
 		Store: st, Log: log, Self: "control", ClusterCIDR: netip.MustParsePrefix("10.210.0.0/16"),
-		Version: v, Pin: pin, TickEvery: 200 * time.Millisecond, DataDir: dir,
+		Version: v, Pin: pin, TickEvery: 200 * time.Millisecond, DataDir: dir, Durations: durations,
 		AgentAddr: func(n store.Node) string {
 			h.apiMu.Lock()
 			defer h.apiMu.Unlock()
@@ -532,7 +535,7 @@ func newHarnessAt(t *testing.T, v string) *harness {
 	if err := st.SetNodeAgentToken(ctx, "control", "control-agent-token"); err != nil {
 		t.Fatal(err)
 	}
-	h.nodes["control"] = &node{version: v}
+	h.nodes["control"] = &node{version: v, latency: durations}
 	h.startNode("control", "", "control-agent-token", dir, &cluster.LocalPlane{C: h.ctl, DataDir: dir})
 
 	// The admin API, as the CLI reaches it (unix socket paths must be short).
@@ -601,11 +604,14 @@ func (h *harness) startNode(name, token, agentToken, dir string, plane agent.Con
 	if n.version == "" {
 		n.version = "test"
 	}
+	if n.latency == nil {
+		n.latency = &latency.Recorder{}
+	}
 	ctx, cancel := context.WithCancel(h.ctx)
 	n.cancel, n.stopped = cancel, make(chan struct{})
 	a := agent.New(agent.Config{
 		Control: cuttable{plane, &n.cut, &n.noRelay}, Runtime: n.rt, Mesh: n.mesh, Proxy: n.proxy, Resolver: n.resolver, DataDir: dir, Version: n.version, Log: h.log,
-		Updater:     n.updater,
+		Updater: n.updater, Latency: n.latency,
 		GCArtifacts: name != "control", ReconcileEvery: 100 * time.Millisecond, ReportEvery: 200 * time.Millisecond, UpFor: time.Second,
 		Metrics: func() types.NodeMetrics { return types.NodeMetrics{CPUs: 4, MemoryMB: 4096} },
 	})

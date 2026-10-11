@@ -500,6 +500,9 @@ func (m *model) trafficView() string {
 		rest += "  ·  " + sDim.Render("effects off (f)")
 	}
 	b.WriteString("  " + rate + "  ·  " + lat + rest + "\n")
+	if line := m.latencyLine(); line != "" {
+		b.WriteString("  " + line + "\n")
+	}
 	if d := tr.spark; d.at != 0 {
 		reqW, latW := sparkWidths(m.width - 17)
 		var line []string
@@ -625,7 +628,7 @@ func (m *model) trafficView() string {
 
 	// The latest requests.
 	b.WriteString("\n" + sSection.Render("Recent requests") + "\n")
-	rows := max(m.height-laneLines-15, 3)
+	rows := max(m.height-laneLines-16, 3)
 	start := max(len(tr.listed)-rows, 0)
 	if len(tr.listed) == 0 {
 		b.WriteString(sDim.Render("  waiting for requests...") + "\n")

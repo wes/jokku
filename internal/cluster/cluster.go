@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wes/jokku/internal/latency"
 	"github.com/wes/jokku/internal/store"
 )
 
@@ -41,6 +42,9 @@ type Controller struct {
 	// DataDir is the control node's data directory, which cluster backups
 	// copy.
 	DataDir string
+	// Durations is how long the requests this node's proxy handled took
+	// (its agent's Latency); nil leaves this node out of Latency.
+	Durations *latency.Recorder
 
 	mu        sync.Mutex
 	changed   chan struct{} // closed and replaced on every change

@@ -5,6 +5,13 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.9: The last hour and day in jokku top
+
+October 11, 2026
+
+- **The Traffic view in [`jokku top`](/docs/top#traffic) shows p50 and p95 over the last hour and the last 24 hours**, under the last ten seconds' numbers. They count every request your servers' proxies handled. Each server keeps a compact record of how long its requests took, rebuilt from its proxy's log when it restarts, and the control server adds them up, so the percentiles are the whole cluster's, to within 5%.
+- A server that's down or doesn't answer is named on that line, so you know its requests aren't counted.
+
 ## v0.8.8: The sun lines up
 
 October 11, 2026

@@ -1,5 +1,5 @@
 // Package splash draws the screen a Jokku server greets you with when you
-// log in: the logo, a palm tree, and live figures about the server and its
+// log in: the logo, a striped sun, and live figures about the server and its
 // cluster. It also installs and removes it as the login banner (motd.go).
 package splash
 
@@ -69,7 +69,7 @@ type Options struct {
 const (
 	indent    = "  "
 	artGap    = "   "
-	fullWidth = 78 // the grid's right column lines up with the palm
+	fullWidth = 78 // the grid's right column lines up with the sun
 	labelWide = 10
 	leftWide  = logoWidth + len(artGap) - labelWide - 1 // values in the left column
 	rightWide = 7                                       // labels in the right column
@@ -97,22 +97,22 @@ func Render(w io.Writer, in *Info, o Options) {
 	}
 }
 
-// art is the logo with the palm to its right, the palm a line taller at
+// art is the logo with the sun to its right, the sun a line taller at
 // each end. Narrow terminals get the logo alone, or the name.
 func art(p painter, o Options) []string {
 	switch {
 	case o.Width > 0 && o.Width < len(indent)+logoWidth:
 		return []string{"", indent + p.paint(bold+fg(orange), "JOKKU")}
-	case !o.Color || (o.Width > 0 && o.Width < len(indent)+logoWidth+len(artGap)+palmWidth):
+	case !o.Color || (o.Width > 0 && o.Width < len(indent)+logoWidth+len(artGap)+sunWidth):
 		lines := []string{""}
 		for i, l := range logo {
 			lines = append(lines, indent+p.paint(fg(logoShades[i]), l))
 		}
 		return lines
 	}
-	tree := halfBlocks(palm)
-	lines := make([]string, len(tree))
-	for i, t := range tree {
+	pic := quarterBlocks(sun)
+	lines := make([]string, len(pic))
+	for i, t := range pic {
 		l := strings.Repeat(" ", logoWidth)
 		if i > 0 && i <= len(logo) {
 			l = p.paint(fg(logoShades[i-1]), logo[i-1])
@@ -229,7 +229,7 @@ func rows(in *Info) (left, right []cell) {
 }
 
 // grid lays the rows out side by side, the right column starting under
-// the palm, or one under the other when the terminal is too narrow (or
+// the sun, or one under the other when the terminal is too narrow (or
 // there's nothing to put on the left).
 func grid(p painter, left, right []cell, wide bool) []string {
 	if !wide {

@@ -48,9 +48,11 @@ func TestTheSplashFitsAnEightyColumnLogin(t *testing.T) {
 			t.Errorf("line %d is %d columns: %q", i, n, l)
 		}
 	}
-	// The palm stands beside the logo, a line taller at each end.
+	// The sun stands beside the logo, a line taller at each end.
 	for i, l := range text[:8] {
-		if !strings.ContainsAny(l, "▀▄") || (i >= 1 && i <= 6) != strings.ContainsAny(l, "╗╝") {
+		r := []rune(l)
+		pic := strings.TrimSpace(string(r[min(len(r), len(indent)+logoWidth+len(artGap)):]))
+		if pic == "" || strings.Trim(pic, " "+string(quadrants)) != "" || (i >= 1 && i <= 6) != strings.ContainsAny(l, "╗╝") {
 			t.Errorf("art line %d: %q", i, l)
 		}
 	}
@@ -62,6 +64,38 @@ func TestTheSplashFitsAnEightyColumnLogin(t *testing.T) {
 	}
 	if last := text[len(text)-1]; last != "  jokku help · jokku top · jokku apps:list · docs at https://jokku.dev" {
 		t.Errorf("last line: %q", last)
+	}
+}
+
+// TestTheSunIsQuarterBlocks: two pixels across and two down to a
+// character, in at most two colors, an empty pixel counting as one.
+func TestTheSunIsQuarterBlocks(t *testing.T) {
+	if len(sun) != 2*(len(logo)+2) {
+		t.Errorf("the sun is %d pixels tall, want %d", len(sun), 2*(len(logo)+2))
+	}
+	for y, row := range sun {
+		if len(row) != 2*sunWidth {
+			t.Errorf("row %d is %d pixels wide, want %d", y, len(row), 2*sunWidth)
+		}
+		for _, p := range []byte(row) {
+			if _, ok := palette[p]; !ok && p != '.' {
+				t.Errorf("row %d: %q isn't in the palette", y, p)
+			}
+		}
+	}
+	for y := 0; y+1 < len(sun); y += 2 {
+		for x := 0; x+1 < len(sun[y]) && x+1 < len(sun[y+1]); x += 2 {
+			colors := map[byte]bool{sun[y][x]: true, sun[y][x+1]: true, sun[y+1][x]: true, sun[y+1][x+1]: true}
+			if len(colors) > 2 {
+				t.Errorf("the character at line %d, column %d needs %d colors", y/2, x/2, len(colors))
+			}
+		}
+	}
+
+	got := quarterBlocks([]string{"y.ro..oo", "yyrr..oo"})
+	want := fg(yellowOrange) + "▙" + reset + fg(redOrange) + bg(orange) + "▙" + reset + " " + fg(orange) + "█" + reset
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("quarterBlocks = %q, want %q", got, want)
 	}
 }
 
@@ -83,14 +117,14 @@ func TestTheGridPutsTheClusterLeftAndTheMachineRight(t *testing.T) {
 	if !strings.Contains(got, strings.Join(want, "\n")) {
 		t.Errorf("got:\n%s\nwant it to contain:\n%s", got, strings.Join(want, "\n"))
 	}
-	// The right column starts where the palm does.
+	// The right column starts where the sun does.
 	l := text[10]
 	if col := utf8.RuneCountInString(l[:strings.Index(l, " ip ")+1]); col != len(indent)+logoWidth+len(artGap) {
 		t.Errorf("right column at %d", col)
 	}
 	// Without color there is no picture, only the logo.
 	if strings.ContainsAny(got, "▀▄") {
-		t.Error("drew the palm without color")
+		t.Error("drew the sun without color")
 	}
 }
 
@@ -98,7 +132,7 @@ func TestNarrowTerminalsGetLess(t *testing.T) {
 	text := plain(render(controlNode(), Options{Color: true, Width: 60}))
 	got := strings.Join(text, "\n")
 	if strings.ContainsAny(got, "▀▄") || !strings.Contains(got, "██╗") {
-		t.Errorf("60 columns should have the logo but no palm:\n%s", got)
+		t.Errorf("60 columns should have the logo but no sun:\n%s", got)
 	}
 	if !strings.Contains(got, "\n  deployed   blog, 2 hours ago\n  ip         192.168.86.113\n") {
 		t.Errorf("60 columns should have one column of figures:\n%s", got)

@@ -245,6 +245,11 @@ func (c *Client) ClusterStatus(ctx context.Context) (*types.ClusterStatus, error
 	return &st, c.call(ctx, http.MethodGet, "/v1/cluster/status", nil, &st)
 }
 
+// UpdateNodes asks the control node to bring the other nodes to its version.
+func (c *Client) UpdateNodes(ctx context.Context) error {
+	return c.call(ctx, http.MethodPost, "/v1/cluster/update", nil, nil)
+}
+
 func (c *Client) Events(ctx context.Context, app string, limit int) ([]types.ClusterEvent, error) {
 	q := url.Values{"limit": {strconv.Itoa(limit)}}
 	if app != "" {

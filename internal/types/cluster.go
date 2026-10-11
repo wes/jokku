@@ -3,7 +3,9 @@ package types
 import "time"
 
 // ProtocolVersion is the control <-> agent protocol. The control node rejects
-// agents speaking another version, with a message to update.
+// agents speaking another version, with a message to update. Their state
+// polls still work, and carry an update order for agents that can update
+// themselves, so keep NodeState.Update readable by older agents.
 const ProtocolVersion = 1
 
 // NodeState is everything one node's agent needs, computed by the control
@@ -23,6 +25,21 @@ type NodeState struct {
 	// EdgeAccess is what the cluster's edge nodes may reach on or through
 	// this node; nil without edges, and on edges themselves.
 	EdgeAccess *EdgeAccess `json:"edge_access,omitempty"`
+	// Update tells the node to update jokku; nil the rest of the time.
+	Update *UpdateOrder `json:"update,omitempty"`
+}
+
+// UpdateOrder asks a node's agent to update jokku to Version. A node acts on
+// each Attempt once, so one that failed waits for a new order.
+type UpdateOrder struct {
+	Version string `json:"version"`
+	Attempt string `json:"attempt"`
+}
+
+// UpdateFailure is a node saying an update order failed.
+type UpdateFailure struct {
+	Attempt string `json:"attempt"`
+	Error   string `json:"error"`
 }
 
 type NodeIdentity struct {
@@ -233,6 +250,10 @@ const (
 // behind never starts one without its disk.
 const FeatureVolumes = "volumes"
 
+// FeatureUpdate is reported by agents that update jokku when told to
+// (NodeState.Update), from v0.8.5. Older ones are updated by hand.
+const FeatureUpdate = "update"
+
 type ProxyState struct {
 	Routes []ProxyRoute `json:"routes"`
 	Email  string       `json:"email,omitempty"`
@@ -314,6 +335,8 @@ type NodeStatus struct {
 	Metrics   NodeMetrics      `json:"metrics"`
 	Instances []InstanceStatus `json:"instances"`
 	Volumes   []VolumeStatus   `json:"volumes,omitempty"`
+	// UpdateFailed is set once an update order has failed here.
+	UpdateFailed *UpdateFailure `json:"update_failed,omitempty"`
 }
 
 type NodeMetrics struct {
@@ -405,7 +428,27 @@ type NodeView struct {
 	Metrics     NodeMetrics `json:"metrics"`
 	AllocatedMB int         `json:"allocated_mb"` // memory promised to instances
 	Instances   int         `json:"instances"`
+	// Update is where the node stands in an update of the cluster; nil when
+	// none is asking anything of it.
+	Update *NodeUpdate `json:"update,omitempty"`
 }
+
+// NodeUpdate is one node's part in updating the cluster to a version.
+type NodeUpdate struct {
+	To    string     `json:"to"`
+	State string     `json:"state"` // one of the NodeUpdate states below
+	Since *time.Time `json:"since,omitempty"`
+	Error string     `json:"error,omitempty"`
+}
+
+// NodeUpdate states.
+const (
+	UpdateWaiting = "waiting"  // its turn is coming (once it is up, if it is down)
+	UpdateRunning = "updating" // updating now
+	UpdateFailed  = "failed"   // its update failed; the cluster's update stopped there
+	UpdateOnHold  = "on-hold"  // waiting, but the cluster's update stopped at a failure
+	UpdateByHand  = "by-hand"  // its jokku is too old to update itself
+)
 
 type AppView struct {
 	Name      string    `json:"name"`

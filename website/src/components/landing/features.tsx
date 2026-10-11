@@ -303,7 +303,7 @@ const UpdateVisual = () => (
   <Mono className="text-muted">
     <Cmd>sudo jokku update</Cmd>
     <div>
-      <span className="text-accent">-----&gt;</span> Updating jokku from v0.8.3 to v0.8.4
+      <span className="text-accent">-----&gt;</span> Updating jokku from v0.8.4 to v0.8.5
     </div>
     <div>
       <span className="text-accent">-----&gt;</span> Backing up the database
@@ -311,7 +311,7 @@ const UpdateVisual = () => (
     <div>
       <span className="text-accent">-----&gt;</span> Restarting jokku
     </div>
-    <div className="pl-[4.5ch]">jokku v0.8.4 is running</div>
+    <div className="pl-[4.5ch]">jokku v0.8.5 is running</div>
     <div className="mt-1.5 text-[10.5px]">
       <span className="text-good">●</span> apps kept serving · rolls back if it fails
     </div>
@@ -369,8 +369,8 @@ export const Features = () => (
       microVM with <code className="font-mono text-[13px]">jokku enter</code>.
     </Card>
     <Card title="Updates you don’t worry about" href="/docs/updating" visual={<UpdateVisual />}>
-      One command updates a server. Your apps keep serving, the state is backed up first, and a
-      release that doesn’t come up is rolled back.
+      One command updates every server, one at a time. Your apps keep serving, the state is backed
+      up first, and a release that doesn’t come up is rolled back.
     </Card>
   </div>
 );

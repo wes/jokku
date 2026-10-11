@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wes/jokku/internal/dns"
@@ -101,6 +102,9 @@ type Config struct {
 	// GCArtifacts deletes root filesystems no instance here uses. Off on
 	// the control node, which keeps recent releases for rollbacks.
 	GCArtifacts bool
+	// Updater updates jokku here when the control node says to; nil on the
+	// control node, which "jokku update" updates.
+	Updater Updater
 	// Seed is the state to start from before the control node has been
 	// heard, when none is cached: an edge reaches the control node only over
 	// the mesh, so it needs its first peer before its first poll.
@@ -149,6 +153,8 @@ type Agent struct {
 	fence        fence
 	applying     string // the ETag of the state the current reconcile pass applies (under mu)
 	volumeClient *http.Client
+
+	startingUpdate atomic.Bool // while an update order is being started
 }
 
 // local is what this node knows about an instance beyond the desired state.
@@ -350,6 +356,7 @@ func (a *Agent) reconcile(ctx context.Context) error {
 	if st == nil {
 		return nil // nothing known yet
 	}
+	a.maybeUpdate(ctx, st.Update)
 	if st.Node.Name != "" && a.Mesh != nil {
 		if err := a.syncMesh(ctx, st); err != nil {
 			a.logOnce("mesh", err)
@@ -757,7 +764,10 @@ func (a *Agent) reportLoop(ctx context.Context) {
 func (a *Agent) Status() *types.NodeStatus {
 	st := &types.NodeStatus{
 		Protocol: types.ProtocolVersion, Version: a.Version, CanRun: a.canRun, Instances: []types.InstanceStatus{},
-		Features: []string{types.FeatureVolumes}, Volumes: a.volumeStatus(),
+		Features: []string{types.FeatureVolumes}, Volumes: a.volumeStatus(), UpdateFailed: a.updateFailure(),
+	}
+	if a.Updater != nil {
+		st.Features = append(st.Features, types.FeatureUpdate)
 	}
 	if d := a.Desired(); d != nil {
 		st.ETag = d.ETag

@@ -60,7 +60,7 @@ func (c *Controller) ComputeState(ctx context.Context, name string) (*types.Node
 	}
 	subnet, meshIP := NodeSubnet(c.ClusterCIDR, node.SubnetIndex)
 	st := &types.NodeState{
-		Version: c.Version,
+		Version: c.Version, Update: c.updateFor(name),
 		Node: types.NodeIdentity{Name: node.Name, Role: node.Role, Subnet: subnet.String(), MeshIP: meshIP.String(),
 			ClusterCIDR: c.ClusterCIDR.String()},
 		Peers:     []types.Peer{},

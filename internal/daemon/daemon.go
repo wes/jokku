@@ -34,6 +34,7 @@ import (
 	"github.com/wes/jokku/internal/sshkeys"
 	"github.com/wes/jokku/internal/store"
 	"github.com/wes/jokku/internal/types"
+	"github.com/wes/jokku/internal/update"
 	"github.com/wes/jokku/internal/version"
 	"github.com/wes/jokku/internal/vm"
 )
@@ -249,6 +250,7 @@ func runWorker(ctx context.Context, cfg Config, nf *NodeFile, log *slog.Logger) 
 			URL: controlURL, Token: nf.NodeToken, Pin: nf.Pin,
 		}},
 		Resolver: &dns.Applier{DataDir: cfg.DataDir},
+		Updater:  &update.Systemd{DataDir: cfg.DataDir},
 		DataDir:  cfg.DataDir, DNS: vm.HostDNS(), Version: version.Version, Log: log, GCArtifacts: true,
 	}
 	role := "worker"

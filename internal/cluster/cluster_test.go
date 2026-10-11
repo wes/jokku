@@ -440,7 +440,9 @@ type node struct {
 	api        *httptest.Server // the agent API, where other nodes copy volumes from
 	cancel     context.CancelFunc
 	stopped    chan struct{}
-	cut        atomic.Bool // cut off from the control node
+	cut        atomic.Bool   // cut off from the control node
+	version    string        // the jokku it runs; "test" if unset
+	updater    agent.Updater // nil: it can't update itself
 }
 
 type harness struct {
@@ -466,6 +468,12 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessAt(t, "test")
+}
+
+// newHarnessAt is newHarness with the control node on version v.
+func newHarnessAt(t *testing.T, v string) *harness {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	dir := t.TempDir()
@@ -483,7 +491,7 @@ func newHarness(t *testing.T) *harness {
 		disks: &diskTracker{attached: map[string]string{}}, apiAddrs: map[string]string{}}
 	h.ctl = cluster.New(&cluster.Controller{
 		Store: st, Log: log, Self: "control", ClusterCIDR: netip.MustParsePrefix("10.210.0.0/16"),
-		Version: "test", Pin: pin, TickEvery: 200 * time.Millisecond, DataDir: dir,
+		Version: v, Pin: pin, TickEvery: 200 * time.Millisecond, DataDir: dir,
 		AgentAddr: func(n store.Node) string {
 			h.apiMu.Lock()
 			defer h.apiMu.Unlock()
@@ -507,7 +515,7 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(h.ts.Close)
 	h.ctl.Address = h.ts.Listener.Addr().String()
 
-	if err := st.RegisterControlNode(ctx, store.Node{Name: "control", CPUs: 4, MemoryMB: 4096, Version: "test"}); err != nil {
+	if err := st.RegisterControlNode(ctx, store.Node{Name: "control", CPUs: 4, MemoryMB: 4096, Version: v}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SetNodeWireGuard(ctx, "control", wgKey(t), "127.0.0.1:51820"); err != nil {
@@ -517,6 +525,7 @@ func newHarness(t *testing.T) *harness {
 	if err := st.SetNodeAgentToken(ctx, "control", "control-agent-token"); err != nil {
 		t.Fatal(err)
 	}
+	h.nodes["control"] = &node{version: v}
 	h.startNode("control", "", "control-agent-token", dir, &cluster.LocalPlane{C: h.ctl, DataDir: dir})
 
 	// The admin API, as the CLI reaches it (unix socket paths must be short).
@@ -573,16 +582,23 @@ func wgKey(t *testing.T) string {
 
 func (h *harness) startNode(name, token, agentToken, dir string, plane agent.ControlPlane) *node {
 	n := h.nodes[name]
-	if n == nil {
-		n = &node{name: name, dir: dir, rt: newFakeRuntime(name, h.disks), mesh: &fakeMesh{}, proxy: &fakeProxy{}, resolver: &fakeResolver{},
-			token: token, agentToken: agentToken}
+	if n == nil || n.rt == nil {
+		if n == nil {
+			n = &node{}
+		}
+		n.name, n.dir, n.rt, n.mesh, n.proxy, n.resolver = name, dir, newFakeRuntime(name, h.disks), &fakeMesh{}, &fakeProxy{}, &fakeResolver{}
+		n.token, n.agentToken = token, agentToken
 		n.rt.guestDir = filepath.Join(dir, "guests")
 		h.nodes[name] = n
+	}
+	if n.version == "" {
+		n.version = "test"
 	}
 	ctx, cancel := context.WithCancel(h.ctx)
 	n.cancel, n.stopped = cancel, make(chan struct{})
 	a := agent.New(agent.Config{
-		Control: cuttable{plane, &n.cut}, Runtime: n.rt, Mesh: n.mesh, Proxy: n.proxy, Resolver: n.resolver, DataDir: dir, Version: "test", Log: h.log,
+		Control: cuttable{plane, &n.cut}, Runtime: n.rt, Mesh: n.mesh, Proxy: n.proxy, Resolver: n.resolver, DataDir: dir, Version: n.version, Log: h.log,
+		Updater:     n.updater,
 		GCArtifacts: name != "control", ReconcileEvery: 100 * time.Millisecond, ReportEvery: 200 * time.Millisecond, UpFor: time.Second,
 		Metrics: func() types.NodeMetrics { return types.NodeMetrics{CPUs: 4, MemoryMB: 4096} },
 	})
@@ -623,18 +639,26 @@ func (h *harness) remote(token string) agent.ControlPlane {
 // join adds a worker the way "jokku setup --join" does.
 func (h *harness) join(name string) *node {
 	h.t.Helper()
+	return h.joinAt(name, "test", nil)
+}
+
+// joinAt adds a worker, then runs jokku v there (as if the control node was
+// updated since), which updates itself with updater (nil: it can't).
+func (h *harness) joinAt(name, v string, updater agent.Updater) *node {
+	h.t.Helper()
 	tok, err := h.ctl.CreateJoinToken(h.ctx, time.Hour, false)
 	if err != nil {
 		h.t.Fatal(err)
 	}
 	res, err := h.postJoin(types.JoinRequest{
-		Protocol: types.ProtocolVersion, Version: "test", Token: tok.Token, Name: name,
+		Protocol: types.ProtocolVersion, Version: h.ctl.Version, Token: tok.Token, Name: name,
 		PublicKey: wgKey(h.t), Endpoint: "127.0.0.1:51820", CPUs: 4, MemoryMB: 4096,
 	}, h.pin)
 	if err != nil {
 		h.t.Fatal(err)
 	}
 	dir := h.t.TempDir()
+	h.nodes[name] = &node{version: v, updater: updater}
 	return h.startNode(name, res.NodeToken, res.AgentToken, dir, h.remote(res.NodeToken))
 }
 

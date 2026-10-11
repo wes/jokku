@@ -14,9 +14,14 @@ import (
 // deleted, since the node has removed them.
 func (c *Controller) Report(ctx context.Context, node string, st *types.NodeStatus) error {
 	if st.Protocol != types.ProtocolVersion {
+		if c.turnAway(node, st) {
+			return fmt.Errorf("node %s speaks protocol %d, this control node speaks %d: it is told to update itself to %s",
+				node, st.Protocol, types.ProtocolVersion, c.Version)
+		}
 		return fmt.Errorf("node %s speaks protocol %d, this control node speaks %d: update it with sudo jokku update",
 			node, st.Protocol, types.ProtocolVersion)
 	}
+	c.updateReported(node, st)
 	if err := c.Store.NodeReported(ctx, node, st.Version, st.CanRun, st.Features, st.Metrics); err != nil {
 		return err
 	}

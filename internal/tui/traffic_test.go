@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -72,6 +73,140 @@ func TestTrafficView(t *testing.T) {
 	}
 	if os.Getenv("PRINT_TUI") != "" {
 		fmt.Println(out)
+	}
+}
+
+// TestTrafficLaneNames: the names column grows to fit a long name, up to
+// a point, and a name lights up while its app has a request on the way.
+func TestTrafficLaneNames(t *testing.T) {
+	defer lipgloss.SetColorProfile(lipgloss.ColorProfile())
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	clock := stopClock(t)
+	long := func(w, h int) *model {
+		m := trafficModel(w, h)
+		m.st.Apps = append(m.st.Apps, types.AppView{Name: "uptime-limehosting"}, types.AppView{Name: "a-really-long-app-name-for-testing"})
+		return m
+	}
+	m := long(160, 40)
+	raw := m.View()
+	lines := map[string]string{}
+	for _, l := range strings.Split(ansi.Strip(raw), "\n") {
+		if f := strings.Fields(l); len(f) > 0 {
+			lines[f[0]] = l
+		}
+	}
+	// 24 columns of names, then the machines and the rate, lined up.
+	rate := -1
+	for name, want := range map[string]string{
+		"blog":                     "  blog" + strings.Repeat(" ", 20) + " ",
+		"uptime-limehosting":       "  uptime-limehosting" + strings.Repeat(" ", 6) + " ",
+		"a-really-long-app-name-…": "  a-really-long-app-name-… ",
+	} {
+		l := lines[name]
+		if !strings.HasPrefix(l, want) {
+			t.Errorf("%s's lane: %q, want it to start %q", name, l, want)
+		}
+		if i := utf8.RuneCountInString(l[:max(strings.Index(l, "0.0/s"), 0)]); rate == -1 {
+			rate = i
+		} else if i != rate {
+			t.Errorf("%s's rate is at %d, not %d: %q", name, i, rate, l)
+		}
+	}
+	// shop has requests on the way; blog has none.
+	if !strings.Contains(raw, sAccent.Render("shop")) || strings.Contains(raw, sAccent.Render("blog")) {
+		t.Error("only shop's name should be lit")
+	}
+	*clock = clock.Add(travelTime * 2)
+	m.updateTraffic(frameMsg{})
+	if strings.Contains(m.View(), sAccent.Render("shop")) {
+		t.Error("shop's name is still lit after its requests landed")
+	}
+
+	// A narrow terminal keeps its lanes: the names go back to 14 columns.
+	for _, w := range []int{60, 100} {
+		m := long(w, 30)
+		for _, l := range strings.Split(m.View(), "\n") {
+			if lipgloss.Width(l) > w {
+				t.Errorf("%d columns: a line of %d", w, lipgloss.Width(l))
+				break
+			}
+		}
+		if out := ansi.Strip(m.View()); w == 60 && !strings.Contains(out, "  uptime-limeho… 0      0.0/s") {
+			t.Errorf("60 columns:\n%s", out)
+		}
+	}
+}
+
+// TestTrafficMachines: each app's machines after its name, a line for
+// each process group when there's more than one, and sleeping machines
+// dim.
+func TestTrafficMachines(t *testing.T) {
+	defer lipgloss.SetColorProfile(lipgloss.ColorProfile())
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	m := trafficModel(160, 40)
+	inst := func(app, name string, release int, state, desired string) types.InstanceView {
+		return types.InstanceView{App: app, Instance: types.Instance{Name: name, Release: release, State: state, Desired: desired}}
+	}
+	m.st.Apps = append(m.st.Apps,
+		types.AppView{Name: "sleepy", Release: 2, Asleep: true, Wanted: 2},
+		types.AppView{Name: "home", Kind: types.KindExternal})
+	m.st.Instances = append(m.st.Instances,
+		inst("shop", "worker.1", 12, "healthy", "running"),
+		inst("shop", "web.3", 11, "healthy", "running"), // the old release's, on its way out
+		inst("shop", "web.4", 12, "healthy", "stopped"), // retiring
+		inst("sleepy", "web.1", 2, "stopped", "running"),
+		inst("sleepy", "web.2", 2, "stopped", "running"))
+	raw := strings.Split(m.View(), "\n")
+	plain := strings.Split(ansi.Strip(m.View()), "\n")
+	find := func(prefix string) (string, string) {
+		for i, l := range plain {
+			if strings.HasPrefix(l, prefix) {
+				return l, raw[i]
+			}
+		}
+		t.Fatalf("no line starts %q:\n%s", prefix, strings.Join(plain, "\n"))
+		return "", ""
+	}
+	field := func(l string) string { return strings.Join(strings.Fields(l)[1:3], " ") }
+
+	shop, _ := find("  shop ")
+	web, _ := find("    web ")
+	worker, workerRaw := find("    worker ")
+	if field(shop) != "3 ●●○" || field(web) != "2 ●○" || field(worker) != "1 ●" {
+		t.Errorf("shop: %q, web: %q, worker: %q", shop, web, worker)
+	}
+	if strings.Contains(workerRaw, "┄") {
+		t.Errorf("a process group's line has a lane: %q", worker)
+	}
+	// One process group: no lines under it.
+	blog, _ := find("  blog ")
+	if field(blog) != "1 ○" {
+		t.Errorf("blog: %q", blog)
+	}
+	for i, l := range plain {
+		if strings.HasPrefix(l, "  blog ") && strings.HasPrefix(plain[i+1], "    ") {
+			t.Errorf("blog has a line under it: %q", plain[i+1])
+		}
+	}
+	// Asleep: dim, not down, and said on the right.
+	sleepy, sleepyRaw := find("  sleepy ")
+	if field(sleepy) != "2 ○○" || !strings.HasSuffix(strings.TrimRight(sleepy, " "), "asleep") ||
+		!strings.Contains(sleepyRaw, sDim.Render("○")) || strings.Contains(sleepyRaw, sBad.Render("○")) {
+		t.Errorf("sleepy: %q", sleepy)
+	}
+	// No machines to count for a host no app serves, or an external app.
+	for _, prefix := range []string{"  (no app) ", "  home "} {
+		if l, _ := find(prefix); !strings.HasSuffix(strings.Fields(strings.TrimPrefix(l, prefix))[0], "/s") {
+			t.Errorf("%q has machines: %q", prefix, l)
+		}
+	}
+
+	// The overview shows a sleeping app's machines dim too.
+	m.view = overview
+	for _, l := range strings.Split(m.View(), "\n") {
+		if strings.Contains(l, "sleepy") && (!strings.Contains(l, sDim.Render("○○")) || strings.Contains(l, sBad.Render("○"))) {
+			t.Errorf("overview: %q", ansi.Strip(l))
+		}
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -538,18 +539,79 @@ func (m *model) trafficView() string {
 		}
 		return names[i] < names[j]
 	})
-	labelW := 14
+	// Each app's machines, as a count and dots, after its name. An app with
+	// more than one process group gets a line for each under its lane.
+	groups, apps := m.machineGroups()
+	countW, machW := 0, 0
+	for _, gs := range groups {
+		n := 0
+		for _, g := range gs {
+			n += len(g.states)
+			countW = max(countW, len(strconv.Itoa(len(g.states))))
+			machW = max(machW, dotsWidth(len(g.states)))
+		}
+		countW = max(countW, len(strconv.Itoa(n)))
+		machW = max(machW, dotsWidth(n))
+	}
+	machCol := 0
+	if machW > 0 {
+		machW += countW + 1
+		machCol = machW + 1
+	}
+	machines := func(states []string) string {
+		if machW == 0 {
+			return ""
+		}
+		if len(states) == 0 {
+			return " " + pad(sDim.Render(fmt.Sprintf("%*d", countW, 0)), machW)
+		}
+		return " " + pad(fmt.Sprintf("%*d ", countW, len(states))+machineDots(states), machW)
+	}
+
+	// The names column fits the longest name, from 14 columns up to 24, as
+	// long as the lanes keep 20.
 	rightW := max(m.width*35/100, 30)
-	laneW := max(m.width-labelW-rightW-8, 10)
+	labelW := 14
+	for _, name := range names {
+		labelW = max(labelW, len(name))
+	}
+	labelW = min(labelW, 24, max(m.width-rightW-8-20-machCol, 14))
+	laneW := max(m.width-labelW-machCol-rightW-8, 10)
 	if len(names) == 0 {
 		b.WriteString(sDim.Render("  no apps yet") + "\n")
 	}
+	laneLines := 0
 	for _, name := range names {
 		perSec := float64(st.byApp[name]) / secs
-		label := fmt.Sprintf("  %-*s %5.1f/s ", labelW, trunc(name, labelW), tr.num("lane:"+name, perSec))
+		// A name lights up while its app has a request on the way, which
+		// picks its lane out among many.
+		shown := trunc(name, labelW)
+		if tr.inFlight(name, now) {
+			shown = sAccent.Render(shown)
+		}
+		gs := groups[name]
+		var all []string
+		for _, g := range gs {
+			all = append(all, g.states...)
+		}
+		mach := strings.Repeat(" ", machCol)
+		if a, ok := apps[name]; ok && a.Kind != types.KindExternal {
+			mach = machines(sortStates(all))
+		}
+		label := "  " + pad(shown, labelW) + mach + fmt.Sprintf(" %5.1f/s ", tr.num("lane:"+name, perSec))
 		heat := clamp01(math.Log10(1+perSec) / 2) // 1/s a little, 100/s all the way
-		b.WriteString(label + tr.lane(name, laneW, heat, now, pal) + tr.arrow(name, now, pal) +
-			tr.targets(name, st.byTarget[name], secs, rightW, now, pal) + "\n")
+		right := tr.targets(name, st.byTarget[name], secs, rightW, now, pal)
+		if a := apps[name]; len(st.byTarget[name]) == 0 && (a.Asleep || a.Stopped) {
+			right = sDim.Render(appStatus(a))
+		}
+		b.WriteString(label + tr.lane(name, laneW, heat, now, pal) + tr.arrow(name, now, pal) + right + "\n")
+		laneLines++
+		if len(gs) > 1 {
+			for _, g := range gs {
+				b.WriteString("    " + pad(sDim.Render(trunc(g.name, labelW-2)), labelW-2) + machines(g.states) + "\n")
+				laneLines++
+			}
+		}
 	}
 
 	// Which nodes' proxies receive the traffic.
@@ -563,7 +625,7 @@ func (m *model) trafficView() string {
 
 	// The latest requests.
 	b.WriteString("\n" + sSection.Render("Recent requests") + "\n")
-	rows := max(m.height-len(names)-15, 3)
+	rows := max(m.height-laneLines-15, 3)
 	start := max(len(tr.listed)-rows, 0)
 	if len(tr.listed) == 0 {
 		b.WriteString(sDim.Render("  waiting for requests...") + "\n")
@@ -591,6 +653,112 @@ func sparkWidths(room int) (reqs, p95 int) {
 		return room, 0
 	}
 	return 0, 0
+}
+
+// procGroup is one process group's machines (web, worker...), as their
+// states: up, starting, asleep, stopped or down, in that order.
+type procGroup struct {
+	name   string
+	states []string
+}
+
+// machineGroups is each app's machines on its current release, by process
+// group, web first; and the apps by name.
+func (m *model) machineGroups() (map[string][]procGroup, map[string]types.AppView) {
+	groups, apps := map[string][]procGroup{}, map[string]types.AppView{}
+	if m.st == nil {
+		return groups, apps
+	}
+	for _, a := range m.st.Apps {
+		apps[a.Name] = a
+	}
+	byGroup := map[string]map[string][]string{}
+	for _, in := range m.st.Instances {
+		a, ok := apps[in.App]
+		if !ok || in.Desired != "running" || in.Release != a.Release {
+			continue // retiring, or an old release's
+		}
+		group, _, _ := strings.Cut(in.Name, ".")
+		if byGroup[in.App] == nil {
+			byGroup[in.App] = map[string][]string{}
+		}
+		byGroup[in.App][group] = append(byGroup[in.App][group], machineState(a, in))
+	}
+	for app, gs := range byGroup {
+		for _, name := range sortedKeys(gs) {
+			groups[app] = append(groups[app], procGroup{name, sortStates(gs[name])})
+		}
+		sort.SliceStable(groups[app], func(i, j int) bool { return groups[app][i].name == "web" && groups[app][j].name != "web" })
+	}
+	return groups, apps
+}
+
+var stateOrder = map[string]int{"up": 0, "starting": 1, "asleep": 2, "stopped": 3, "down": 4}
+
+// machineState is how a machine shows: up, starting (or waking), asleep,
+// stopped, or down.
+func machineState(a types.AppView, in types.InstanceView) string {
+	switch in.State {
+	case "healthy":
+		return "up"
+	case "crashed", "failed", "unknown":
+		return "down"
+	}
+	switch {
+	case a.Asleep:
+		return "asleep"
+	case a.Stopped:
+		return "stopped"
+	}
+	return "starting"
+}
+
+func sortStates(states []string) []string {
+	sort.SliceStable(states, func(i, j int) bool { return stateOrder[states[i]] < stateOrder[states[j]] })
+	return states
+}
+
+// machineDots draws machines the way the overview draws an app's
+// instances: a full dot for each one up, a hollow one for the rest, yellow
+// while starting, dim while asleep or stopped, red when down. More than 10
+// show as one dot, for the least well.
+func machineDots(states []string) string {
+	dot := func(s string) string {
+		switch s {
+		case "up":
+			return sGood.Render("●")
+		case "starting":
+			return sWarn.Render("○")
+		case "asleep", "stopped":
+			return sDim.Render("○")
+		}
+		return sBad.Render("○")
+	}
+	if len(states) > 10 {
+		return dot(states[len(states)-1])
+	}
+	var b strings.Builder
+	for _, s := range states {
+		b.WriteString(dot(s))
+	}
+	return b.String()
+}
+
+func dotsWidth(n int) int {
+	if n > 10 {
+		return 1
+	}
+	return n
+}
+
+// inFlight says whether any of a lane's requests is on its way across.
+func (tr *traffic) inFlight(lane string, now time.Time) bool {
+	for _, p := range tr.lanes[lane] {
+		if prog := float64(now.Sub(p.born)) / float64(p.trip); prog >= 0 && prog < 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // lane draws one app's track with its requests in flight. With effects on,
@@ -802,7 +970,7 @@ func fmtMS(ms float64) string {
 	return fmt.Sprintf("%.1fs", ms/1000)
 }
 
-func sortedKeys(m map[string]int) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)

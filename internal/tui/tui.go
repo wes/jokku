@@ -348,6 +348,22 @@ func (m *model) instances() []types.InstanceView {
 	return out
 }
 
+// selected is the selected row's background: a shade lighter than a dark
+// terminal, or darker than a light one. Each color mode gets its own, since
+// the nearest of 256 colors to a warm brown is a dark red, which reads as
+// an error.
+var selected = lipgloss.CompleteAdaptiveColor{
+	Light: lipgloss.CompleteColor{TrueColor: "#ECE5DB", ANSI256: "254", ANSI: "7"},
+	Dark:  lipgloss.CompleteColor{TrueColor: "#2F2A24", ANSI256: "236", ANSI: "8"},
+}
+
+// tabOn is the open tab's background, the accent; with 16 colors, yellow,
+// which is closer to amber than the red the accent would become.
+var tabOn = lipgloss.CompleteAdaptiveColor{
+	Light: lipgloss.CompleteColor{TrueColor: "#A9580F", ANSI256: "130", ANSI: "3"},
+	Dark:  lipgloss.CompleteColor{TrueColor: "#E8963F", ANSI256: "173", ANSI: "3"},
+}
+
 // Styles: the website's terminal colors, warm amber on dark (or a darker
 // amber on a light terminal).
 
@@ -360,6 +376,7 @@ var (
 	bad       = lipgloss.AdaptiveColor{Light: "#B42318", Dark: "#F07A6A"}
 	cyan      = lipgloss.AdaptiveColor{Light: "#1F7A70", Dark: "#8FD0C4"}
 	sTitle    = lipgloss.NewStyle().Bold(true).Foreground(accent)
+	sAccent   = lipgloss.NewStyle().Foreground(accent)
 	sDim      = lipgloss.NewStyle().Foreground(dim)
 	sGood     = lipgloss.NewStyle().Foreground(good)
 	sWarn     = lipgloss.NewStyle().Foreground(warn)
@@ -367,7 +384,7 @@ var (
 	sCyan     = lipgloss.NewStyle().Foreground(cyan)
 	sHead     = lipgloss.NewStyle().Bold(true).Foreground(dim)
 	sTab      = lipgloss.NewStyle().Padding(0, 1).Foreground(dim)
-	sTabOn    = lipgloss.NewStyle().Padding(0, 1).Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#FFFAF3", Dark: "#1C130A"}).Background(accent)
-	sSelected = lipgloss.NewStyle().Background(lipgloss.AdaptiveColor{Light: "#F6E4CC", Dark: "#3B2916"})
+	sTabOn    = lipgloss.NewStyle().Padding(0, 1).Bold(true).Foreground(lipgloss.AdaptiveColor{Light: "#FFFAF3", Dark: "#1C130A"}).Background(tabOn)
+	sSelected = lipgloss.NewStyle().Background(selected)
 	sSection  = lipgloss.NewStyle().Bold(true).Foreground(accent).MarginTop(1)
 )

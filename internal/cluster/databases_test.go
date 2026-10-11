@@ -102,6 +102,21 @@ func TestDatabases(t *testing.T) {
 	if len(all) != 3 {
 		t.Errorf("db:list: %+v", all)
 	}
+	// jokku top shows which app each database belongs to.
+	st, err := c.ClusterStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	links := map[string][]types.DatabaseLink{}
+	for _, a := range st.Apps {
+		links[a.Name] = a.Links
+	}
+	if l := links["mysql-orders"]; len(l) != 1 || l[0] != (types.DatabaseLink{App: "shop", Var: "ORDERS_URL"}) {
+		t.Errorf("mysql-orders's links in the status: %+v", l)
+	}
+	if l := links["shop"]; len(l) != 0 {
+		t.Errorf("an app has links of its own: %+v", l)
+	}
 
 	// Linked databases aren't destroyed.
 	if err := c.DestroyDatabase(ctx, "postgres", "shopdb"); err == nil || !strings.Contains(err.Error(), "linked to shop") {

@@ -77,8 +77,19 @@ func (m *model) header() string {
 	if m.err != nil {
 		age = sBad.Render("stale: " + m.err.Error())
 	}
-	parts := []string{title, sDim.Render("control " + m.st.Control), sDim.Render(m.st.Version), nodes,
-		fmt.Sprintf("%d apps", t.Apps), inst, age}
+	apps, dbs := 0, 0
+	for _, a := range m.st.Apps {
+		if isDatabase(a) {
+			dbs++
+		} else {
+			apps++
+		}
+	}
+	parts := []string{title, sDim.Render("control " + m.st.Control), sDim.Render(m.st.Version), nodes, plural(apps, "app")}
+	if dbs > 0 {
+		parts = append(parts, plural(dbs, "database"))
+	}
+	parts = append(parts, inst, age)
 	return strings.Join(parts, sDim.Render("  ·  "))
 }
 
@@ -117,9 +128,10 @@ func (m *model) footer() string {
 
 const helpText = `jokku top shows the cluster live, refreshed every two seconds.
 
-  1 Overview    nodes, apps and recent events at a glance
+  1 Overview    nodes, apps, databases and recent events at a glance
   2 Nodes       each machine: status, CPU, memory, memory promised to VMs
-  3 Apps        each app: healthy instances, release, last deploy, domains
+  3 Apps        each app: healthy instances, release, last deploy, domains,
+                and under it the databases it uses; then every database
   4 Instances   each microVM: state, node, CPU, memory, uptime, restarts
   5 Events      deploys, crashes, nodes coming and going
   6 Traffic     every request live: dots fly across each app's lane, colored
@@ -146,11 +158,22 @@ func (m *model) overview() string {
 			bar(pct(n.AllocatedMB, n.MemoryMB), 10), plural(n.Instances, "instance"))
 	}
 	b.WriteString(sSection.Render("Apps") + "\n")
-	if len(m.st.Apps) == 0 {
+	list := m.appList()
+	if len(list) == 0 || isDatabase(list[0]) {
 		b.WriteString(sDim.Render("  no apps yet: git push jokku main") + "\n")
 	}
-	for i, a := range m.st.Apps {
+	for i, a := range list {
 		line := fmt.Sprintf("  %s %-20s %s v%-4d %s", appDot(a), trunc(a.Name, 20), pad(appDots(a), 12), a.Release, deploySummary(a.Deploy))
+		if isDatabase(a) {
+			if i == 0 || !isDatabase(list[i-1]) {
+				b.WriteString(sSection.Render("Databases") + "\n")
+			}
+			used := sDim.Render("not linked")
+			if len(a.Links) > 0 {
+				used = sDim.Render("used by ") + linkedApps(a)
+			}
+			line = fmt.Sprintf("  %s %-20s %s %-9s %s", appDot(a), trunc(dbName(a), 20), pad(appDots(a), 12), a.Kind, used)
+		}
 		b.WriteString(m.selectable(overview, i, line) + "\n")
 	}
 	if line := m.backupsLine(); line != "" {
@@ -192,22 +215,51 @@ func (m *model) nodes() string {
 
 // Apps
 
+// apps lists the apps, each with the databases it uses under it, then the
+// databases, each with the apps that use it.
 func (m *model) apps() string {
 	var b strings.Builder
 	b.WriteString(sHead.Render(fmt.Sprintf("  %-22s %-10s %-14s %-6s %-26s %s", "APP", "STATUS", "INSTANCES", "REL", "LAST DEPLOY", "DOMAINS")) + "\n")
-	if len(m.st.Apps) == 0 {
+	list := m.appList()
+	if len(list) == 0 || isDatabase(list[0]) {
 		b.WriteString(sDim.Render("  no apps yet: git push jokku main") + "\n")
 	}
-	for i, a := range m.st.Apps {
-		domains := strings.Join(a.Domains, " ")
-		if a.Kind != "" {
-			domains = sDim.Render(a.Kind + " database (jokku db:" + a.Kind + ":info " + strings.TrimPrefix(a.Name, a.Kind+"-") + ")")
+	uses := databasesOf(list)
+	for i, a := range list {
+		if isDatabase(a) {
+			if i == 0 || !isDatabase(list[i-1]) {
+				b.WriteString("\n" + sHead.Render(fmt.Sprintf("  %-22s %-10s %-14s %-9s %-23s %s", "DATABASE", "STATUS", "INSTANCES", "ENGINE", "LAST DEPLOY", "USED BY")) + "\n")
+			}
+			used := sDim.Render("not linked")
+			if len(a.Links) > 0 {
+				used = linkedApps(a)
+			}
+			line := fmt.Sprintf("  %s %-20s %-10s %s %-9s %s %s", appDot(a), trunc(dbName(a), 20), appStatus(a),
+				pad(appDots(a), 14), a.Kind, pad(deploySummary(a.Deploy), 23), used)
+			b.WriteString(m.selectable(appsView, i, line) + "\n")
+			continue
 		}
-		line := fmt.Sprintf("  %s %-20s %-10s %s %-6s %-26s %s", appDot(a), trunc(a.Name, 20), appStatus(a),
-			pad(appDots(a), 14), fmt.Sprintf("v%d", a.Release), trunc(deploySummary(a.Deploy), 26), domains)
+		line := fmt.Sprintf("  %s %-20s %-10s %s %-6s %s %s", appDot(a), trunc(a.Name, 20), appStatus(a),
+			pad(appDots(a), 14), fmt.Sprintf("v%d", a.Release), pad(deploySummary(a.Deploy), 26), strings.Join(a.Domains, " "))
 		b.WriteString(m.selectable(appsView, i, line) + "\n")
+		for _, u := range uses[a.Name] {
+			fmt.Fprintf(&b, "    %s %-18s %-10s %s %s %s\n", sDim.Render("└"), trunc(dbName(u.db), 18), appStatus(u.db),
+				pad(appDots(u.db), 14), pad(sDim.Render(u.db.Kind), 33), sDim.Render(u.varName))
+		}
+	}
+	if a, ok := m.selectedApp(); ok && isDatabase(a) {
+		b.WriteString("\n" + sDim.Render(fmt.Sprintf("  %s, a %s database · jokku db:%s:info %s", a.Name, a.Kind, a.Kind, dbName(a))) + "\n")
 	}
 	return b.String()
+}
+
+// linkedApps is the apps a database is linked to.
+func linkedApps(a types.AppView) string {
+	var names []string
+	for _, l := range a.Links {
+		names = append(names, l.App)
+	}
+	return strings.Join(names, ", ")
 }
 
 // Instances

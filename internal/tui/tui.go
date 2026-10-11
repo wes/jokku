@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/wes/jokku/internal/client"
+	"github.com/wes/jokku/internal/database"
 	"github.com/wes/jokku/internal/types"
 )
 
@@ -278,7 +280,7 @@ func (m *model) rows() int {
 	case nodesView:
 		return len(m.st.Nodes)
 	case appsView, overview:
-		return len(m.st.Apps)
+		return len(m.appList())
 	case instancesView:
 		return len(m.instances())
 	case eventsView:
@@ -312,11 +314,57 @@ func (m *model) selectedNode() (types.NodeView, bool) {
 }
 
 func (m *model) selectedApp() (types.AppView, bool) {
+	list := m.appList()
 	c := m.cursor[m.view]
-	if m.st == nil || c >= len(m.st.Apps) {
+	if c >= len(list) {
 		return types.AppView{}, false
 	}
-	return m.st.Apps[c], true
+	return list[c], true
+}
+
+// appList is the apps the way the overview and the Apps view list them:
+// apps, then databases.
+func (m *model) appList() []types.AppView {
+	if m.st == nil {
+		return nil
+	}
+	var apps, dbs []types.AppView
+	for _, a := range m.st.Apps {
+		if isDatabase(a) {
+			dbs = append(dbs, a)
+		} else {
+			apps = append(apps, a)
+		}
+	}
+	return append(apps, dbs...)
+}
+
+// isDatabase says whether an app is a database (jokku db:), rather than an
+// app of the user's own or an external one.
+func isDatabase(a types.AppView) bool {
+	_, ok := database.Lookup(a.Kind)
+	return ok
+}
+
+// dbName is a database's own name: shopdb for the app postgres-shopdb.
+func dbName(a types.AppView) string { return strings.TrimPrefix(a.Name, a.Kind+"-") }
+
+// dbUse is a database an app is linked to, and the config var that holds
+// its URL.
+type dbUse struct {
+	db      types.AppView
+	varName string
+}
+
+// databasesOf maps each app to the databases it's linked to.
+func databasesOf(list []types.AppView) map[string][]dbUse {
+	out := map[string][]dbUse{}
+	for _, a := range list {
+		for _, l := range a.Links {
+			out[l.App] = append(out[l.App], dbUse{a, l.Var})
+		}
+	}
+	return out
 }
 
 func (m *model) selectedInstance() (types.InstanceView, bool) {

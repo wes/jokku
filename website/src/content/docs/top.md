@@ -15,15 +15,33 @@ Switch with the number keys, or with tab:
 
 | Key | View | Shows |
 | --- | --- | --- |
-| `1` | Overview | Servers, apps and recent events at a glance |
+| `1` | Overview | Servers, apps, databases and recent events at a glance |
 | `2` | Nodes | Each server: status, CPU, memory, and memory promised to microVMs |
-| `3` | Apps | Each app: healthy instances, release, last deploy, domains |
+| `3` | Apps | Each app: healthy instances, release, last deploy, domains, and the databases it uses |
 | `4` | Instances | Each microVM: state, server, CPU, memory, uptime, restarts |
 | `5` | Events | Deploys, crashes, servers coming and going |
 | `6` | Traffic | Every request, live |
 | `7` | Backups | What is and isn't backed up, and the switches to change it |
 
 On a server or app, press `enter` to see its instances, and `l` for an app's logs. `esc` goes back, `?` shows help and `q` quits.
+
+## Apps and databases
+
+The overview and **Apps** list your [databases](/docs/databases) apart from your apps, below them. On **Apps**, each app has the databases it's linked to under it, with the config var that holds each one's URL, and each database shows the apps that use it:
+
+```console
+  APP                    STATUS     INSTANCES      REL    LAST DEPLOY                DOMAINS
+  ● blog                 running    ●              v3     ok 3d ago                  blog.example.com
+    └ shopdb             running    ●              postgres                          DATABASE_URL
+  ● shop                 running    ●●●            v12    ok 1h ago                  shop.example.com
+    └ shopdb             running    ●              postgres                          DATABASE_URL
+    └ cache              asleep     ○              redis                             REDIS_URL
+
+  DATABASE               STATUS     INSTANCES      ENGINE    LAST DEPLOY             USED BY
+  ● scratch              running    ●              mysql     ok 2d ago               not linked
+  ● shopdb               running    ●              postgres  ok 2h ago               blog, shop
+  ● cache                asleep     ○              redis     ok 5d ago               shop
+```
 
 ## Traffic
 

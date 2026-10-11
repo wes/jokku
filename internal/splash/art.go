@@ -27,74 +27,57 @@ const (
 var logoShades = []int{yellowOrange, yellowOrange, orange, orange, redOrange, redOrange}
 
 // sun is a striped sun, the way the eighties drew a sunset, in pixels:
-// each letter is a color from palette and a dot is empty. Two pixels
-// across and two down make one character (see quarterBlocks), so it stands
-// as tall as the logo plus a line above and below, and its shades change
-// on the same lines as the logo's.
+// each letter is a color from palette and a dot is empty. A pixel is one
+// character wide and half a line tall (see halfBlocks), about square, so it
+// stands as tall as the logo plus a line above and below, and its shades
+// change on the same lines as the logo's. Half blocks are in every font
+// that draws the logo; quarter blocks, which drew it before, aren't, and
+// terminals that borrowed them from another font put them out of line.
 var sun = []string{
-	"......................yyyyyyyyyyyy......................",
-	"...................yyyyyyyyyyyyyyyyyy...................",
-	"................yyyyyyyyyyyyyyyyyyyyyyyy................",
-	"...............yyyyyyyyyyyyyyyyyyyyyyyyyy...............",
-	"..............yyyyyyyyyyyyyyyyyyyyyyyyyyyy..............",
-	".............yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.............",
-	"............oooooooooooooooooooooooooooooooo............",
-	"............oooooooooooooooooooooooooooooooo............",
-	"............oooooooooooooooooooooooooooooooo............",
-	"........................................................",
-	".............rrrrrrrrrrrrrrrrrrrrrrrrrrrrrr.............",
-	"........................................................",
-	"...............rrrrrrrrrrrrrrrrrrrrrrrrrr...............",
-	"........................................................",
-	"...................rrrrrrrrrrrrrrrrrr...................",
-	"........................................................",
+	"...........yyyyyy...........",
+	"..........yyyyyyyy..........",
+	"........yyyyyyyyyyyy........",
+	"........yyyyyyyyyyyy........",
+	".......yyyyyyyyyyyyyy.......",
+	".......yyyyyyyyyyyyyy.......",
+	"......oooooooooooooooo......",
+	"......oooooooooooooooo......",
+	"......oooooooooooooooo......",
+	"............................",
+	".......rrrrrrrrrrrrrr.......",
+	"............................",
+	"........rrrrrrrrrrrr........",
+	"............................",
+	"..........rrrrrrrr..........",
+	"............................",
 }
 
 const sunWidth = 28
 
 var palette = map[byte]int{'y': yellowOrange, 'o': orange, 'r': redOrange}
 
-// quadrants are the block characters for each set of filled quarters of a
-// character: bit 0 is the top left, 1 the top right, 2 the bottom left and
-// 3 the bottom right.
-var quadrants = []rune(" ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█")
-
-// quarterBlocks draws pixel rows as text, each square of four pixels as
-// one character: a quarter block in one color over another, or over the
-// terminal's background where pixels are empty. A square holds at most two
-// colors, an empty pixel counting as one. It needs color; without it the
-// picture is a blob.
-func quarterBlocks(pixels []string) []string {
+// halfBlocks draws pixel rows as text, each pair of rows as one line: a
+// full block where both pixels are one color, an upper or lower half block
+// where one is empty, and an upper half block over a background color where
+// they differ. It needs color; without it the picture is a blob.
+func halfBlocks(pixels []string) []string {
 	var lines []string
 	for y := 0; y+1 < len(pixels); y += 2 {
 		var b strings.Builder
-		for x := 0; x+1 < len(pixels[y]); x += 2 {
-			square := [4]byte{pixels[y][x], pixels[y][x+1], pixels[y+1][x], pixels[y+1][x+1]}
-			ink, paper := byte('.'), byte('.')
-			for _, p := range square {
-				switch {
-				case p == '.':
-				case ink == '.':
-					ink = p
-				case p != ink:
-					paper = p
-				}
-			}
-			if ink == '.' {
+		for x := 0; x < len(pixels[y]) && x < len(pixels[y+1]); x++ {
+			top, bottom := pixels[y][x], pixels[y+1][x]
+			switch {
+			case top == '.' && bottom == '.':
 				b.WriteByte(' ')
-				continue
+			case top == bottom:
+				b.WriteString(fg(palette[top]) + "█" + reset)
+			case bottom == '.':
+				b.WriteString(fg(palette[top]) + "▀" + reset)
+			case top == '.':
+				b.WriteString(fg(palette[bottom]) + "▄" + reset)
+			default:
+				b.WriteString(fg(palette[top]) + bg(palette[bottom]) + "▀" + reset)
 			}
-			bits := 0
-			for i, p := range square {
-				if p == ink {
-					bits |= 1 << i
-				}
-			}
-			b.WriteString(fg(palette[ink]))
-			if paper != '.' {
-				b.WriteString(bg(palette[paper]))
-			}
-			b.WriteString(string(quadrants[bits]) + reset)
 		}
 		lines = append(lines, b.String())
 	}

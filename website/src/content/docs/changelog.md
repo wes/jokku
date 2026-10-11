@@ -5,6 +5,12 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.8: The sun lines up
+
+October 11, 2026
+
+- The [splash screen](/docs/installation#the-splash-screen)'s sun is drawn with half blocks (▀ ▄ █), from the same set of characters as the logo, instead of quarter blocks. Many fonts don't have quarter blocks, so terminals borrowed them from another font, which put the edges of the sun and its stripes out of line.
+
 ## v0.8.7: Compressed at home, behind an edge
 
 October 11, 2026

@@ -110,7 +110,7 @@ func art(p painter, o Options) []string {
 		}
 		return lines
 	}
-	pic := quarterBlocks(sun)
+	pic := halfBlocks(sun)
 	lines := make([]string, len(pic))
 	for i, t := range pic {
 		l := strings.Repeat(" ", logoWidth)

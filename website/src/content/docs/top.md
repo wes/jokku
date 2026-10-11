@@ -33,12 +33,16 @@ Press `6` for **Traffic**. Every request flies across its app's lane as a dot an
   42.6 req/s  ·  p50 3.1ms  p95 18ms  ·  0.4% errors  ·  12804 total
   ▅▆▅▇▆▅▆█▇▆▅▄▅▆▇▆▅▆▇█▆▅▄▅▆▇▆▅ req/s   ▁▁▂▁▃▂▁▁▂▁▁▃▂▁▁▂▁▁▂▁▆▂▁▁▂▁▃▂ p95
 
-  api             28.1/s ┄┄━━●┄╌──━●┄┄┄╌─━━●┄┄┄┄╌──━●┄┄ ▶ web.1@server-1 ▮▮▮▮▮▮ 14.2/s  web.2@server-2 ▮▮▮▮▮ 13.9/s
-  shop            14.2/s ┄┄┄┄╌─━●┄┄┄┄╌─━●┄┄┄┄╌──━━✖┄┄┄┄ ▶ web.1@server-2 ▮▮▮▮▮▮ 14.2/s
-  docs             0.3/s ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄╌─━●┄┄┄┄┄ ▶ web.1@server-1 ▮▮▮▮▮▮ 0.3/s
+  api            2 ●●   28.1/s ┄┄━━●┄╌──━●┄┄┄╌─━━●┄┄┄┄╌──━●┄┄ ▶ web.1@server-1 ▮▮▮▮▮▮ 14.2/s  web.2@server-2 ▮▮▮▮▮ 13.9/s
+  shop           3 ●●●  14.2/s ┄┄┄┄╌─━●┄┄┄┄╌─━●┄┄┄┄╌──━━✖┄┄┄┄ ▶ web.1@server-2 ▮▮▮▮▮▮ 14.2/s
+    web          1 ●
+    worker       2 ●●
+  docs           1 ○     0.0/s ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ ▶ asleep
 ```
 
 Dots are green for success, cyan for redirects, yellow for 4xx and red for 5xx, and each trails a tail as it goes. A request slower than most of its app's crawls across, trailing amber, and a 5xx bursts where it lands. The instance a request lands on lights up, and busy lanes glow.
+
+After each app's name are its machines: how many, and a dot for each. A dot is green while its machine runs, yellow while it starts, red when it's down, and hollow and dim while the app [sleeps](/docs/processes#sleep-when-idle), when the lane says **asleep**. An app with more than one process group, such as `web` and `worker`, gets a line for each under its lane. An app's name turns orange while one of its requests is on the way.
 
 The headline shows requests per second, latency and error rate over the last ten seconds, and under it the last minute, a second at a time. Below the lanes, you'll see which servers' proxies received the traffic and a list of recent requests.
 

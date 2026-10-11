@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/wes/jokku/internal/types"
 )
@@ -31,9 +32,9 @@ func sampleStatus() *types.ClusterStatus {
 			{Name: "blog", Release: 3, Healthy: 1, Wanted: 1},
 		},
 		Instances: []types.InstanceView{
-			{App: "shop", CPUPercent: 12, MemoryUsed: 180, Instance: types.Instance{Name: "web.1", Node: "control", State: "healthy", IP: "10.210.1.2", Port: 5000, CPUs: 1, MemoryMB: 256, Desired: "running", StartedAt: now.Add(-time.Hour)}},
-			{App: "shop", Instance: types.Instance{Name: "web.2", Node: "worker-2", State: "unknown", CPUs: 1, MemoryMB: 256, Desired: "running"}},
-			{App: "blog", Instance: types.Instance{Name: "web.1", Node: "worker-1", State: "crashed", Restarts: 3, CPUs: 1, MemoryMB: 256, Desired: "running"}},
+			{App: "shop", CPUPercent: 12, MemoryUsed: 180, Instance: types.Instance{Name: "web.1", Release: 12, Node: "control", State: "healthy", IP: "10.210.1.2", Port: 5000, CPUs: 1, MemoryMB: 256, Desired: "running", StartedAt: now.Add(-time.Hour)}},
+			{App: "shop", Instance: types.Instance{Name: "web.2", Release: 12, Node: "worker-2", State: "unknown", CPUs: 1, MemoryMB: 256, Desired: "running"}},
+			{App: "blog", Instance: types.Instance{Name: "web.1", Release: 3, Node: "worker-1", State: "crashed", Restarts: 3, CPUs: 1, MemoryMB: 256, Desired: "running"}},
 		},
 		Events: []types.ClusterEvent{
 			{At: now, Kind: "node", Node: "worker-2", Message: "worker-2 stopped reporting"},
@@ -84,5 +85,52 @@ func TestViewsRender(t *testing.T) {
 	m.key("enter")
 	if m.view != instancesView || m.filterNode != "worker-1" || len(m.instances()) != 1 {
 		t.Errorf("drill into node: view %v filter %q instances %d", m.view, m.filterNode, len(m.instances()))
+	}
+}
+
+// TestTheSelectedRowIsSubtle: the selected row is a neutral shade in every
+// color mode, never the red the nearest of 256 colors to a brown would be,
+// and it's behind the whole row, styled parts and all.
+func TestTheSelectedRowIsSubtle(t *testing.T) {
+	defer lipgloss.SetColorProfile(lipgloss.ColorProfile())
+	defer lipgloss.SetHasDarkBackground(lipgloss.HasDarkBackground())
+	for _, c := range []struct {
+		profile termenv.Profile
+		dark    bool
+		on      string
+	}{
+		{termenv.TrueColor, true, "\x1b[48;2;47;42;36m"},
+		{termenv.TrueColor, false, "\x1b[48;2;236;229;219m"},
+		{termenv.ANSI256, true, "\x1b[48;5;236m"},
+		{termenv.ANSI256, false, "\x1b[48;5;254m"},
+		{termenv.ANSI, true, "\x1b[100m"},
+		{termenv.ANSI, false, "\x1b[47m"},
+	} {
+		lipgloss.SetColorProfile(c.profile)
+		lipgloss.SetHasDarkBackground(c.dark)
+		m := &model{ctx: context.Background(), cursor: map[view]int{}, st: sampleStatus(), at: time.Now()}
+		m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+		var rows []string
+		for _, l := range strings.Split(m.View(), "\n") {
+			if strings.Contains(l, c.on) {
+				rows = append(rows, l)
+			}
+			for _, red := range []string{"48;5;52m", "48;5;224m", "\x1b[41m", "\x1b[101m"} {
+				if strings.Contains(l, red) {
+					t.Errorf("profile %d, dark %v: a red background in %q", c.profile, c.dark, l)
+				}
+			}
+		}
+		if len(rows) != 1 || !strings.Contains(rows[0], "shop") {
+			t.Errorf("profile %d, dark %v: selected rows %q", c.profile, c.dark, rows)
+			continue
+		}
+		parts := strings.Split(strings.TrimSuffix(rows[0], "\x1b[0m"), "\x1b[0m")
+		for _, p := range parts[1:] {
+			if !strings.HasPrefix(p, c.on) {
+				t.Errorf("profile %d, dark %v: the background stops partway: %q", c.profile, c.dark, rows[0])
+				break
+			}
+		}
 	}
 }

@@ -150,7 +150,7 @@ func (m *model) overview() string {
 		b.WriteString(sDim.Render("  no apps yet: git push jokku main") + "\n")
 	}
 	for i, a := range m.st.Apps {
-		line := fmt.Sprintf("  %s %-20s %s v%-4d %s", appDot(a), trunc(a.Name, 20), pad(dots(a.Healthy, a.Wanted), 12), a.Release, deploySummary(a.Deploy))
+		line := fmt.Sprintf("  %s %-20s %s v%-4d %s", appDot(a), trunc(a.Name, 20), pad(appDots(a), 12), a.Release, deploySummary(a.Deploy))
 		b.WriteString(m.selectable(overview, i, line) + "\n")
 	}
 	if line := m.backupsLine(); line != "" {
@@ -204,7 +204,7 @@ func (m *model) apps() string {
 			domains = sDim.Render(a.Kind + " database (jokku db:" + a.Kind + ":info " + strings.TrimPrefix(a.Name, a.Kind+"-") + ")")
 		}
 		line := fmt.Sprintf("  %s %-20s %-10s %s %-6s %-26s %s", appDot(a), trunc(a.Name, 20), appStatus(a),
-			pad(dots(a.Healthy, a.Wanted), 14), fmt.Sprintf("v%d", a.Release), trunc(deploySummary(a.Deploy), 26), domains)
+			pad(appDots(a), 14), fmt.Sprintf("v%d", a.Release), trunc(deploySummary(a.Deploy), 26), domains)
 		b.WriteString(m.selectable(appsView, i, line) + "\n")
 	}
 	return b.String()
@@ -310,9 +310,22 @@ func (m *model) logView() string {
 
 func (m *model) selectable(v view, i int, line string) string {
 	if m.view == v && m.cursor[v] == i {
-		return sSelected.Render(pad(line, m.width))
+		return highlight(pad(line, m.width))
 	}
 	return line
+}
+
+// highlight puts the selected row's background behind all of a line. Each
+// styled part of it ends in a reset, which would end the background too,
+// so it starts again after each one.
+func highlight(line string) string {
+	on, _, _ := strings.Cut(sSelected.Render(" "), " ")
+	if on == "" {
+		return line // no colors
+	}
+	line = strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+on)
+	line = strings.ReplaceAll(line, "\x1b[m", "\x1b[m"+on)
+	return on + line + "\x1b[0m"
 }
 
 // window returns the range of rows to show so the cursor stays visible.
@@ -346,6 +359,18 @@ func dots(healthy, wanted int) string {
 		return fmt.Sprintf("%s %d/%d", stateDot(healthy == wanted), healthy, wanted)
 	}
 	return sGood.Render(strings.Repeat("●", min(healthy, wanted))) + sBad.Render(strings.Repeat("○", max(wanted-healthy, 0)))
+}
+
+// appDots is an app's instances as dots. A sleeping or stopped app's are
+// dim, rather than red as if they were down.
+func appDots(a types.AppView) string {
+	if (a.Asleep || a.Stopped) && a.Healthy == 0 && a.Wanted > 0 {
+		if a.Wanted > 10 {
+			return sDim.Render(fmt.Sprintf("○ 0/%d", a.Wanted))
+		}
+		return sDim.Render(strings.Repeat("○", a.Wanted))
+	}
+	return dots(a.Healthy, a.Wanted)
 }
 
 func nodeDot(n types.NodeView) string {

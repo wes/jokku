@@ -22,6 +22,7 @@ fail() {
   sudo jokku nodes:list >&2 || true
   sudo wg show >&2 || true
   sudo journalctl -u jokku -n 40 --no-pager >&2 || true
+  sudo journalctl -u jokku-proxy -n 20 --no-pager >&2 || true
   essh "sudo journalctl -u jokku -n 40 --no-pager; sudo journalctl -u jokku-proxy -n 20 --no-pager" >&2 || true
   tail -n 30 "$work/console.log" >&2 2>/dev/null || true
   exit 1

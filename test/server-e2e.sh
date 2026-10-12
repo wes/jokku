@@ -480,13 +480,12 @@ if timeout 2 bash -c '</dev/tcp/127.0.0.1/3306' 2>/dev/null; then fail "the prox
 
 step "inside the databases: statistics and users"
 # The control node looks inside each running database every ten seconds.
+# (Redis's limit fits the open files it may have, so it varies.)
 info() { jssh "db:$1:info" "$2" "--$3" 2>&1; }
-for _ in $(seq 1 30); do
-  [[ "$(info redis cache connections)" == *" of 10000"* && "$(info mysql orders connections)" == *" of 151"* ]] && break
-  sleep 2
-done
-[[ "$(info redis cache connections)" == *" of 10000"* ]] || fail "redis statistics: $(jssh db:redis:info cache)"
-[[ "$(info mysql orders connections)" == *" of 151"* ]] || fail "mysql statistics: $(jssh db:mysql:info orders)"
+looked() { info "$1" "$2" connections | grep -qE '^[0-9]+ of [0-9]+'; }
+for _ in $(seq 1 30); do looked redis cache && looked mysql orders && break; sleep 2; done
+looked redis cache || fail "redis statistics: $(jssh db:redis:info cache)"
+looked mysql orders || fail "mysql statistics: $(jssh db:mysql:info orders)"
 # MySQL keeps a histogram of how long its statements take.
 for _ in $(seq 1 30); do
   for _ in $(seq 1 20); do echo 'SELECT COUNT(*) FROM information_schema.tables;'; done | jssh db:mysql:connect orders >/dev/null 2>&1

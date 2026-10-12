@@ -161,12 +161,14 @@ type Database struct {
 }
 
 // DatabaseExposure is how clients outside reach a database: at Host:Port,
-// through the ingress nodes' and edges' proxies.
+// through the ingress nodes' and edges' proxies, or only the ingress
+// nodes' when LAN.
 type DatabaseExposure struct {
 	Host  string   `json:"host"`
 	Port  int      `json:"port"`
 	Allow []string `json:"allow,omitempty"` // the client addresses let in; empty: any
-	URL   string   `json:"url"`             // with its password
+	LAN   bool     `json:"lan,omitempty"`
+	URL   string   `json:"url"` // with its password
 }
 
 // DatabaseLink is an app a database is linked to, and the config var on it
@@ -198,11 +200,13 @@ type LinkDatabaseRequest struct {
 
 // ExposeDatabaseRequest lets clients outside reach a database at
 // Domain:Port (Port 0: the engine's own), from the addresses in Allow (none:
-// any).
+// any). LAN keeps it on your network: the edges don't carry it, and Allow
+// defaults to the private ranges (cluster.LANRanges).
 type ExposeDatabaseRequest struct {
 	Domain string   `json:"domain"`
 	Port   int      `json:"port,omitempty"`
 	Allow  []string `json:"allow,omitempty"`
+	LAN    bool     `json:"lan,omitempty"`
 }
 
 type CreateAppRequest struct {

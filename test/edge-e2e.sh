@@ -175,6 +175,16 @@ sudo jokku db:redis:unexpose cache >/dev/null || fail "db:redis:unexpose failed"
 eventually 30 "the edge stops listening on 6379" bash -c "! timeout 3 bash -c 'echo > /dev/tcp/$edge_ip/6379'"
 for _ in $(seq 1 15); do essh "timeout 3 bash -c 'echo > /dev/tcp/$db_ip/6379'" 2>/dev/null || break; sleep 2; done
 if essh "timeout 3 bash -c 'echo > /dev/tcp/$db_ip/6379'" 2>/dev/null; then fail "the edge still reaches the database once it isn't exposed"; fi
+# Kept on the home network, it is reached through the home nodes alone.
+sudo jokku db:redis:expose cache cache.home.test --lan >/dev/null || fail "db:redis:expose --lan failed"
+lan_ping() {
+  printf 'AUTH %s\r\nPING\r\nQUIT\r\n' "$rpw" |
+    timeout 5 openssl s_client -quiet -connect 127.0.0.1:6379 -servername cache.home.test 2>/dev/null | grep -q PONG
+}
+eventually 60 "redis answers at home (--lan)" lan_ping
+sleep 5
+if timeout 3 bash -c "echo > /dev/tcp/$edge_ip/6379" 2>/dev/null; then fail "the edge listens for a database kept on the home network"; fi
+if essh "timeout 3 bash -c 'echo > /dev/tcp/$db_ip/6379'" 2>/dev/null; then fail "the edge reaches a database kept on the home network"; fi
 sudo jokku db:redis:destroy cache --force >/dev/null
 
 step "an external app on the home LAN, through the edge"

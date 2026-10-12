@@ -248,7 +248,7 @@ func (s *Server) databaseInfo(ctx context.Context, e database.Engine, app *types
 		return nil, err
 	}
 	if x, ok := exp[app.Name]; ok {
-		db.Exposed = &types.DatabaseExposure{Host: x.Host, Port: x.Port, Allow: x.Allow, URL: e.PublicURL(name, x.Host, x.Port, vars)}
+		db.Exposed = &types.DatabaseExposure{Host: x.Host, Port: x.Port, Allow: x.Allow, LAN: x.LAN, URL: e.PublicURL(name, x.Host, x.Port, vars)}
 	}
 	if v, err := s.Store.Volume(ctx, app.Name, "data"); err == nil {
 		info := s.volumeInfo(*v)
@@ -440,8 +440,12 @@ func (s *Server) exposeDatabase(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	x := cluster.Exposure{App: db.Name, Engine: e, Host: domain, Port: req.Port}
-	if err := cluster.CheckExposure(&x, req.Allow, others); err != nil {
+	x := cluster.Exposure{App: db.Name, Engine: e, Host: domain, Port: req.Port, LAN: req.LAN}
+	allow := req.Allow
+	if req.LAN && len(allow) == 0 {
+		allow = cluster.LANRanges
+	}
+	if err := cluster.CheckExposure(&x, allow, others); err != nil {
 		s.fail(w, r, httpErrorf(http.StatusConflict, "%v", err))
 		return
 	}
@@ -449,7 +453,11 @@ func (s *Server) exposeDatabase(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.Store.AddEvent(ctx, "app", db.Name, "", "%s exposed %s database %s at %s:%d", actor(r), e.Name, name, x.Host, x.Port)
+	where := ""
+	if x.LAN {
+		where = " on your network"
+	}
+	s.Store.AddEvent(ctx, "app", db.Name, "", "%s exposed %s database %s at %s:%d%s", actor(r), e.Name, name, x.Host, x.Port, where)
 	s.Deployer.RoutesChanged()
 	info, err := s.databaseInfo(ctx, e, db, false)
 	if err != nil {

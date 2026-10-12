@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wes/jokku/internal/cluster"
 	"github.com/wes/jokku/internal/store"
 	"github.com/wes/jokku/internal/types"
 )
@@ -134,6 +135,48 @@ func TestExposedDatabases(t *testing.T) {
 	}
 	if err := c.UnexposeDatabase(ctx, "postgres", "shopdb"); err == nil || !strings.Contains(err.Error(), "isn't exposed") {
 		t.Errorf("unexposing twice: %v", err)
+	}
+
+	// Kept on your network, cache leaves the edge: its proxy doesn't carry
+	// it, and the edge can't reach it. The home proxies let in the private
+	// ranges, with a certificate of their own.
+	db, err = c.ExposeDatabase(ctx, "redis", "cache", types.ExposeDatabaseRequest{Domain: "cache.home.test", LAN: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x := db.Exposed; x == nil || !x.LAN || !slices.Equal(x.Allow, cluster.LANRanges) {
+		t.Errorf("cache exposed on the LAN: %+v", x)
+	}
+	var cache store.Instance
+	insts, _ = h.st.Instances(ctx, "redis-cache")
+	for _, i := range insts {
+		if i.ProcessType == "redis" {
+			cache = i
+		}
+	}
+	eventually(t, 5*time.Second, "cache stays home", func() error {
+		for _, name := range []string{"control", "w1"} {
+			if s := h.nodes[name].proxy.stream("redis-cache"); s == nil || s.Host != "cache.home.test" || s.ACME ||
+				!slices.Equal(s.Allow, cluster.LANRanges) {
+				return fmt.Errorf("%s's stream: %+v", name, s)
+			}
+		}
+		if s := edge.proxy.stream("redis-cache"); s != nil {
+			return fmt.Errorf("the edge carries cache: %+v", s)
+		}
+		if _, access := h.nodes[cache.Node].mesh.get(); access == nil || slices.Contains(access.Allow, cache.IP+":6379") {
+			return fmt.Errorf("%s lets the edge reach cache: %+v", cache.Node, access)
+		}
+		return nil
+	})
+	// Addresses of its own replace the private ranges.
+	db, err = c.ExposeDatabase(ctx, "redis", "cache", types.ExposeDatabaseRequest{Domain: "cache.home.test", LAN: true,
+		Allow: []string{"192.168.86.0/24"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x := db.Exposed; x == nil || !x.LAN || !slices.Equal(x.Allow, []string{"192.168.86.0/24"}) {
+		t.Errorf("cache exposed on the LAN, to one subnet: %+v", x)
 	}
 }
 

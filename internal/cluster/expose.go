@@ -16,9 +16,10 @@ import (
 )
 
 // ExposePlugin holds what reaches an exposed database from outside
-// (db:<engine>:expose): its domain, port and the client addresses let in.
-// The ingress nodes' and edges' proxies carry its connections as streams
-// (types.ProxyStream), straight to its instance over the mesh.
+// (db:<engine>:expose): its domain, port, the client addresses let in and
+// whether it stays on your network. The ingress nodes' and edges' proxies
+// carry its connections as streams (types.ProxyStream), straight to its
+// instance over the mesh.
 const ExposePlugin = "expose"
 
 // Exposure is how a database is reached from outside.
@@ -28,15 +29,25 @@ type Exposure struct {
 	Host   string
 	Port   int
 	Allow  []string // CIDRs; empty lets in any address
+	LAN    bool     // only the ingress nodes carry it, not the edges
 }
 
 // Properties are what the store keeps of x.
 func (x Exposure) Properties() map[string]string {
-	return map[string]string{"domain": x.Host, "port": strconv.Itoa(x.Port), "allow": strings.Join(x.Allow, ",")}
+	lan := ""
+	if x.LAN {
+		lan = "true"
+	}
+	return map[string]string{"domain": x.Host, "port": strconv.Itoa(x.Port), "allow": strings.Join(x.Allow, ","), "lan": lan}
 }
 
 // UnexposeProperties clear an exposure.
-var UnexposeProperties = map[string]string{"domain": "", "port": "", "allow": ""}
+var UnexposeProperties = map[string]string{"domain": "", "port": "", "allow": "", "lan": ""}
+
+// LANRanges are the addresses a database exposed on your network (--lan)
+// lets in unless told otherwise: the private ranges, Tailscale's and the
+// nodes' own.
+var LANRanges = []string{"10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7"}
 
 // Exposures reads the exposed databases, by app. One that is misconfigured
 // (which the API prevents) is left out rather than failing every node's
@@ -56,7 +67,7 @@ func Exposures(ctx context.Context, st *store.Store, apps []types.App) (map[stri
 		if p["domain"] == "" || err != nil {
 			continue
 		}
-		x := Exposure{App: a.Name, Engine: e, Host: p["domain"], Port: port}
+		x := Exposure{App: a.Name, Engine: e, Host: p["domain"], Port: port, LAN: p["lan"] == "true"}
 		if p["allow"] != "" {
 			x.Allow = strings.Split(p["allow"], ",")
 		}
@@ -122,11 +133,13 @@ func CheckExposure(x *Exposure, allow []string, others map[string]Exposure) erro
 	return nil
 }
 
-// streams are the TCP routes node's proxy carries: one per exposed
-// database, to its running instance. A domain Let's Encrypt can reach gets
-// its certificate, which clients can verify (sslmode=verify-full); one it
-// can't gets the proxies' own.
-func streams(exp map[string]Exposure, apps []types.App, insts []store.Instance, ready map[string]bool) []types.ProxyStream {
+// streams are the TCP routes a node's proxy carries: one per exposed
+// database, to its running instance, except that an edge leaves out the
+// ones kept on your network. A public domain gets a certificate from Let's
+// Encrypt, which clients can verify (sslmode=verify-full); any other name,
+// and any database on your network (whose name Let's Encrypt usually can't
+// reach), gets the proxies' own.
+func streams(exp map[string]Exposure, apps []types.App, insts []store.Instance, ready map[string]bool, edge bool) []types.ProxyStream {
 	stopped := map[string]bool{}
 	for _, a := range apps {
 		stopped[a.Name] = a.Stopped
@@ -134,8 +147,11 @@ func streams(exp map[string]Exposure, apps []types.App, insts []store.Instance, 
 	out := []types.ProxyStream{}
 	for _, app := range sortedKeys(exp) {
 		x := exp[app]
+		if x.LAN && edge {
+			continue
+		}
 		s := types.ProxyStream{App: app, Protocol: x.Engine.Stream, Host: x.Host, Port: x.Port, Upstreams: []string{}, Allow: x.Allow,
-			ACME: x.Engine.Stream != types.StreamPlain && proxy.PublicHost(x.Host)}
+			ACME: !x.LAN && x.Engine.Stream != types.StreamPlain && proxy.PublicHost(x.Host)}
 		if !stopped[app] {
 			for _, in := range insts {
 				if in.App == app && in.ProcessType == x.Engine.Process() && in.Desired == store.DesiredRunning &&

@@ -303,7 +303,7 @@ const UpdateVisual = () => (
   <Mono className="text-muted">
     <Cmd>sudo jokku update</Cmd>
     <div>
-      <span className="text-accent">-----&gt;</span> Updating jokku from v0.8.9 to v0.8.10
+      <span className="text-accent">-----&gt;</span> Updating jokku from v0.8.10 to v0.8.11
     </div>
     <div>
       <span className="text-accent">-----&gt;</span> Backing up the database
@@ -311,7 +311,7 @@ const UpdateVisual = () => (
     <div>
       <span className="text-accent">-----&gt;</span> Restarting jokku
     </div>
-    <div className="pl-[4.5ch]">jokku v0.8.10 is running</div>
+    <div className="pl-[4.5ch]">jokku v0.8.11 is running</div>
     <div className="mt-1.5 text-[10.5px]">
       <span className="text-good">●</span> apps kept serving · rolls back if it fails
     </div>

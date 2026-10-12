@@ -5,6 +5,15 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.11: Databases kept on your network
+
+October 12, 2026
+
+- **Reach a database from your own network but not from the internet** with `jokku db:postgres:expose shopdb shopdb.192.168.1.10.sslip.io --lan`. Your servers take the connections, and your [edges](/docs/edges) don't: they don't listen on the port, and they can't reach the database. See [Only on your network](/docs/databases#only-on-your-network).
+- Unless you give an `--allow` list of your own, only private addresses are let in: your home network's, Tailscale's, and IPv6's private ones.
+- The certificate is one the proxy makes itself, since Let's Encrypt can't reach your network. `sslmode=require` accepts it without checking.
+- `jokku db:postgres:info shopdb` has a "Through" row, which says whether the edges carry a database or only your servers do.
+
 ## v0.8.10: Databases you can reach from outside
 
 October 11, 2026

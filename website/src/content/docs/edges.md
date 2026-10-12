@@ -19,7 +19,7 @@ Add one from your control server, with the edge's address. Jokku logs in over ss
 jokku edge:add root@203.0.113.7
 ```
 
-On the edge, open TCP ports 80 and 443, and UDP ports 443 (HTTP/3) and 51820 (the encrypted network), in its firewall, plus the port of any database you [expose](/docs/databases#reach-it-from-outside) (5432 for Postgres). Then point your domains' DNS at it. That's all: every app's domains, certificates and logins are served from the edge, and you keep managing everything at home.
+On the edge, open TCP ports 80 and 443, and UDP ports 443 (HTTP/3) and 51820 (the encrypted network), in its firewall, plus the port of any database you [expose](/docs/databases#reach-it-from-outside) through it (5432 for Postgres). Then point your domains' DNS at it. That's all: every app's domains, certificates and logins are served from the edge, and you keep managing everything at home.
 
 | Command | What it does |
 | --- | --- |
@@ -35,7 +35,7 @@ An edge needs no KVM and runs no apps, so the smallest cloud server will do. Add
 
 ## What an edge can reach
 
-An edge faces the internet, so Jokku gives it only what its routes need. Over the encrypted network it can reach the web proxy of each of your servers, the web ports of your apps' instances, the databases you've [exposed](/docs/databases#reach-it-from-outside), the [external apps](#services-jokku-doesnt-run) it routes to, and the control server's API, which it uses to fetch its routes. It can't reach anything else at home: not ssh, not other ports of your apps, not databases you haven't exposed, not other machines on your network. It never receives an app's code or your backups.
+An edge faces the internet, so Jokku gives it only what its routes need. Over the encrypted network it can reach the web proxy of each of your servers, the web ports of your apps' instances, the databases you've [exposed](/docs/databases#reach-it-from-outside) (except those kept [on your network](/docs/databases#only-on-your-network)), the [external apps](#services-jokku-doesnt-run) it routes to, and the control server's API, which it uses to fetch its routes. It can't reach anything else at home: not ssh, not other ports of your apps, not databases you haven't exposed, not other machines on your network. It never receives an app's code or your backups.
 
 Like any HTTPS proxy, an edge holds your certificates and sees the requests it forwards. To check [logins](/docs/logins) on its own, it also holds the users' password hashes and authenticator secrets and the key that signs sessions; removing an edge replaces that key, which logs everyone out.
 

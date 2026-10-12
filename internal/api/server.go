@@ -125,6 +125,8 @@ func (s *Server) routes() {
 	m.HandleFunc("DELETE /v1/databases/{engine}/{name}", s.destroyDatabase)
 	m.HandleFunc("POST /v1/databases/{engine}/{name}/links", s.linkDatabase)
 	m.HandleFunc("DELETE /v1/databases/{engine}/{name}/links/{app}", s.unlinkDatabase)
+	m.HandleFunc("PUT /v1/databases/{engine}/{name}/expose", s.exposeDatabase)
+	m.HandleFunc("DELETE /v1/databases/{engine}/{name}/expose", s.unexposeDatabase)
 	m.HandleFunc("GET /v1/backups", s.backupReport)
 	m.HandleFunc("GET /v1/backups/overview", s.backupsOverview)
 	m.HandleFunc("GET /v1/backups/cluster", s.listClusterBackups)

@@ -59,6 +59,17 @@ func (h *harness) waitReady(n int) {
 		if st, _ := h.ctl.Status(h.ctx); st.Totals.NodesReady != n {
 			return fmt.Errorf("%d of %d nodes ready", st.Totals.NodesReady, n)
 		}
+		// A node is ready from its join, before its first report says what
+		// it supports (volumes, say), which placement goes by.
+		nodes, err := h.st.Nodes(h.ctx)
+		if err != nil {
+			return err
+		}
+		for _, node := range nodes {
+			if len(node.Features) == 0 && !node.Removed() {
+				return fmt.Errorf("%s hasn't reported yet", node.Name)
+			}
+		}
 		return nil
 	})
 }

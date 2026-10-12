@@ -130,14 +130,18 @@ func (c *Controller) ComputeState(ctx context.Context, name string) (*types.Node
 			current[a.Name] = cur
 		}
 	}
+	exp, err := Exposures(ctx, c.Store, apps)
+	if err != nil {
+		return nil, err
+	}
 	if !node.Edge() { // it runs no VMs to look names up
 		st.DNS = dnsRecords(apps, current, insts, nodes, now)
-		if st.EdgeAccess, err = c.edgeAccess(ctx, *node, nodes, apps, current, insts, ext); err != nil {
+		if st.EdgeAccess, err = c.edgeAccess(ctx, *node, nodes, apps, current, insts, ext, exp); err != nil {
 			return nil, err
 		}
 	}
 	if node.Ingress {
-		if st.Proxy, err = c.proxyState(ctx, *node, apps, current, insts, nodes, now, ext); err != nil {
+		if st.Proxy, err = c.proxyState(ctx, *node, apps, current, insts, nodes, now, ext, exp); err != nil {
 			return nil, err
 		}
 	}
@@ -186,9 +190,10 @@ func held(in store.Instance, now time.Time) bool {
 // proxyState routes each deployed app's domains to the healthy web instances
 // of its current release, on whichever nodes they run, and each external
 // app's to its target. Only edges and the node an external app goes through
-// route it: they are the ones that reach its network.
+// route it: they are the ones that reach its network. Exposed databases
+// get streams, on the nodes whose proxies carry them.
 func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []types.App, current map[string]*store.Release,
-	insts []store.Instance, nodes []store.Node, now time.Time, ext map[string]External) (*types.ProxyState, error) {
+	insts []store.Instance, nodes []store.Node, now time.Time, ext map[string]External, exp map[string]Exposure) (*types.ProxyState, error) {
 	ready := map[string]bool{}
 	for _, n := range nodes {
 		ready[n.Name] = n.Ready(now)
@@ -228,7 +233,10 @@ func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []typ
 	}
 	for _, app := range apps {
 		e, external := ext[app.Name]
-		if (app.CurrentRelease == 0 && !external) || (external && !node.Edge() && node.Name != e.Via) {
+		// A database speaks no HTTP, so it gets no route (the API refuses
+		// its domains; this covers ones added before it did).
+		database := app.Kind != "" && !external
+		if database || (app.CurrentRelease == 0 && !external) || (external && !node.Edge() && node.Name != e.Via) {
 			continue
 		}
 		appProxy, _ := c.Store.Properties(ctx, app.Name, "proxy")
@@ -291,6 +299,9 @@ func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []typ
 		}
 		ps.Routes = append(ps.Routes, plain, secure)
 	}
+	if node.Has(types.FeatureStreams) && len(exp) > 0 {
+		ps.Streams = streams(exp, apps, insts, ready)
+	}
 	return ps, nil
 }
 
@@ -332,11 +343,11 @@ func (c *Controller) peers(node store.Node, nodes []store.Node, ext map[string]E
 }
 
 // edgeAccess is what the cluster's edges may reach on or through node: the
-// web ports of the instances it runs for routed apps, the external apps'
-// targets it forwards to and, on the control node, the API. Nil without
-// edges.
+// web ports of the instances it runs for routed apps, the database ports of
+// the exposed databases it runs, the external apps' targets it forwards to
+// and, on the control node, the API. Nil without edges.
 func (c *Controller) edgeAccess(ctx context.Context, node store.Node, nodes []store.Node, apps []types.App,
-	current map[string]*store.Release, insts []store.Instance, ext map[string]External) (*types.EdgeAccess, error) {
+	current map[string]*store.Release, insts []store.Instance, ext map[string]External, exp map[string]Exposure) (*types.EdgeAccess, error) {
 	acc := &types.EdgeAccess{Control: node.Role == store.RoleControl}
 	for _, n := range nodes {
 		if n.Edge() {
@@ -368,6 +379,10 @@ func (c *Controller) edgeAccess(ctx context.Context, node store.Node, nodes []st
 		if in.Node == node.Name && routed[in.App] && cur != nil && in.ProcessType == cur.WebProcess() &&
 			in.Desired == store.DesiredRunning && in.IP != "" && in.Port > 0 {
 			allow[fmt.Sprintf("%s:%d", in.IP, in.Port)] = true
+		}
+		if x, ok := exp[in.App]; ok && in.Node == node.Name && in.ProcessType == x.Engine.Process() &&
+			in.Desired == store.DesiredRunning && in.IP != "" {
+			allow[fmt.Sprintf("%s:%d", in.IP, x.Engine.Port)] = true
 		}
 	}
 	// This node's proxy, for the requests the edges send through it.

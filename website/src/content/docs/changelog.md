@@ -5,6 +5,16 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.10: Databases you can reach from outside
+
+October 11, 2026
+
+- **[Expose a database](/docs/databases#reach-it-from-outside) at a domain** with `jokku db:postgres:expose shopdb db.example.com`, and connect to it from your laptop, a BI tool or another host. It works through an [edge](/docs/edges) too, so a database at home is reachable with no port open there.
+- **Postgres and Redis go over TLS**, which the proxy insists on, and share one port each (5432 and 6379), told apart by the domain the client asks for. Postgres's usual `sslmode=require` works, and so does Postgres 17's direct TLS. A public domain gets a Let's Encrypt certificate that clients can check. **MySQL** gets a port of its own, since it can't be told apart by domain.
+- **Let in only your addresses** with `--allow 203.0.113.7,198.51.100.0/24`. Without it, `expose` warns that any address can connect. `jokku db:postgres:info shopdb --public-dsn` prints the URL to connect with, and `db:postgres:unexpose shopdb` closes it again. Open connections stay open when you deploy other apps.
+- `domains:add` refuses a database's app now. Domains route web traffic, which a database doesn't speak, so a domain added to one never did anything.
+- Update every server, and every edge, to v0.8.10 before you expose a database. A server or edge that's still on v0.8.9 keeps serving the web, but not exposed databases.
+
 ## v0.8.9: The last hour and day in jokku top
 
 October 11, 2026

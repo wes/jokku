@@ -256,6 +256,10 @@ const FeatureVolumes = "volumes"
 // it straight at their instances, as before.
 const FeatureRelay = "relay"
 
+// FeatureStreams is reported by agents whose proxy carries TCP routes
+// (ProxyState.Streams), from v0.8.10.
+const FeatureStreams = "streams"
+
 // FeatureUpdate is reported by agents that update jokku when told to
 // (NodeState.Update), from v0.8.5. Older ones are updated by hand.
 const FeatureUpdate = "update"
@@ -270,6 +274,9 @@ type ProxyState struct {
 	// through: this node's proxy answers them for the edge, compressing
 	// before they go back over the mesh.
 	Edges []string `json:"edges,omitempty"`
+	// Streams are the TCP routes: databases reached from outside
+	// (db:<engine>:expose). Only nodes reporting FeatureStreams get them.
+	Streams []ProxyStream `json:"streams,omitempty"`
 }
 
 type ProxyRoute struct {
@@ -294,6 +301,32 @@ type ProxyRoute struct {
 	// request on to an instance and compress the response.
 	Relayed bool `json:"relayed,omitempty"`
 }
+
+// ProxyStream sends the TCP connections for Host on Port to Upstreams. A
+// postgres or tls stream shares its port with the others of its protocol,
+// told apart by the name the client asks for (TLS SNI), and the proxy
+// terminates its TLS; a plain one has its port to itself and passes through
+// as it is (MySQL, whose TLS starts inside its own protocol).
+type ProxyStream struct {
+	App       string   `json:"app"`
+	Protocol  string   `json:"protocol"` // StreamPostgres, StreamTLS or StreamPlain
+	Host      string   `json:"host"`
+	Port      int      `json:"port"`
+	Upstreams []string `json:"upstreams"` // IP:port; none while the database isn't running
+	// ACME: Host's certificate comes from Let's Encrypt; otherwise from the
+	// proxy's own CA, for a name Let's Encrypt can't reach (clients then
+	// encrypt without verifying, as sslmode=require does).
+	ACME bool `json:"acme,omitempty"`
+	// Allow is the client addresses let in (CIDRs); empty lets in any.
+	Allow []string `json:"allow,omitempty"`
+}
+
+// Stream protocols.
+const (
+	StreamPostgres = "postgres" // TLS, after Postgres's SSLRequest or directly (PG17's sslnegotiation=direct)
+	StreamTLS      = "tls"      // TLS from the first byte (rediss://)
+	StreamPlain    = "plain"    // passed through untouched
+)
 
 // ProxyActivity is what a node's proxy tells the control node about apps
 // that sleep when idle: those it handled requests for since it last said,

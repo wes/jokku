@@ -3,6 +3,7 @@ package cluster_test
 import (
 	"bytes"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +75,32 @@ func TestDatabases(t *testing.T) {
 		}
 		return nil
 	})
+	// Domains route HTTP, which a database doesn't speak.
+	if _, err := c.PatchDomains(ctx, "postgres-shopdb", types.DomainsPatch{Add: []string{"db.example.test"}}); err == nil ||
+		!strings.Contains(err.Error(), "domains route HTTP") {
+		t.Errorf("a domain on a database: %v", err)
+	}
+	// One added before the API refused them gets no route, even with
+	// proxy:enable: by the time shop's new domain is routed, the database's
+	// was in the store too.
+	h.st.UpdateDomains(ctx, "postgres-shopdb", types.DomainsPatch{Add: []string{"db.example.test"}})
+	h.st.SetProperty(ctx, "postgres-shopdb", "proxy", "enabled", "true")
+	if _, err := c.PatchDomains(ctx, "shop", types.DomainsPatch{Add: []string{"www.shop.example.test"}}); err != nil {
+		t.Fatal(err)
+	}
+	px := h.nodes["control"].proxy
+	eventually(t, 10*time.Second, "shop's new domain routed", func() error {
+		if r := px.route("shop"); r == nil || !slices.Contains(r.Hosts, "www.shop.example.test") {
+			return errFmt("not yet")
+		}
+		return nil
+	})
+	if r := px.route("postgres-shopdb"); r != nil {
+		t.Errorf("the database got a route: %+v", r)
+	}
+	if _, err := c.PatchDomains(ctx, "postgres-shopdb", types.DomainsPatch{Remove: []string{"db.example.test"}}); err != nil {
+		t.Errorf("removing a database's domain: %v", err)
+	}
 	if err := c.CreateDatabase(ctx, "redis", types.CreateDatabaseRequest{Name: "cache"}, logged); err != nil {
 		t.Fatal(err)
 	}

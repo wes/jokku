@@ -9,6 +9,7 @@ package proxy
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -34,8 +35,9 @@ const (
 	// Version changes when a release needs the proxy process restarted;
 	// "jokku setup" compares it to the running one. 2: the jokku_auth and
 	// jokku_strip_identity handlers, which configs from now on use. 3: the
-	// jokku_wake handler and jokku upstreams, for apps that sleep.
-	Version = "3"
+	// jokku_wake handler and jokku upstreams, for apps that sleep. 4: the
+	// layer4 app, for streams.
+	Version = "4"
 )
 
 // Route sends requests for Hosts to Upstreams (IP:port of healthy web
@@ -76,6 +78,8 @@ type Settings struct {
 	// Edges are the subnets of the edges that send requests through this
 	// node (see relayRoute).
 	Edges []string
+	// Streams are the TCP routes (see streamServers).
+	Streams []types.ProxyStream
 }
 
 // Relaying
@@ -220,10 +224,34 @@ func Config(s Settings) ([]byte, error) {
 			"servers":    servers,
 		},
 	}
+	var acme, internal []string
+	if len(s.Streams) > 0 {
+		var servers map[string]any
+		servers, acme, internal = streamServers(s.Streams)
+		apps["layer4"] = map[string]any{"servers": servers}
+	}
+	tlsApp := map[string]any{}
+	var policies []any
+	if len(internal) > 0 {
+		// Names Let's Encrypt can't reach get certificates from the proxy's
+		// own CA, which nothing is told to trust.
+		policies = append(policies, map[string]any{"subjects": internal, "issuers": []any{map[string]any{"module": "internal"}}})
+		apps["pki"] = map[string]any{"certificate_authorities": map[string]any{"local": map[string]any{"install_trust": false}}}
+	}
 	if s.Email != "" {
-		apps["tls"] = map[string]any{"automation": map[string]any{"policies": []any{
-			map[string]any{"issuers": []any{map[string]any{"module": "acme", "email": s.Email}}},
-		}}}
+		policies = append(policies, map[string]any{"issuers": []any{map[string]any{"module": "acme", "email": s.Email}}})
+	}
+	if len(policies) > 0 {
+		tlsApp["automation"] = map[string]any{"policies": policies}
+	}
+	// The http app gets its hosts' certificates itself; streams' are
+	// listed. Their ACME challenges are answered on the HTTP port, like
+	// the http app's.
+	if names := append(acme, internal...); len(names) > 0 {
+		tlsApp["certificates"] = map[string]any{"automate": names}
+	}
+	if len(tlsApp) > 0 {
+		apps["tls"] = tlsApp
 	}
 	admin := s.AdminSocket
 	if admin == "" {
@@ -272,7 +300,17 @@ type Applier struct {
 	DataDir     string
 	AdminSocket string
 	Storage     *ClusterStorage
+	// HTTPPort and HTTPSPort are RelayPort and 443 when 0 (tests set them).
+	HTTPPort, HTTPSPort int
+
+	// The streams that last failed to load, why, and when: tried again
+	// after streamRetry rather than on every pass.
+	failed   string
+	failErr  error
+	failedAt time.Time
 }
+
+const streamRetry = time.Minute
 
 func (a *Applier) Apply(ctx context.Context, ps *types.ProxyState) error {
 	routes := make([]Route, len(ps.Routes))
@@ -281,10 +319,36 @@ func (a *Applier) Apply(ctx context.Context, ps *types.ProxyState) error {
 			UpstreamTLS: r.UpstreamTLS, Insecure: r.Insecure, Auth: r.Auth, Sleeps: r.Sleeps,
 			NoCompress: r.NoCompress, Relayed: r.Relayed}
 	}
-	cfg, err := Config(Settings{
-		Routes: routes, Email: ps.Email, DataDir: a.DataDir, HTTPPort: RelayPort, HTTPSPort: 443,
-		AdminSocket: a.AdminSocket, Storage: a.Storage, Auth: ps.Auth, Edges: ps.Edges,
-	})
+	s := Settings{
+		Routes: routes, Email: ps.Email, DataDir: a.DataDir, HTTPPort: cmp.Or(a.HTTPPort, RelayPort), HTTPSPort: cmp.Or(a.HTTPSPort, 443),
+		AdminSocket: a.AdminSocket, Storage: a.Storage, Auth: ps.Auth, Edges: ps.Edges, Streams: ps.Streams,
+	}
+	streams, _ := json.Marshal(ps.Streams)
+	if len(ps.Streams) > 0 && string(streams) == a.failed && time.Since(a.failedAt) < streamRetry {
+		s.Streams = nil
+		if err := a.load(ctx, s); err != nil {
+			return err
+		}
+		return a.failErr
+	}
+	err := a.load(ctx, s)
+	if err == nil || len(ps.Streams) == 0 {
+		return err
+	}
+	// A port this node can't listen on (something else has it) must not
+	// hold up the web routes, nor must a proxy a release behind, which
+	// has no layer4 app until "jokku setup" restarts it.
+	s.Streams = nil
+	if werr := a.load(ctx, s); werr != nil {
+		return err
+	}
+	a.failed, a.failedAt = string(streams), time.Now()
+	a.failErr = fmt.Errorf("loaded the web routes without the TCP ones (db:*:expose): %w", err)
+	return a.failErr
+}
+
+func (a *Applier) load(ctx context.Context, s Settings) error {
+	cfg, err := Config(s)
 	if err != nil {
 		return err
 	}
@@ -503,11 +567,42 @@ func Run(ctx context.Context, dataDir string) error {
 			return err
 		}
 	}
-	if err := caddy.Load(cfg, true); err != nil {
-		return fmt.Errorf("starting caddy: %w", err)
+	if err := start(cfg); err != nil {
+		return err
 	}
 	<-ctx.Done()
 	return caddy.Stop()
+}
+
+// start loads the saved config. One whose streams can't load (a port
+// another service took since, at boot say) still serves the web: the
+// agent sends the streams again within a few minutes.
+func start(cfg []byte) error {
+	err := caddy.Load(cfg, true)
+	if err == nil {
+		return nil
+	}
+	if web, ok := webOnly(cfg); ok && caddy.Load(web, true) == nil {
+		fmt.Fprintf(os.Stderr, "serving the web routes without the TCP ones, which didn't load: %v\n", err)
+		return nil
+	}
+	return fmt.Errorf("starting caddy: %w", err)
+}
+
+// webOnly is cfg without its streams (the layer4 app); ok is false when it
+// has none.
+func webOnly(cfg []byte) (_ []byte, ok bool) {
+	var c map[string]any
+	if json.Unmarshal(cfg, &c) != nil {
+		return nil, false
+	}
+	apps, _ := c["apps"].(map[string]any)
+	if _, ok := apps["layer4"]; !ok {
+		return nil, false
+	}
+	delete(apps, "layer4")
+	b, err := json.Marshal(c)
+	return b, err == nil
 }
 
 // Load sends a config to the proxy listening on adminSocket and saves it for

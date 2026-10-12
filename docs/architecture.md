@@ -388,7 +388,8 @@ plain HTTP. Apps created before this default changed keep TLS on. `certs:add`
 installs a custom certificate.
 
 `ports:set app http:80:5000 https:443:5000` mirrors Dokku's port mapping.
-Raw TCP/UDP ports are a later addition.
+Raw TCP/UDP ports for apps are a later addition; exposed databases already
+get TCP routes (see [Databases](#databases)).
 
 **External apps** (`external:create ha http://192.168.1.50:8123`) are apps
 of kind `external`: a target address instead of releases, stored as
@@ -739,7 +740,41 @@ no published ports, there is no HTTP route; other apps reach it at
   the cluster is backed up, with the defaults. Snapshots taken with writes
   frozen are crash-consistent, which all three recover from.
 - A database's app is left out of `apps:list` (`?all=true` lists it), and
-  can't be pushed to, renamed or cloned.
+  can't be pushed to, renamed or cloned. It gets no HTTP domains.
+
+**Exposing a database** (`db:<engine>:expose <name> <domain> [--port]
+[--allow <ips>]`) lets clients outside reach it through the proxies of the
+ingress nodes and edges. It is stored as properties (`expose` plugin:
+`domain`, `port`, `allow`), and the control node turns it into a *stream*
+(`types.ProxyStream`) for every proxy whose agent reports `FeatureStreams`:
+a TCP route straight to the database's running instance over the mesh, with
+no relay, since there is nothing to compress. The proxy carries streams in
+Caddy's `layer4` app (caddy-l4, embedded like the rest), one server per
+port, and connections stay open across config reloads.
+
+- **Postgres** and **Redis** share their port (5432 and 6379 by default)
+  among the databases of their engine, told apart by the name the client
+  asks for (TLS SNI); the proxy terminates TLS and refuses connections
+  without it. A classic Postgres client asks for TLS first (an SSLRequest,
+  as `sslmode=require` does), which the proxy answers before routing the
+  handshake by name; a Postgres 17 client can also start TLS directly
+  (`sslnegotiation=direct`). Redis clients use `rediss://`.
+- **MySQL** starts TLS inside its own protocol, after the server speaks, so
+  the proxy can't read a name first: each MySQL database gets a port of its
+  own (3306 for the first), passed through untouched and encrypted with
+  mysqld's own certificate.
+- A domain Let's Encrypt can reach gets its certificate, which clients can
+  verify (`sslmode=verify-full`); any other name gets one from the proxies'
+  own CA (Caddy's `internal` issuer, which nothing is told to trust).
+- `--allow` lets in only those client addresses; without it any address can
+  connect, and only the database's password (and TLS) protects it, which
+  `expose` warns about. Ports Jokku's nodes use themselves (22, 53, 80, 443,
+  7443, 7444) are refused.
+- Behind an edge, the node a database runs on lets the edge reach its port,
+  as it does an app's web port, only while it is exposed.
+- A proxy that can't listen on a stream's port (something else has it), or
+  one a release behind, loads the HTTP routes without the streams, and the
+  agent logs why; it tries the streams again after a minute.
 
 ## Compose apps
 
@@ -1008,5 +1043,7 @@ need no open port at all.
 - **M5 – home labs.** *(done)* Edges (public servers the cluster dials, so
   nodes behind NAT serve the internet), external apps (domains routed to
   services on your network), and logins in front of apps (`http-auth:*`).
-  Next: raw TCP/UDP ports through edges, logins with an identity provider
-  (OIDC), and connectors for services at other sites.
+  Databases reached from outside, through the edges too (`db:<engine>:expose`,
+  TCP routes in Caddy's `layer4` app). Next: raw TCP/UDP ports for apps,
+  logins with an identity provider (OIDC), and connectors for services at
+  other sites.

@@ -53,10 +53,20 @@ func TestURLsAndCommands(t *testing.T) {
 	if got := redis.URL("cache", map[string]string{"REDIS_PASSWORD": "pw"}); got != "redis://:pw@redis-cache.internal:6379" {
 		t.Errorf("redis URL = %s", got)
 	}
+	// Exposed, over TLS where the proxies insist on it.
+	if got := pg.PublicURL("shopdb", "db.example.com", 5432, vars); got != "postgres://postgres:p%40ss@db.example.com:5432/shopdb?sslmode=require" {
+		t.Errorf("postgres public URL = %s", got)
+	}
+	if got := redis.PublicURL("cache", "cache.example.com", 6380, map[string]string{"REDIS_PASSWORD": "pw"}); got != "rediss://:pw@cache.example.com:6380" {
+		t.Errorf("redis public URL = %s", got)
+	}
+	mysql, _ := Lookup("mysql")
+	if got := mysql.PublicURL("orders", "db.example.com", 13306, map[string]string{"MYSQL_PASSWORD": "pw"}); got != "mysql://mysql:pw@db.example.com:13306/orders" {
+		t.Errorf("mysql public URL = %s", got)
+	}
 	if _, _, ok := redis.ImportCommand("cache", nil); ok {
 		t.Error("redis imports a dump")
 	}
-	mysql, _ := Lookup("mysql")
 	argv, env := mysql.ExportCommand("shopdb", map[string]string{"MYSQL_ROOT_PASSWORD": "secret"})
 	if strings.Contains(strings.Join(argv, " "), "secret") || !slices.Contains(env, "MYSQL_PWD=secret") {
 		t.Errorf("the password goes in the arguments: %v %v", argv, env)

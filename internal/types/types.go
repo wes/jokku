@@ -155,6 +155,18 @@ type Database struct {
 	// Vars are its config vars (passwords among them), for connecting from
 	// the CLI; only a single database's info has them.
 	Vars map[string]string `json:"vars,omitempty"`
+	// Exposed is how clients outside reach it (db:<engine>:expose); nil
+	// while they can't.
+	Exposed *DatabaseExposure `json:"exposed,omitempty"`
+}
+
+// DatabaseExposure is how clients outside reach a database: at Host:Port,
+// through the ingress nodes' and edges' proxies.
+type DatabaseExposure struct {
+	Host  string   `json:"host"`
+	Port  int      `json:"port"`
+	Allow []string `json:"allow,omitempty"` // the client addresses let in; empty: any
+	URL   string   `json:"url"`             // with its password
 }
 
 // DatabaseLink is an app a database is linked to, and the config var on it
@@ -182,6 +194,15 @@ type LinkDatabaseRequest struct {
 	App       string `json:"app"`
 	Alias     string `json:"alias,omitempty"`
 	NoRestart bool   `json:"no_restart,omitempty"`
+}
+
+// ExposeDatabaseRequest lets clients outside reach a database at
+// Domain:Port (Port 0: the engine's own), from the addresses in Allow (none:
+// any).
+type ExposeDatabaseRequest struct {
+	Domain string   `json:"domain"`
+	Port   int      `json:"port,omitempty"`
+	Allow  []string `json:"allow,omitempty"`
 }
 
 type CreateAppRequest struct {

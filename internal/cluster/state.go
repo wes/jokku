@@ -300,7 +300,7 @@ func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []typ
 		ps.Routes = append(ps.Routes, plain, secure)
 	}
 	if node.Has(types.FeatureStreams) && len(exp) > 0 {
-		ps.Streams = streams(exp, apps, insts, ready)
+		ps.Streams = streams(exp, apps, insts, ready, node.Edge())
 	}
 	return ps, nil
 }
@@ -344,7 +344,8 @@ func (c *Controller) peers(node store.Node, nodes []store.Node, ext map[string]E
 
 // edgeAccess is what the cluster's edges may reach on or through node: the
 // web ports of the instances it runs for routed apps, the database ports of
-// the exposed databases it runs, the external apps' targets it forwards to
+// the databases it runs that are exposed through the edges (not just on your
+// network), the external apps' targets it forwards to
 // and, on the control node, the API. Nil without edges.
 func (c *Controller) edgeAccess(ctx context.Context, node store.Node, nodes []store.Node, apps []types.App,
 	current map[string]*store.Release, insts []store.Instance, ext map[string]External, exp map[string]Exposure) (*types.EdgeAccess, error) {
@@ -380,7 +381,7 @@ func (c *Controller) edgeAccess(ctx context.Context, node store.Node, nodes []st
 			in.Desired == store.DesiredRunning && in.IP != "" && in.Port > 0 {
 			allow[fmt.Sprintf("%s:%d", in.IP, in.Port)] = true
 		}
-		if x, ok := exp[in.App]; ok && in.Node == node.Name && in.ProcessType == x.Engine.Process() &&
+		if x, ok := exp[in.App]; ok && !x.LAN && in.Node == node.Name && in.ProcessType == x.Engine.Process() &&
 			in.Desired == store.DesiredRunning && in.IP != "" {
 			allow[fmt.Sprintf("%s:%d", in.IP, x.Engine.Port)] = true
 		}

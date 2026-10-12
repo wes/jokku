@@ -743,9 +743,9 @@ no published ports, there is no HTTP route; other apps reach it at
   can't be pushed to, renamed or cloned. It gets no HTTP domains.
 
 **Exposing a database** (`db:<engine>:expose <name> <domain> [--port]
-[--allow <ips>]`) lets clients outside reach it through the proxies of the
-ingress nodes and edges. It is stored as properties (`expose` plugin:
-`domain`, `port`, `allow`), and the control node turns it into a *stream*
+[--allow <ips>] [--lan]`) lets clients outside reach it through the proxies
+of the ingress nodes and edges. It is stored as properties (`expose` plugin:
+`domain`, `port`, `allow`, `lan`), and the control node turns it into a *stream*
 (`types.ProxyStream`) for every proxy whose agent reports `FeatureStreams`:
 a TCP route straight to the database's running instance over the mesh, with
 no relay, since there is nothing to compress. The proxy carries streams in
@@ -772,6 +772,12 @@ port, and connections stay open across config reloads.
   7443, 7444) are refused.
 - Behind an edge, the node a database runs on lets the edge reach its port,
   as it does an app's web port, only while it is exposed.
+- `--lan` keeps a database on your network: edges' proxies leave its stream
+  out and the node it runs on doesn't let the edges reach it, so only the
+  ingress nodes carry it. `--allow` then defaults to the private ranges
+  (`cluster.LANRanges`: RFC 1918, CGNAT/Tailscale, loopback, IPv6 ULA), and
+  its certificate comes from the proxies' own CA even for a public domain,
+  which usually points at a LAN address Let's Encrypt can't reach.
 - A proxy that can't listen on a stream's port (something else has it), or
   one a release behind, loads the HTTP routes without the streams, and the
   agent logs why; it tries the streams again after a minute.

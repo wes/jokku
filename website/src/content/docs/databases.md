@@ -65,9 +65,19 @@ A domain Let's Encrypt can reach gets a certificate from it, so clients can chec
 
 `--allow` takes addresses and ranges, comma-separated (`--allow 203.0.113.7,198.51.100.0/24`), and the proxy turns away everyone else. Without it, any address can connect, and only the database's password and TLS protect it: Jokku generates long random passwords, but an allow list is better. Run `expose` again to change the domain, port or list. `--port` picks another port for Postgres or Redis too.
 
+### Only on your network
+
+To reach a database from your own network but not from the internet, add `--lan`:
+
+```sh
+jokku db:postgres:expose shopdb shopdb.192.168.1.10.sslip.io --lan
+```
+
+Your servers take the connections, and your [edges](/docs/edges) don't: they don't listen on the port, and they can't reach the database. Unless you give an `--allow` list of your own, only private addresses are let in (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, Tailscale's `100.64.0.0/10`, and IPv6's `fc00::/7`). Point the name at one of your servers, as the sslip.io name above does, or use a name from your own DNS. The certificate is one the proxy makes itself, since Let's Encrypt can't reach your network: `sslmode=require` accepts it without checking.
+
 | Command | What it does |
 | --- | --- |
-| `db:<engine>:expose <name> <domain> [--port N] [--allow IPS]` | Let clients outside connect, or change how. |
+| `db:<engine>:expose <name> <domain> [--port N] [--allow IPS] [--lan]` | Let clients outside connect, or change how. `--lan` keeps it on your network. |
 | `db:<engine>:unexpose <name>` | Stop them: only your apps reach it again. |
 | `db:<engine>:info <name> --public-dsn` | The URL to connect from outside, with the password. |
 

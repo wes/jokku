@@ -44,7 +44,8 @@ func databaseCommands() []*Command {
 			&Command{Name: p + "expose", Help: "Let clients outside reach a " + title + " database at a domain, through the proxies",
 				Args: "<name> <domain>", MinArgs: 2, MaxArgs: 2, Flags: []Flag{
 					{Name: "port", Value: "port", Help: exposePortHelp(e)},
-					{Name: "allow", Value: "ips", Help: "Let in only these addresses, comma-separated (IPs or CIDRs); default: any"},
+					{Name: "allow", Value: "ips", Help: "Let in only these addresses, comma-separated (IPs or CIDRs); default: any, or with --lan the private ranges"},
+					{Name: "lan", Help: "Keep it on your network: only your ingress nodes carry it, not the edges"},
 				}, Run: dbExpose(e)},
 			&Command{Name: p + "unexpose", Help: "Stop clients outside from reaching a " + title + " database",
 				Args: "<name>", MinArgs: 1, MaxArgs: 1, Run: dbUnexpose(e)},
@@ -175,9 +176,12 @@ func dbInfo(e database.Engine) func(*Context) error {
 		if len(c.extra) == 0 {
 			dsn = maskPassword(db.URL) // the full URL with --dsn
 		}
-		exposed, allowed, publicDSN := "no", "", ""
+		exposed, through, allowed, publicDSN := "no", "", "", ""
 		if x := db.Exposed; x != nil {
-			exposed, allowed, publicDSN = fmt.Sprintf("%s:%d", x.Host, x.Port), "any address", x.URL
+			exposed, through, allowed, publicDSN = fmt.Sprintf("%s:%d", x.Host, x.Port), "edges and ingress nodes", "any address", x.URL
+			if x.LAN {
+				through = "ingress nodes, on your network (--lan)"
+			}
 			if len(x.Allow) > 0 {
 				allowed = strings.Join(x.Allow, ", ")
 			}
@@ -191,6 +195,7 @@ func dbInfo(e database.Engine) func(*Context) error {
 			{"host", "Host", db.Host},
 			{"dsn", "Dsn", dsn},
 			{"exposed", "Exposed", exposed},
+			{"through", "Through", through},
 			{"allowed", "Allowed", allowed},
 			{"public-dsn", "Public dsn", publicDSN},
 			{"links", "Links", strings.Join(links, ", ")},
@@ -223,7 +228,7 @@ func exposePortHelp(e database.Engine) string {
 
 func dbExpose(e database.Engine) func(*Context) error {
 	return func(c *Context) error {
-		req := types.ExposeDatabaseRequest{Domain: c.Args[1]}
+		req := types.ExposeDatabaseRequest{Domain: c.Args[1], LAN: c.Bool("lan")}
 		if p := c.String("port"); p != "" {
 			n, err := strconv.Atoi(p)
 			if err != nil {
@@ -241,12 +246,21 @@ func dbExpose(e database.Engine) func(*Context) error {
 			return err
 		}
 		x := db.Exposed
-		c.Step("Exposed %s at %s:%d", db.Name, x.Host, x.Port)
+		if x.LAN {
+			c.Step("Exposed %s at %s:%d on your network: your ingress nodes carry it, the edges don't", db.Name, x.Host, x.Port)
+		} else {
+			c.Step("Exposed %s at %s:%d", db.Name, x.Host, x.Port)
+		}
 		c.Info("Clients connect with: %s", maskPassword(x.URL))
 		c.Info("(with its password: jokku db:%s:info %s --public-dsn)", e.Name, db.Name)
-		if net.ParseIP(x.Host) == nil {
+		switch {
+		case x.LAN && net.ParseIP(x.Host) == nil:
+			c.Info("Point %s at one of your ingress nodes' addresses on your network.", x.Host)
+		case x.LAN:
+			c.Info("%s should be one of your ingress nodes' addresses.", x.Host)
+		case net.ParseIP(x.Host) == nil:
 			c.Info("Point %s at your edges (or ingress nodes), and open TCP port %d in their firewalls.", x.Host, x.Port)
-		} else {
+		default:
 			c.Info("Open TCP port %d in your edges' (or ingress nodes') firewalls.", x.Port)
 		}
 		if len(x.Allow) == 0 {

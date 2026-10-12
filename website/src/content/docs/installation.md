@@ -30,12 +30,12 @@ You can set a few options in the environment:
 
 | Variable | What it does |
 | --- | --- |
-| `JOKKU_VERSION=v0.8.10` | Install a specific release instead of the latest. |
+| `JOKKU_VERSION=v0.8.11` | Install a specific release instead of the latest. |
 | `JOKKU_IMPORT_KEYS=0` | Don't give the SSH keys you logged in with access to Jokku. |
 | `JOKKU_SPLASH=1` or `0` | Answer the splash screen question in advance: show it at login, or don't. |
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo JOKKU_VERSION=v0.8.10 sh
+curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo JOKKU_VERSION=v0.8.11 sh
 ```
 
 ## The splash screen
@@ -47,7 +47,7 @@ Setup asks whether to greet you with Jokku's splash screen when you log in to th
 - Anything that needs a look: a node that's down, an app short of healthy instances, or system updates waiting.
 
 ```
-  jokku1  control node  ● ready  jokku v0.8.10
+  jokku1  control node  ● ready  jokku v0.8.11
 
   apps       15 · 1 asleep                    ip      192.168.86.113
   databases  2                                load    0.52 0.26 0.15 · 6 cpus

@@ -117,6 +117,7 @@ several namespaces. In Jokku it is one command, `builder:dockerfile`,
 | `backups:cluster <destination> [<path>] [--every] [--keep-recent] [--keep-daily]`, `backups:cluster-unset`, `backups:cluster-run`, `backups:cluster-list` (the control node's database, identity and recent releases; hourly once a destination exists) | ➕ ✅ |
 | `jokku restore-cluster --endpoint --bucket --access-key-id [--path] [--backup]` (as root, on a new control node) | ➕ ✅ |
 | Object-storage volumes (`--type s3`), shared by many instances | 🔜 later |
-| `db:postgres:*`, `db:mysql:*`, `db:redis:*`: `create [--image] [--image-version] [--size] [--memory]`, `link [--alias] [--no-restart]`, `unlink`, `connect`, `export`, `import` (Postgres, MySQL), `info [--dsn]`, `list`, `logs`, `restart`, `stop`, `start`, `destroy`; and `db:list` | ✏️ ✅ replaces Dokku's `postgres:*`, `mysql:*` and `redis:*` plugins |
+| `db:postgres:*`, `db:mysql:*`, `db:redis:*`: `create [--image] [--image-version] [--size] [--memory]`, `link [--alias] [--no-restart]`, `unlink`, `connect`, `export`, `import` (Postgres, MySQL), `info [--dsn] [--public-dsn]`, `list`, `logs`, `restart`, `stop`, `start`, `destroy`; and `db:list` | ✏️ ✅ replaces Dokku's `postgres:*`, `mysql:*` and `redis:*` plugins |
+| `db:<engine>:expose <name> <domain> [--port] [--allow <ips>]`, `db:<engine>:unexpose` (clients outside reach a database through the proxies, edges included: Postgres and Redis over TLS, sharing 5432 and 6379 and told apart by domain; MySQL on a port of its own) | ➕ ✅ |
 | `db:sqlite:*` (a SQLite file on an app's volume) | ➕ 🔜 next |
 | `plugin:*` | ✖ |

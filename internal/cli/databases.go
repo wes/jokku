@@ -2,7 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -39,6 +41,13 @@ func databaseCommands() []*Command {
 				}, Run: dbLink(e)},
 			&Command{Name: p + "unlink", Help: "Unlink a " + title + " database from an app, and restart it",
 				Args: "<name> <app>", MinArgs: 2, MaxArgs: 2, Flags: []Flag{{Name: "no-restart", Help: "Don't restart the app"}}, Run: dbUnlink(e)},
+			&Command{Name: p + "expose", Help: "Let clients outside reach a " + title + " database at a domain, through the proxies",
+				Args: "<name> <domain>", MinArgs: 2, MaxArgs: 2, Flags: []Flag{
+					{Name: "port", Value: "port", Help: exposePortHelp(e)},
+					{Name: "allow", Value: "ips", Help: "Let in only these addresses, comma-separated (IPs or CIDRs); default: any"},
+				}, Run: dbExpose(e)},
+			&Command{Name: p + "unexpose", Help: "Stop clients outside from reaching a " + title + " database",
+				Args: "<name>", MinArgs: 1, MaxArgs: 1, Run: dbUnexpose(e)},
 			&Command{Name: p + "connect", Help: "Open a " + map[string]string{"postgres": "psql", "mysql": "mysql", "redis": "redis-cli"}[name] + " shell in a " + title + " database",
 				Args: "<name>", MinArgs: 1, MaxArgs: 1, Run: dbConnect(e)},
 			&Command{Name: p + "export", Help: "Write a " + title + " database's contents to stdout, as " + e.Dump,
@@ -166,11 +175,24 @@ func dbInfo(e database.Engine) func(*Context) error {
 		if len(c.extra) == 0 {
 			dsn = maskPassword(db.URL) // the full URL with --dsn
 		}
+		exposed, allowed, publicDSN := "no", "", ""
+		if x := db.Exposed; x != nil {
+			exposed, allowed, publicDSN = fmt.Sprintf("%s:%d", x.Host, x.Port), "any address", x.URL
+			if len(x.Allow) > 0 {
+				allowed = strings.Join(x.Allow, ", ")
+			}
+			if len(c.extra) == 0 {
+				publicDSN = maskPassword(x.URL) // the full URL with --public-dsn
+			}
+		}
 		return c.report(fmt.Sprintf("%s %s information", db.Name, db.Engine), []row{
 			{"status", "Status", status},
 			{"version", "Image", db.Image},
 			{"host", "Host", db.Host},
 			{"dsn", "Dsn", dsn},
+			{"exposed", "Exposed", exposed},
+			{"allowed", "Allowed", allowed},
+			{"public-dsn", "Public dsn", publicDSN},
 			{"links", "Links", strings.Join(links, ", ")},
 			{"memory", "Memory", formatMemory(db.MemoryMB)},
 			{"volume", "Volume", volume},
@@ -190,6 +212,58 @@ func maskPassword(raw string) string {
 		u.User = url.UserPassword(u.User.Username(), "xxxxx")
 	}
 	return strings.Replace(u.String(), "xxxxx", "•••••", 1)
+}
+
+func exposePortHelp(e database.Engine) string {
+	if e.Stream == types.StreamPlain {
+		return fmt.Sprintf("The port clients connect to (default %d): each %s database needs one of its own", e.Port, e.Name)
+	}
+	return fmt.Sprintf("The port clients connect to (default %d, which the %s databases share, told apart by domain)", e.Port, e.Name)
+}
+
+func dbExpose(e database.Engine) func(*Context) error {
+	return func(c *Context) error {
+		req := types.ExposeDatabaseRequest{Domain: c.Args[1]}
+		if p := c.String("port"); p != "" {
+			n, err := strconv.Atoi(p)
+			if err != nil {
+				return fmt.Errorf("invalid port %q", p)
+			}
+			req.Port = n
+		}
+		for _, a := range strings.Split(c.String("allow"), ",") {
+			if a = strings.TrimSpace(a); a != "" {
+				req.Allow = append(req.Allow, a)
+			}
+		}
+		db, err := c.API.ExposeDatabase(c, e.Name, c.Args[0], req)
+		if err != nil {
+			return err
+		}
+		x := db.Exposed
+		c.Step("Exposed %s at %s:%d", db.Name, x.Host, x.Port)
+		c.Info("Clients connect with: %s", maskPassword(x.URL))
+		c.Info("(with its password: jokku db:%s:info %s --public-dsn)", e.Name, db.Name)
+		if net.ParseIP(x.Host) == nil {
+			c.Info("Point %s at your edges (or ingress nodes), and open TCP port %d in their firewalls.", x.Host, x.Port)
+		} else {
+			c.Info("Open TCP port %d in your edges' (or ingress nodes') firewalls.", x.Port)
+		}
+		if len(x.Allow) == 0 {
+			c.Warn("Any address can connect: only %s's password protects it. Let in only yours with --allow <ip|cidr>.", db.Name)
+		}
+		return nil
+	}
+}
+
+func dbUnexpose(e database.Engine) func(*Context) error {
+	return func(c *Context) error {
+		if err := c.API.UnexposeDatabase(c, e.Name, c.Args[0]); err != nil {
+			return err
+		}
+		c.Step("Unexposed %s: only apps reach it now", c.Args[0])
+		return nil
+	}
 }
 
 func dbLink(e database.Engine) func(*Context) error {

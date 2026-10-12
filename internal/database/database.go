@@ -2,18 +2,23 @@
 // MySQL and Redis. Each is a Jokku app of its own (kind postgres, mysql or
 // redis) named <engine>-<name>, deployed from a compose file with one
 // service, the official image and a data volume, reachable from other apps
-// at <engine>-<name>.internal and from nowhere else. Its config vars hold
-// its passwords and fill in the compose file; linking it to an app sets a
-// connection URL on the app.
+// at <engine>-<name>.internal, and from outside only once exposed (through
+// the proxies, see types.ProxyStream). Its config vars hold its passwords
+// and fill in the compose file; linking it to an app sets a connection URL
+// on the app.
 package database
 
 import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
+
+	"github.com/wes/jokku/internal/types"
 )
 
 // Engine is one kind of database.
@@ -27,10 +32,13 @@ type Engine struct {
 	EnvVar string
 	// Mount is where the data volume is in the VM.
 	Mount string
+	// Stream is how the proxies carry its connections from outside
+	// (types.StreamPostgres, StreamTLS or StreamPlain).
+	Stream string
 	// secrets are the config vars generated at creation, each a password.
 	secrets []string
 	compose string
-	url     func(host string, name string, vars map[string]string) string
+	url     func(addr string, name string, vars map[string]string) string // addr is host:port
 	connect func(name string, vars map[string]string) ([]string, []string)
 	export  func(name string, vars map[string]string) ([]string, []string)
 	restore func(name string, vars map[string]string) ([]string, []string)
@@ -46,7 +54,7 @@ const (
 
 var engines = map[string]Engine{
 	"postgres": {
-		Name: "postgres", Image: "postgres", Version: "17", Port: 5432, MemoryMB: 512, EnvVar: "DATABASE_URL",
+		Name: "postgres", Image: "postgres", Version: "17", Port: 5432, MemoryMB: 512, EnvVar: "DATABASE_URL", Stream: types.StreamPostgres,
 		Mount: "/var/lib/postgresql/data", secrets: []string{"POSTGRES_PASSWORD"}, Dump: "a pg_dump archive (custom format)",
 		// PGDATA is a directory inside the volume: initdb refuses the
 		// volume's own root, which holds lost+found.
@@ -66,9 +74,9 @@ var engines = map[string]Engine{
 volumes:
   data: {}
 `,
-		url: func(host, name string, vars map[string]string) string {
+		url: func(addr, name string, vars map[string]string) string {
 			return (&url.URL{Scheme: "postgres", User: url.UserPassword("postgres", vars["POSTGRES_PASSWORD"]),
-				Host: fmt.Sprintf("%s:%d", host, 5432), Path: "/" + name}).String()
+				Host: addr, Path: "/" + name}).String()
 		},
 		connect: func(name string, _ map[string]string) ([]string, []string) {
 			return []string{"psql", "-U", "postgres", name}, nil
@@ -81,7 +89,7 @@ volumes:
 		},
 	},
 	"mysql": {
-		Name: "mysql", Image: "mysql", Version: "8.4", Port: 3306, MemoryMB: 1024, EnvVar: "DATABASE_URL",
+		Name: "mysql", Image: "mysql", Version: "8.4", Port: 3306, MemoryMB: 1024, EnvVar: "DATABASE_URL", Stream: types.StreamPlain,
 		Mount: "/var/lib/mysql", secrets: []string{"MYSQL_ROOT_PASSWORD", "MYSQL_PASSWORD"}, Dump: "SQL from mysqldump",
 		// Its data is a directory inside the volume: mysqld won't initialize
 		// the volume's own root, which holds lost+found.
@@ -102,9 +110,9 @@ volumes:
 volumes:
   data: {}
 `,
-		url: func(host, name string, vars map[string]string) string {
+		url: func(addr, name string, vars map[string]string) string {
 			return (&url.URL{Scheme: "mysql", User: url.UserPassword("mysql", vars["MYSQL_PASSWORD"]),
-				Host: fmt.Sprintf("%s:%d", host, 3306), Path: "/" + name}).String()
+				Host: addr, Path: "/" + name}).String()
 		},
 		connect: func(name string, vars map[string]string) ([]string, []string) {
 			return []string{"mysql", "-uroot", name}, []string{"MYSQL_PWD=" + vars["MYSQL_ROOT_PASSWORD"]}
@@ -118,7 +126,7 @@ volumes:
 		},
 	},
 	"redis": {
-		Name: "redis", Image: "redis", Version: "7", Port: 6379, MemoryMB: 256, EnvVar: "REDIS_URL",
+		Name: "redis", Image: "redis", Version: "7", Port: 6379, MemoryMB: 256, EnvVar: "REDIS_URL", Stream: types.StreamTLS,
 		Mount: "/data", secrets: []string{"REDIS_PASSWORD"}, Dump: "an RDB snapshot",
 		compose: `services:
   redis:
@@ -132,9 +140,9 @@ volumes:
 volumes:
   data: {}
 `,
-		url: func(host, _ string, vars map[string]string) string {
+		url: func(addr, _ string, vars map[string]string) string {
 			return (&url.URL{Scheme: "redis", User: url.UserPassword("", vars["REDIS_PASSWORD"]),
-				Host: fmt.Sprintf("%s:%d", host, 6379)}).String()
+				Host: addr}).String()
 		},
 		connect: func(_ string, vars map[string]string) ([]string, []string) {
 			return []string{"redis-cli"}, []string{"REDISCLI_AUTH=" + vars["REDIS_PASSWORD"]}
@@ -214,7 +222,24 @@ func (e Engine) Vars(name, image string) map[string]string {
 
 // URL is how a linked app connects.
 func (e Engine) URL(name string, vars map[string]string) string {
-	return e.url(e.Host(name), name, vars)
+	return e.url(net.JoinHostPort(e.Host(name), strconv.Itoa(e.Port)), name, vars)
+}
+
+// PublicURL is how a client outside connects once the database is exposed
+// at host:port: over TLS, which the proxies insist on for a Postgres or
+// Redis stream.
+func (e Engine) PublicURL(name, host string, port int, vars map[string]string) string {
+	u, err := url.Parse(e.url(net.JoinHostPort(host, strconv.Itoa(port)), name, vars))
+	if err != nil {
+		return ""
+	}
+	switch e.Stream {
+	case types.StreamPostgres:
+		u.RawQuery = "sslmode=require"
+	case types.StreamTLS:
+		u.Scheme = "rediss"
+	}
+	return u.String()
 }
 
 // ConnectCommand is the shell to run in the database's VM, and its

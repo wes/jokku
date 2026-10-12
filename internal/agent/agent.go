@@ -144,6 +144,7 @@ type Agent struct {
 	lastMesh string
 	lastSync time.Time
 	lastProx string
+	proxSent time.Time
 	lastGC   time.Time
 	canRun   string
 	errMu    sync.Mutex
@@ -732,15 +733,20 @@ func (a *Agent) syncProxy(ctx context.Context, ps *types.ProxyState) error {
 	b, _ := json.Marshal(ps)
 	sum := sha256.Sum256(b)
 	key := hex.EncodeToString(sum[:])
-	if key == a.lastProx {
+	// Unchanged routes are sent again now and then (the proxy ignores a
+	// config it has), for a proxy that restarted without its streams.
+	if key == a.lastProx && time.Since(a.proxSent) < proxyResend {
 		return nil
 	}
 	if err := a.Proxy.Apply(ctx, ps); err != nil {
 		return err
 	}
-	a.lastProx = key
+	a.lastProx, a.proxSent = key, time.Now()
 	return nil
 }
+
+// proxyResend is how often unchanged routes are sent to the proxy again.
+const proxyResend = 5 * time.Minute
 
 // Reporting
 
@@ -768,7 +774,7 @@ func (a *Agent) reportLoop(ctx context.Context) {
 func (a *Agent) Status() *types.NodeStatus {
 	st := &types.NodeStatus{
 		Protocol: types.ProtocolVersion, Version: a.Version, CanRun: a.canRun, Instances: []types.InstanceStatus{},
-		Features: []string{types.FeatureVolumes, types.FeatureRelay}, Volumes: a.volumeStatus(), UpdateFailed: a.updateFailure(),
+		Features: []string{types.FeatureVolumes, types.FeatureRelay, types.FeatureStreams}, Volumes: a.volumeStatus(), UpdateFailed: a.updateFailure(),
 	}
 	if a.Updater != nil {
 		st.Features = append(st.Features, types.FeatureUpdate)

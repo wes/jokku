@@ -12,7 +12,7 @@ jokku db:postgres:create shopdb
 jokku db:postgres:link shopdb myapp
 ```
 
-Linking sets `DATABASE_URL` on the app (`REDIS_URL` for Redis) and restarts it, so it connects right away. The database is reachable only from your apps, at `postgres-shopdb.internal`, on any server in the cluster.
+Linking sets `DATABASE_URL` on the app (`REDIS_URL` for Redis) and restarts it, so it connects right away. The database is reachable only from your apps, at `postgres-shopdb.internal`, on any server in the cluster, until you [expose it](#reach-it-from-outside).
 
 | Engine | Commands | Default |
 | --- | --- | --- |
@@ -42,6 +42,34 @@ jokku db:list                          # every database
 | `db:<engine>:logs <name> [-t]` | Its log output. |
 | `db:<engine>:restart`, `stop`, `start` | As for an app. |
 | `db:<engine>:destroy <name>` | Delete it and its data. Refused while it's linked; its backups stay in their bucket. |
+
+## Reach it from outside
+
+To connect from your laptop, a BI tool or another host, expose the database at a domain:
+
+```sh
+jokku db:postgres:expose shopdb db.example.com --allow 203.0.113.7
+jokku db:postgres:info shopdb --public-dsn
+# postgres://postgres:…@db.example.com:5432/shopdb?sslmode=require
+```
+
+Point the domain at your servers, or at your [edges](/docs/edges), and open the port in their firewalls. Jokku's proxy takes the connections, on every server that takes web traffic and on every edge, and sends them to the database over the cluster's encrypted network.
+
+| Engine | Port | How it connects |
+| --- | --- | --- |
+| Postgres | 5432, shared by every Postgres you expose | TLS, which the proxy insists on. `sslmode=require` works, and so does Postgres 17's `sslnegotiation=direct`. The proxy tells databases apart by the domain the client asks for. |
+| Redis | 6379, shared the same way | TLS: `rediss://`. |
+| MySQL | 3306 for the first, `--port` for others | Passed through as it is, encrypted with MySQL's own certificate. MySQL starts TLS only after the server speaks, so the proxy can't read a domain first, and each MySQL database needs a port of its own. |
+
+A domain Let's Encrypt can reach gets a certificate from it, so clients can check it (`sslmode=verify-full sslrootcert=system`). Any other name gets one the proxy makes itself, which `sslmode=require` accepts without checking.
+
+`--allow` takes addresses and ranges, comma-separated (`--allow 203.0.113.7,198.51.100.0/24`), and the proxy turns away everyone else. Without it, any address can connect, and only the database's password and TLS protect it: Jokku generates long random passwords, but an allow list is better. Run `expose` again to change the domain, port or list. `--port` picks another port for Postgres or Redis too.
+
+| Command | What it does |
+| --- | --- |
+| `db:<engine>:expose <name> <domain> [--port N] [--allow IPS]` | Let clients outside connect, or change how. |
+| `db:<engine>:unexpose <name>` | Stop them: only your apps reach it again. |
+| `db:<engine>:info <name> --public-dsn` | The URL to connect from outside, with the password. |
 
 ## Export and import
 

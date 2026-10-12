@@ -443,6 +443,41 @@ grep -q "MySQL dump" "$dbtmp/orders.sql" || fail "the mysql export isn't a dump:
 
 [ "$(jssh db:list | grep -cE '^(shopdb|cache|orders) ')" -eq 3 ] || fail "db:list: $(jssh db:list)"
 if jssh apps:list | grep -q postgres-shopdb; then fail "apps:list shows the database"; fi
+
+step "exposed databases: clients outside connect through the proxy"
+{ command -v psql && command -v mysql; } >/dev/null ||
+  { sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql-client mysql-client >/dev/null; }
+if jssh domains:add postgres-shopdb db.example.com 2>/dev/null; then fail "a database got an HTTP domain"; fi
+# 127.0.0.1.sslip.io is no name Let's Encrypt can reach, so the proxy's own
+# CA signs its certificate, which sslmode=require doesn't check.
+out=$(jssh db:postgres:expose shopdb shopdb.127.0.0.1.sslip.io 2>&1) || fail "db:postgres:expose failed: $out"
+grep -q "Any address can connect" <<<"$out" || fail "no warning without --allow: $out"
+dsn=$(jssh db:postgres:info shopdb --public-dsn)
+[[ "$dsn" == postgres://postgres:*@shopdb.127.0.0.1.sslip.io:5432/shopdb?sslmode=require ]] || fail "public dsn: $dsn"
+for _ in $(seq 1 30); do res=$(psql "$dsn" -tAc 'SELECT v FROM t' 2>&1) && [ "$res" = kept ] && break; sleep 1; done
+[ "$res" = kept ] || fail "psql through the proxy: $res"
+if psql "${dsn/sslmode=require/sslmode=disable}" -tAc 'SELECT 1' >/dev/null 2>&1; then fail "a connection without TLS got through"; fi
+jssh db:postgres:expose shopdb shopdb.127.0.0.1.sslip.io --allow 192.0.2.0/24 >/dev/null || fail "db:postgres:expose --allow failed"
+for _ in $(seq 1 10); do psql "$dsn" -tAc 'SELECT 1' >/dev/null 2>&1 || break; sleep 1; done
+if psql "$dsn" -tAc 'SELECT 1' >/dev/null 2>&1; then fail "an address not let in got through"; fi
+# Redis over TLS from the first byte (rediss://), told apart by name too.
+jssh db:redis:expose cache cache.127.0.0.1.sslip.io >/dev/null 2>&1 || fail "db:redis:expose failed"
+rpw=$(jssh db:redis:info cache --public-dsn) && rpw=${rpw#rediss://:} && rpw=${rpw%@*}
+for _ in $(seq 1 30); do
+  res=$(printf 'AUTH %s\r\nGET greeting\r\nQUIT\r\n' "$rpw" |
+    timeout 5 openssl s_client -quiet -connect 127.0.0.1:6379 -servername cache.127.0.0.1.sslip.io 2>/dev/null) && grep -q hi <<<"$res" && break
+  sleep 1
+done
+grep -q hi <<<"$res" || fail "redis over TLS through the proxy: $res"
+# MySQL can't be told apart by name: it passes through on a port of its own.
+jssh db:mysql:expose orders 127.0.0.1 >/dev/null 2>&1 || fail "db:mysql:expose failed"
+mpw=$(jssh db:mysql:info orders --public-dsn) && mpw=${mpw#mysql://mysql:} && mpw=${mpw%@*}
+for _ in $(seq 1 30); do res=$(MYSQL_PWD=$mpw mysql -h 127.0.0.1 -P 3306 -u mysql orders -NBe 'SELECT 41+1' 2>&1) && [ "$res" = 42 ] && break; sleep 1; done
+[ "$res" = 42 ] || fail "mysql through the proxy: $res"
+for db in postgres:shopdb redis:cache mysql:orders; do jssh "db:${db%%:*}:unexpose" "${db#*:}" >/dev/null || fail "db:${db%%:*}:unexpose failed"; done
+for _ in $(seq 1 10); do timeout 2 bash -c '</dev/tcp/127.0.0.1/3306' 2>/dev/null || break; sleep 1; done
+if timeout 2 bash -c '</dev/tcp/127.0.0.1/3306' 2>/dev/null; then fail "the proxy still listens on 3306"; fi
+
 jssh db:postgres:unlink shopdb hello >/dev/null
 for db in postgres:shopdb redis:cache mysql:orders; do jssh "db:${db%%:*}:destroy" "${db#*:}" --force; done
 

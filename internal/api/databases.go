@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	imageref "github.com/google/go-containerregistry/pkg/name"
@@ -242,6 +243,13 @@ func (s *Server) databaseInfo(ctx context.Context, e database.Engine, app *types
 	for _, l := range links {
 		db.Links = append(db.Links, types.DatabaseLink{App: l.App, Var: l.Var})
 	}
+	exp, err := cluster.Exposures(ctx, s.Store, []types.App{*app})
+	if err != nil {
+		return nil, err
+	}
+	if x, ok := exp[app.Name]; ok {
+		db.Exposed = &types.DatabaseExposure{Host: x.Host, Port: x.Port, Allow: x.Allow, URL: e.PublicURL(name, x.Host, x.Port, vars)}
+	}
 	if v, err := s.Store.Volume(ctx, app.Name, "data"); err == nil {
 		info := s.volumeInfo(*v)
 		db.Volume = &info
@@ -391,4 +399,86 @@ func (s *Server) restartLinked(ctx context.Context, app *types.App, restart bool
 		return nil
 	}
 	return s.Deployer.PS(context.WithoutCancel(ctx), app.Name, "apply", who, st.Log)
+}
+
+// exposeDatabase lets clients outside reach a database through the
+// proxies, or changes how (see cluster.ExposePlugin).
+func (s *Server) exposeDatabase(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	name := r.PathValue("name")
+	e, db, err := s.lookupDatabase(ctx, r.PathValue("engine"), name)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	var req types.ExposeDatabaseRequest
+	if err := decode(r, &req); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	domain, err := normalizeDomain(req.Domain)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if strings.HasPrefix(domain, "*.") {
+		s.fail(w, r, badRequest("%s is a wildcard; a database is reached at one name", domain))
+		return
+	}
+	if _, err := netip.ParseAddr(domain); err == nil && e.Stream != types.StreamPlain {
+		s.fail(w, r, badRequest("%s is an address, and %s clients send the proxy a name to tell databases apart by: use a domain that points at your edges or ingress nodes",
+			domain, e.Name))
+		return
+	}
+	apps, err := s.Store.Apps(ctx)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	others, err := cluster.Exposures(ctx, s.Store, apps)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	x := cluster.Exposure{App: db.Name, Engine: e, Host: domain, Port: req.Port}
+	if err := cluster.CheckExposure(&x, req.Allow, others); err != nil {
+		s.fail(w, r, httpErrorf(http.StatusConflict, "%v", err))
+		return
+	}
+	if err := s.Store.SetProperties(ctx, db.Name, cluster.ExposePlugin, x.Properties()); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.Store.AddEvent(ctx, "app", db.Name, "", "%s exposed %s database %s at %s:%d", actor(r), e.Name, name, x.Host, x.Port)
+	s.Deployer.RoutesChanged()
+	info, err := s.databaseInfo(ctx, e, db, false)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
+func (s *Server) unexposeDatabase(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	name := r.PathValue("name")
+	e, db, err := s.lookupDatabase(ctx, r.PathValue("engine"), name)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if exp, err := cluster.Exposures(ctx, s.Store, []types.App{*db}); err != nil || len(exp) == 0 {
+		if err == nil {
+			err = httpErrorf(http.StatusNotFound, "%s isn't exposed", name)
+		}
+		s.fail(w, r, err)
+		return
+	}
+	if err := s.Store.SetProperties(ctx, db.Name, cluster.ExposePlugin, cluster.UnexposeProperties); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.Store.AddEvent(ctx, "app", db.Name, "", "%s unexposed %s database %s", actor(r), e.Name, name)
+	s.Deployer.RoutesChanged()
+	w.WriteHeader(http.StatusNoContent)
 }

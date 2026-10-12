@@ -609,3 +609,14 @@ func (c *Client) UnlinkDatabase(ctx context.Context, engine, name, app string, n
 	}
 	return c.streamJSON(ctx, http.MethodDelete, path, nil, onEvent)
 }
+
+// ExposeDatabase lets clients outside reach a database, or changes how.
+func (c *Client) ExposeDatabase(ctx context.Context, engine, name string, req types.ExposeDatabaseRequest) (*types.Database, error) {
+	var out types.Database
+	return &out, c.call(ctx, http.MethodPut, databasePath(engine, name)+"/expose", req, &out)
+}
+
+// UnexposeDatabase stops clients outside from reaching a database.
+func (c *Client) UnexposeDatabase(ctx context.Context, engine, name string) error {
+	return c.call(ctx, http.MethodDelete, databasePath(engine, name)+"/expose", nil, nil)
+}

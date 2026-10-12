@@ -4,9 +4,9 @@
 # public edge. The runner drops every connection the VM opens to it, as a
 # home router would, so everything works only because home dials out. Checks
 # jokku edge:add over ssh, apps served through the edge, what the edge may
-# reach at home, an external app on a "LAN" behind the control node, logins
-# (password, users with TOTP, share links), the page shown when home is
-# unreachable, and removing the edge.
+# reach at home, an exposed database, an external app on a "LAN" behind the
+# control node, logins (password, users with TOTP, share links), the page
+# shown when home is unreachable, and removing the edge.
 #
 #   test/edge-e2e.sh <dist-dir>   (jokku-linux-amd64 + checksums.txt)
 set -euo pipefail
@@ -157,6 +157,25 @@ essh "curl -sk --max-time 5 https://10.210.1.1:7443/v1/version" | grep -q versio
 if essh "timeout 5 bash -c 'echo > /dev/tcp/10.210.1.1/22'"; then fail "the edge reached ssh on the control node"; fi
 if essh "timeout 5 bash -c 'echo > /dev/tcp/10.210.1.1/7444'"; then fail "the edge reached the control node's agent API"; fi
 if ! essh "sudo iptables -C INPUT -i jokku-wg -j JOKKU-MESH"; then fail "the edge doesn't firewall the mesh"; fi
+
+step "a database through the edge, over TLS"
+out=$(sudo jokku db:redis:create cache --image public.ecr.aws/docker/library/redis --image-version 7-alpine 2>&1) || fail "db:redis:create failed: $out"
+# A name Let's Encrypt can't reach: the proxies' own CA signs it.
+dbhost=cache.$edge_ip.sslip.io
+sudo jokku db:redis:expose cache "$dbhost" >/dev/null || fail "db:redis:expose failed"
+rpw=$(sudo jokku db:redis:info cache --public-dsn) && rpw=${rpw#rediss://:} && rpw=${rpw%@*}
+redis_ping() {
+  printf 'AUTH %s\r\nPING\r\nQUIT\r\n' "$rpw" |
+    timeout 5 openssl s_client -quiet -connect "$edge_ip:6379" -servername "$dbhost" 2>/dev/null | grep -q PONG
+}
+eventually 90 "redis answers through the edge" redis_ping
+db_ip=$(essh "sudo grep -o '10\.210\.1\.[0-9]*:6379' /var/lib/jokku/proxy/config.json" | head -n 1) && db_ip=${db_ip%:*}
+[ -n "$db_ip" ] || fail "the edge's proxy doesn't send the database's connections home"
+sudo jokku db:redis:unexpose cache >/dev/null || fail "db:redis:unexpose failed"
+eventually 30 "the edge stops listening on 6379" bash -c "! timeout 3 bash -c 'echo > /dev/tcp/$edge_ip/6379'"
+for _ in $(seq 1 15); do essh "timeout 3 bash -c 'echo > /dev/tcp/$db_ip/6379'" 2>/dev/null || break; sleep 2; done
+if essh "timeout 3 bash -c 'echo > /dev/tcp/$db_ip/6379'" 2>/dev/null; then fail "the edge still reaches the database once it isn't exposed"; fi
+sudo jokku db:redis:destroy cache --force >/dev/null
 
 step "an external app on the home LAN, through the edge"
 # The "LAN": a network namespace behind the control node, with Home

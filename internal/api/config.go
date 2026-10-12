@@ -86,6 +86,18 @@ func (s *Server) patchDomains(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if app != "" {
+		// Domains route HTTP, which no database speaks. Removing one is
+		// still allowed.
+		a, err := s.Store.App(r.Context(), app)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		if a.Kind != "" && a.Kind != types.KindExternal && (len(p.Add) > 0 || len(p.Set) > 0) {
+			s.fail(w, r, httpErrorf(http.StatusConflict, "%s is a %s database: domains route HTTP, which it doesn't speak. Apps reach it at %s.internal (jokku db:%s:link), clients outside once it is exposed (jokku db:%s:expose)",
+				app, a.Kind, app, a.Kind, a.Kind))
+			return
+		}
 		// The login domain is served by the proxies themselves.
 		global, err := s.Store.Properties(r.Context(), "", cluster.AuthPlugin)
 		if err != nil {

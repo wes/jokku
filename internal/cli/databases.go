@@ -71,6 +71,7 @@ func databaseCommands() []*Command {
 			cmds = append(cmds, &Command{Name: p + "import", Help: "Load an export (" + e.Dump + ") into a " + title + " database, from stdin",
 				Args: "<name>", MinArgs: 1, MaxArgs: 1, Run: dbImport(e)})
 		}
+		cmds = append(cmds, dbUserCommands(e, p, title)...)
 	}
 	return cmds
 }
@@ -189,7 +190,7 @@ func dbInfo(e database.Engine) func(*Context) error {
 				publicDSN = maskPassword(x.URL) // the full URL with --public-dsn
 			}
 		}
-		return c.report(fmt.Sprintf("%s %s information", db.Name, db.Engine), []row{
+		rows := []row{
 			{"status", "Status", status},
 			{"version", "Image", db.Image},
 			{"host", "Host", db.Host},
@@ -198,12 +199,15 @@ func dbInfo(e database.Engine) func(*Context) error {
 			{"through", "Through", through},
 			{"allowed", "Allowed", allowed},
 			{"public-dsn", "Public dsn", publicDSN},
+		}
+		rows = append(rows, dbStatsRows(db.Stats)...)
+		return c.report(fmt.Sprintf("%s %s information", db.Name, db.Engine), append(rows, []row{
 			{"links", "Links", strings.Join(links, ", ")},
 			{"memory", "Memory", formatMemory(db.MemoryMB)},
 			{"volume", "Volume", volume},
 			{"backups", "Backups", backupSummary(db.Backups)},
 			{"app", "App", db.App},
-		})
+		}...))
 	}
 }
 

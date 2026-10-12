@@ -59,6 +59,7 @@ type Controller struct {
 	failover    failover
 	sleep       sleeper
 	rollout     rollout
+	dbstats     dbStats
 }
 
 func New(c *Controller) *Controller {
@@ -130,6 +131,9 @@ func (c *Controller) Run(ctx context.Context) {
 		}
 		if err := c.tickUpdate(ctx, time.Now()); err != nil && ctx.Err() == nil {
 			c.Log.Error("updating the cluster", "err", err)
+		}
+		if err := c.tickDBStats(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			c.Log.Error("looking inside the databases", "err", err)
 		}
 		select {
 		case <-ctx.Done():

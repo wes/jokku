@@ -95,6 +95,10 @@ func (c cuttable) Report(ctx context.Context, st *types.NodeStatus) error {
 	return c.ControlPlane.Report(ctx, st)
 }
 
+// fakeDatabase, when set, answers every exec in the fake guests, with what
+// a database's client (psql, mysql) would print, in place of the echo.
+var fakeDatabase atomic.Pointer[func(argv []string, stdin string) (stdout, stderr string, code int)]
+
 // fakeRuntime pretends to run VMs: a started VM is "running" until stopped
 // or crashed.
 type fakeRuntime struct {
@@ -158,6 +162,21 @@ func (f *fakeRuntime) guest(id, token string, conn net.Conn) {
 	case session.OpExec:
 		if len(req.Argv) == 2 && req.Argv[0] == "exit" {
 			code, _ := strconv.Atoi(req.Argv[1])
+			c.Exit(code, "")
+			return
+		}
+		if db := fakeDatabase.Load(); db != nil {
+			var stdin strings.Builder
+			for {
+				typ, p, err := c.Read()
+				if err != nil || typ == session.FrameEOF {
+					break
+				}
+				stdin.Write(p)
+			}
+			stdout, stderr, code := (*db)(req.Argv, stdin.String())
+			c.Write(session.FrameStdout, []byte(stdout))
+			c.Write(session.FrameStderr, []byte(stderr))
 			c.Exit(code, "")
 			return
 		}

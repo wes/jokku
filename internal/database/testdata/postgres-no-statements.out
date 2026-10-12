@@ -1,0 +1,2 @@
+{"started" : 1791842513.803254, "max" : 100, "reserved" : 3, "preload" : "", "pending" : null, "extension" : false, "available" : true, "clients" : [], "xacts" : 898, "hits" : 89989, "reads" : 775}
+{"active_ms" : 24.481, "users" : [{"name":"postgres","super":true,"can_read":true,"can_write":true}]}

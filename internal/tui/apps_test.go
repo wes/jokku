@@ -111,10 +111,10 @@ func TestOverviewListsDatabasesApart(t *testing.T) {
 		t.Errorf("drill into a database: view %v filter %q instances %d", m.view, m.filterApp, len(m.instances()))
 	}
 
-	// No databases, no heading.
+	// No databases, no heading (the tab is always there).
 	m = &model{ctx: context.Background(), cursor: map[view]int{}, st: sampleStatus(), at: time.Now()}
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	if out := ansi.Strip(m.View()); strings.Contains(out, "Databases") || strings.Contains(m.header(), "database") {
+	if out := ansi.Strip(m.overview()); strings.Contains(out, "Databases") || strings.Contains(m.header(), "database") {
 		t.Errorf("a Databases heading with none:\n%s", out)
 	}
 }

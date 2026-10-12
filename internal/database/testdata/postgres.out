@@ -1,0 +1,8 @@
+{"started" : 1791841359.192022, "max" : 100, "reserved" : 3, "preload" : "pg_stat_statements", "pending" : null, "extension" : true, "available" : true, "clients" : [], "xacts" : 7174, "hits" : 316375, "reads" : 1784}
+{"active_ms" : 19195.252, "users" : [{"name":"postgres","super":true,"can_read":true,"can_write":true}, 
+ {"name":"writer","super":false,"can_read":true,"can_write":true}]}
+{"calls" : 42201, "exec_ms" : 14032.103812999983, "top" : [{"query":"UPDATE pgbench_branches SET bbalance = bbalance + $1 WHERE bid = $2","calls":6022,"total_ms":11037.249191999988,"mean_ms":1.8328211876453042}, 
+ {"query":"UPDATE pgbench_tellers SET tbalance = tbalance + $1 WHERE tid = $2","calls":6022,"total_ms":2698.119259999993,"mean_ms":0.44804371637329743}, 
+ {"query":"copy pgbench_accounts from stdin with (freeze on)","calls":1,"total_ms":74.052902,"mean_ms":74.052902}, 
+ {"query":"UPDATE pgbench_accounts SET abalance = abalance + $1 WHERE aid = $2","calls":6022,"total_ms":70.72618100000037,"mean_ms":0.011744633178346047}, 
+ {"query":"CREATE DATABASE \"shopdb\"","calls":1,"total_ms":51.053077,"mean_ms":51.053077}]}

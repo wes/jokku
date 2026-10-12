@@ -616,6 +616,36 @@ func (c *Client) ExposeDatabase(ctx context.Context, engine, name string, req ty
 	return &out, c.call(ctx, http.MethodPut, databasePath(engine, name)+"/expose", req, &out)
 }
 
+// DatabaseStats is what the control node has seen inside every database.
+func (c *Client) DatabaseStats(ctx context.Context) ([]types.DatabaseStats, error) {
+	var out []types.DatabaseStats
+	return out, c.call(ctx, http.MethodGet, "/v1/databases/stats", nil, &out)
+}
+
+// DatabaseUsers lists a database's logins.
+func (c *Client) DatabaseUsers(ctx context.Context, engine, name string) ([]types.DatabaseUser, error) {
+	var out []types.DatabaseUser
+	return out, c.call(ctx, http.MethodGet, databasePath(engine, name)+"/users", nil, &out)
+}
+
+// AddDatabaseUser adds a login to a database, returning it with its
+// password and URLs.
+func (c *Client) AddDatabaseUser(ctx context.Context, engine, name string, req types.AddDatabaseUserRequest) (*types.DatabaseUser, error) {
+	var out types.DatabaseUser
+	return &out, c.call(ctx, http.MethodPost, databasePath(engine, name)+"/users", req, &out)
+}
+
+// DatabaseUserPassword gives a database's login a new password.
+func (c *Client) DatabaseUserPassword(ctx context.Context, engine, name, user string) (*types.DatabaseUser, error) {
+	var out types.DatabaseUser
+	return &out, c.call(ctx, http.MethodPut, databasePath(engine, name)+"/users/"+url.PathEscape(user)+"/password", nil, &out)
+}
+
+// RemoveDatabaseUser drops a database's login and ends its sessions.
+func (c *Client) RemoveDatabaseUser(ctx context.Context, engine, name, user string) error {
+	return c.call(ctx, http.MethodDelete, databasePath(engine, name)+"/users/"+url.PathEscape(user), nil, nil)
+}
+
 // UnexposeDatabase stops clients outside from reaching a database.
 func (c *Client) UnexposeDatabase(ctx context.Context, engine, name string) error {
 	return c.call(ctx, http.MethodDelete, databasePath(engine, name)+"/expose", nil, nil)

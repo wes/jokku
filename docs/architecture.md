@@ -782,6 +782,51 @@ port, and connections stay open across config reloads.
   one a release behind, loads the HTTP routes without the streams, and the
   agent logs why; it tries the streams again after a minute.
 
+**Looking inside a database** (`jokku top`'s Databases view,
+`db:<engine>:info`): every 10s (`cluster.DBPollEvery`) the control node
+runs the engine's own client in each running database's VM
+(`Engine.StatsCommand`: `psql`, `mysql`, `redis-cli`), through the same
+session the agent opens for `jokku enter` but with no event
+(`Controller.Exec`). The output (`Engine.ParseStats`, tested against real
+output in `internal/database/testdata`) is a `database.Sample`: connections
+by client and user against the limit, and counters that only grow, so two
+looks give an interval's queries, their times and cache hits
+(`cluster/dbstats.go`). Intervals add up into the last minute (per look) and
+per-minute slots for the hour and day, in memory on the control node.
+Clients are named by address: an app's instance, a node's mesh address (its
+proxy, carrying clients outside), or none (the VM itself).
+
+- **Postgres**: `pg_stat_activity`, `pg_stat_database`, and
+  `pg_stat_statements` for time per statement and the slowest. That needs
+  `shared_preload_libraries`: a new database on the official image gets it on
+  its command line; any other, the first look finds it missing and runs
+  `ALTER SYSTEM` (once per server start, and only if the image has the
+  extension, since Postgres won't start with a library it lacks), so it
+  loads at its next restart, after which `CREATE EXTENSION`. Until then the
+  unit is a transaction (`active_time` over commits). The look's own session
+  sets `pg_stat_statements.track = none`; its transactions are subtracted.
+- **MySQL**: `performance_schema` (processlist, global status, and
+  `events_statements_histogram_global` for p50/p95/p99). The look turns
+  instrumentation off for its own thread; the three statements counted
+  anyway are subtracted.
+- **Redis**: `INFO`, `CLIENT LIST`, and `LATENCY HISTOGRAM` (per command,
+  cumulative, doubling buckets), leaving out the look's own commands.
+- When a server restarts (its start time moves) or a counter goes down, the
+  next interval starts over; when the unit changes (Postgres gaining
+  `pg_stat_statements`), the history does too.
+
+**Users** (`db:<engine>:users:*`, Postgres and MySQL): the database is where
+they are; Jokku runs the SQL in its VM (`Engine.AddUserCommand` and the
+like, passwords on stdin, never in arguments) and keeps the passwords it
+made in the `db-users` properties, to show their URLs again. A user reads
+and writes data but can't change the schema (Postgres: `pg_read_all_data`
+and `pg_write_all_data`; MySQL: SELECT, INSERT, UPDATE, DELETE on the
+database), or only reads with `--read-only`. Removing one ends its sessions
+and, in Postgres, gives what it owned to `postgres`. The database's own
+users (`postgres`; `root` and `mysql`) can't be changed this way. Redis keeps
+users only in a file named at its start, which an existing database's
+command line doesn't, so it has none here.
+
 ## Compose apps
 
 `builder:compose app [<path>]` deploys the app from a compose file instead

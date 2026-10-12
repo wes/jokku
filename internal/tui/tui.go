@@ -33,10 +33,11 @@ const (
 	eventsView
 	trafficView
 	backupsView
+	databasesView
 	logsView
 )
 
-var tabNames = []string{"Overview", "Nodes", "Apps", "Instances", "Events", "Traffic", "Backups"}
+var tabNames = []string{"Overview", "Nodes", "Apps", "Instances", "Events", "Traffic", "Backups", "Databases"}
 
 // Run starts the dashboard and blocks until the user quits.
 func Run(ctx context.Context, api *client.Client, in io.Reader, out io.Writer) error {
@@ -89,6 +90,11 @@ type model struct {
 	bkPicking   bool   // choosing a destination for bkPickFor
 	bkPickFor   string
 	bkPick      int
+
+	// The Databases view (databases.go).
+	dbs   []types.DatabaseStats
+	dbErr error
+	dbWin int // the span the table shows: dbWindows
 }
 
 type statusMsg struct {
@@ -160,6 +166,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.fetchBackups()
 	case latencyMsg:
 		m.lat, m.latErr = msg.l, msg.err
+	case dbStatsMsg:
+		if msg.err != nil {
+			m.dbErr = msg.err
+		} else {
+			m.dbs, m.dbErr = msg.stats, nil
+			m.move(0)
+		}
 	case tickMsg:
 		cmds := []tea.Cmd{m.fetch(), tick()}
 		switch m.view {
@@ -171,6 +184,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if time.Since(m.latAt) >= latencyEvery {
 				cmds = append(cmds, m.fetchLatency())
 			}
+		case databasesView:
+			cmds = append(cmds, m.fetchDBStats())
 		}
 		return m, tea.Batch(cmds...)
 	case tea.KeyMsg:
@@ -184,6 +199,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if before != backupsView && m.view == backupsView {
 			cmds = append(cmds, m.fetchBackups())
+		}
+		if before != databasesView && m.view == databasesView {
+			cmds = append(cmds, m.fetchDBStats())
 		}
 		return m, tea.Batch(cmds...)
 	case requestsMsg, trafficEndMsg, frameMsg, trafficRetryMsg:
@@ -216,19 +234,23 @@ func (m *model) key(k string) tea.Cmd {
 	case "r":
 		return m.fetch()
 	case "tab", "right":
-		if m.view < backupsView {
+		if m.view < databasesView {
 			m.view++
-		} else if m.view == backupsView {
+		} else if m.view == databasesView {
 			m.view = overview
 		}
 	case "shift+tab", "left":
-		if m.view > overview && m.view <= backupsView {
+		if m.view > overview && m.view <= databasesView {
 			m.view--
 		} else if m.view == overview {
-			m.view = backupsView
+			m.view = databasesView
 		}
-	case "1", "2", "3", "4", "5", "6", "7":
+	case "1", "2", "3", "4", "5", "6", "7", "8":
 		m.view = view(k[0] - '1')
+	case "w":
+		if m.view == databasesView {
+			m.dbWin = (m.dbWin + 1) % len(dbWindows)
+		}
 	case "up", "k":
 		m.move(-1)
 	case "down", "j":
@@ -254,6 +276,11 @@ func (m *model) key(k string) tea.Cmd {
 				m.filterApp, m.filterNode, m.view = a.Name, "", instancesView
 				m.cursor[instancesView] = 0
 			}
+		case databasesView:
+			if s, ok := m.selectedDB(); ok {
+				m.filterApp, m.filterNode, m.view = s.App, "", instancesView
+				m.cursor[instancesView] = 0
+			}
 		}
 	case "esc", "backspace":
 		switch {
@@ -272,6 +299,10 @@ func (m *model) key(k string) tea.Cmd {
 		case instancesView:
 			if in, ok := m.selectedInstance(); ok {
 				app = in.App
+			}
+		case databasesView:
+			if s, ok := m.selectedDB(); ok {
+				app = s.App
 			}
 		}
 		if app != "" {
@@ -299,6 +330,8 @@ func (m *model) rows() int {
 		return len(m.logs)
 	case backupsView:
 		return len(m.bkRows())
+	case databasesView:
+		return len(m.dbs)
 	}
 	return 0
 }

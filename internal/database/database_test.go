@@ -18,8 +18,8 @@ func TestComposeFiles(t *testing.T) {
 		e, _ := Lookup(name)
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(e.Compose(0)), 0o644)
 			image := e.ImageRef("", "")
+			os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(e.Compose(0, image)), 0o644)
 			vars := e.Vars("shopdb", image)
 			plan, err := compose.Load(context.Background(), dir, dir, "", e.AppName("shopdb"), vars)
 			if err != nil {

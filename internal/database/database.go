@@ -15,8 +15,10 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/wes/jokku/internal/types"
 )
@@ -61,7 +63,7 @@ var engines = map[string]Engine{
 		compose: `services:
   postgres:
     image: ${DB_IMAGE}
-    environment:
+%s    environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
@@ -201,13 +203,24 @@ func (e Engine) ImageRef(image, version string) string {
 	return image + ":" + version
 }
 
-// Compose is the compose file a database is deployed from, with memoryMB
-// for its VM.
-func (e Engine) Compose(memoryMB int) string {
+// Compose is the compose file a database running image is deployed from,
+// with memoryMB for its VM.
+func (e Engine) Compose(memoryMB int, image string) string {
 	if memoryMB <= 0 {
 		memoryMB = e.MemoryMB
 	}
-	return fmt.Sprintf(e.compose, memoryMB)
+	if e.Name != "postgres" {
+		return fmt.Sprintf(e.compose, memoryMB)
+	}
+	// The official image has pg_stat_statements, for "jokku top"'s query
+	// times, so it loads from the start. Postgres won't start with a library
+	// it doesn't have, so another image gets it only once the first look
+	// inside finds it there (ParseStats), at its next restart.
+	command := ""
+	if repo, _, _ := strings.Cut(image, ":"); slices.Contains([]string{e.Image, "library/" + e.Image, "docker.io/library/" + e.Image}, repo) {
+		command = "    command: [\"postgres\", \"-c\", \"shared_preload_libraries=pg_stat_statements\"]\n"
+	}
+	return fmt.Sprintf(e.compose, command, memoryMB)
 }
 
 // Vars are a new database's config vars: its image, name and fresh

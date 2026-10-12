@@ -119,5 +119,6 @@ several namespaces. In Jokku it is one command, `builder:dockerfile`,
 | Object-storage volumes (`--type s3`), shared by many instances | 🔜 later |
 | `db:postgres:*`, `db:mysql:*`, `db:redis:*`: `create [--image] [--image-version] [--size] [--memory]`, `link [--alias] [--no-restart]`, `unlink`, `connect`, `export`, `import` (Postgres, MySQL), `info [--dsn] [--public-dsn]`, `list`, `logs`, `restart`, `stop`, `start`, `destroy`; and `db:list` | ✏️ ✅ replaces Dokku's `postgres:*`, `mysql:*` and `redis:*` plugins |
 | `db:<engine>:expose <name> <domain> [--port] [--allow <ips>] [--lan]`, `db:<engine>:unexpose` (clients outside reach a database through the proxies, edges included unless `--lan` keeps it on your network: Postgres and Redis over TLS, sharing 5432 and 6379 and told apart by domain; MySQL on a port of its own) | ➕ ✅ |
+| `db:<engine>:users:list <name> [--dsn]`, `users:add <name> <user> [--read-only]`, `users:passwd`, `users:remove` (a Postgres or MySQL database's logins: Jokku makes the password, and a user reads and writes data but not the schema, or only reads) | ➕ ✅ |
 | `db:sqlite:*` (a SQLite file on an app's volume) | ➕ 🔜 next |
 | `plugin:*` | ✖ |

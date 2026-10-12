@@ -22,6 +22,7 @@ Switch with the number keys, or with tab:
 | `5` | Events | Deploys, crashes, servers coming and going |
 | `6` | Traffic | Every request, live |
 | `7` | Backups | What is and isn't backed up, and the switches to change it |
+| `8` | Databases | Inside each database: connections, queries a second, how long they take |
 
 On a server or app, press `enter` to see its instances, and `l` for an app's logs. `esc` goes back, `?` shows help and `q` quits.
 
@@ -102,6 +103,33 @@ Dots are green when backups are up to date, yellow when one is overdue or hasn't
 | `a` | Turn automatic restore on or off |
 
 Restoring replaces data, so it stays on the command line: the selected row shows the `jokku backups:restore` command for it. See [Backups](/docs/backups).
+
+## Databases
+
+Press `8` for **Databases**: what your control server sees inside each [database](/docs/databases#see-inside-it), looking every ten seconds.
+
+```console
+  DATABASE             ENGINE    CONNECTIONS                ACTIVE  QUERY/S  LATENCY p50 p95 p99           HIT   last minute
+  ● shopdb             postgres  █░░░░░░░░░ 12 / 97              2       21  2.1ms avg                    99.5%
+  ● orders             mysql     ░░░░░░░░░░ 3 / 151              0       10  1.5ms 10ms 104ms                -
+  ● cache              redis     ░░░░░░░░░░ 4 / 10000            -      850  12µs 45µs 140µs              92.0%
+
+postgres shopdb on server-1 · looked 3s ago
+                          PER SEC  LATENCY                           HIT
+  last minute                  21  2.1ms avg                       99.5%
+  last hour                    17  2.4ms avg                       99.0%
+  last day                     15  2.2ms avg                       99.1%
+  CONNECTED
+    shop web.1                     postgres       10 (2 active)
+    outside through edge-1         reporting      2
+  SLOWEST QUERIES, BY TOTAL TIME
+       12ms ×4100     SELECT * FROM orders WHERE customer_id = $1
+  USERS  postgres all · reporting read-only
+```
+
+Each row shows a database's connections against its limit, how many are running a query, its queries a second, how long they take, and how often reads came from memory (for Redis, how often a key was found). `w` switches between the last minute, hour and day. Postgres shows an average where the others show p50, p95 and p99: see [what each engine keeps](/docs/databases#see-inside-it).
+
+Under the table is the selected database: each span's numbers, who's connected (an app's instance, or clients outside through a server's or edge's proxy), its slowest queries and its users. `enter` shows its instances and `l` its logs.
 
 ## Events without the dashboard
 

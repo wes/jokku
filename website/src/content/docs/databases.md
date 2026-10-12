@@ -30,7 +30,7 @@ jokku db:postgres:create shopdb --image-version 16 --size 50g --memory 1g
 
 ```sh
 jokku db:postgres:connect shopdb       # a psql shell (mysql or redis-cli for the others)
-jokku db:postgres:info shopdb          # status, address, links and backups
+jokku db:postgres:info shopdb          # status, address, connections, query times, links and backups
 jokku db:postgres:info shopdb --dsn    # just its URL
 jokku db:list                          # every database
 ```
@@ -80,6 +80,50 @@ Your servers take the connections, and your [edges](/docs/edges) don't: they don
 | `db:<engine>:expose <name> <domain> [--port N] [--allow IPS] [--lan]` | Let clients outside connect, or change how. `--lan` keeps it on your network. |
 | `db:<engine>:unexpose <name>` | Stop them: only your apps reach it again. |
 | `db:<engine>:info <name> --public-dsn` | The URL to connect from outside, with the password. |
+
+## See inside it
+
+The **Databases** view of [`jokku top`](/docs/top#databases) (key `8`) shows each database's connections against its limit, its queries a second, how long they take, and how often reads come from memory, over the last minute, hour and day, with who's connected, its users and its slowest queries. `db:<engine>:info` shows the same:
+
+```console
+$ jokku db:postgres:info shopdb
+       ...
+       Connections:  12 of 97 (2 running a query)
+       Queries:      21.0/s over the last minute, 16.7/s over the last hour, 99.1% cache hits
+       Latency:      2.4 ms per query on average over the last hour
+       Users:        postgres (all), reporting (read-only)
+```
+
+Every ten seconds, your control server runs the database's own client (`psql`, `mysql` or `redis-cli`) in its microVM and leaves its own queries out of what it counts. It keeps the history in memory, so the hour and day start over when it restarts. The times are how long queries took inside the database, without the trip from your app.
+
+| Engine | Query times |
+| --- | --- |
+| MySQL | p50, p95 and p99, from the histogram MySQL keeps of its statements. |
+| Redis | p50, p95 and p99, from Redis's histogram, whose buckets double in size, so they're right to within a factor of two. |
+| Postgres | The average per query, and the slowest queries, from `pg_stat_statements`. Postgres keeps no histogram, so there are no percentiles. |
+
+`pg_stat_statements` has to be loaded when Postgres starts. A new database loads it. On a database created before v0.8.12, Jokku turns it on the first time it looks, and it starts at the database's next restart: `jokku db:postgres:restart shopdb`. Until then, the average is per transaction.
+
+## Users
+
+Your apps connect as the database's own user. Add others for a reporting tool, a teammate or a second app:
+
+```sh
+jokku db:postgres:users:add shopdb reporting --read-only
+jokku db:postgres:users:list shopdb
+jokku db:postgres:users:remove shopdb reporting
+```
+
+`users:add` makes a password and prints the user's URL, and its URL from outside when the database is [exposed](#reach-it-from-outside). A user reads and writes the data, or only reads with `--read-only`, but can't change the schema, so migrations stay with the database's own user.
+
+| Command | What it does |
+| --- | --- |
+| `db:<engine>:users:list <name> [--dsn]` | Every user and what it may do: `all` (the database's own), `read-write`, `read-only`, or `other` for privileges you set yourself. `--dsn` shows the URLs of the users Jokku added, with their passwords. |
+| `db:<engine>:users:add <name> <user> [--read-only]` | Add a user. |
+| `db:<engine>:users:passwd <name> <user>` | Give it a new password. The old one stops working. |
+| `db:<engine>:users:remove <name> <user>` | Remove it and close its open connections. In Postgres, what it owned goes to the database's own user. |
+
+Postgres (14 and newer) and MySQL have users. Redis has one password, the one in its URL.
 
 ## Export and import
 

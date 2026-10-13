@@ -27,7 +27,9 @@ const (
 var logoShades = []int{yellowOrange, yellowOrange, orange, orange, redOrange, redOrange}
 
 // sun is a striped sun, the way the eighties drew a sunset, in pixels:
-// each letter is a color from palette and a dot is empty. A pixel is one
+// each letter is a color from palette and a dot is empty. Its outline is a
+// circle 16 pixels across, so the dome widens into the orange band and the
+// stripes follow it down. A pixel is one
 // character wide and half a line tall (see halfBlocks), about square, so it
 // stands as tall as the logo plus a line above and below, and its shades
 // change on the same lines as the logo's. Half blocks are in every font
@@ -35,20 +37,20 @@ var logoShades = []int{yellowOrange, yellowOrange, orange, orange, redOrange, re
 // terminals that borrowed them from another font put them out of line.
 var sun = []string{
 	"...........yyyyyy...........",
-	"..........yyyyyyyy..........",
-	"........yyyyyyyyyyyy........",
+	".........yyyyyyyyyy.........",
 	"........yyyyyyyyyyyy........",
 	".......yyyyyyyyyyyyyy.......",
 	".......yyyyyyyyyyyyyy.......",
+	"......yyyyyyyyyyyyyyyy......",
 	"......oooooooooooooooo......",
 	"......oooooooooooooooo......",
 	"......oooooooooooooooo......",
+	"............................",
+	"......rrrrrrrrrrrrrrrr......",
 	"............................",
 	".......rrrrrrrrrrrrrr.......",
 	"............................",
-	"........rrrrrrrrrrrr........",
-	"............................",
-	"..........rrrrrrrr..........",
+	".........rrrrrrrrrr.........",
 	"............................",
 }
 

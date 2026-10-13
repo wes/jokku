@@ -67,8 +67,8 @@ func TestTheSplashFitsAnEightyColumnLogin(t *testing.T) {
 	}
 }
 
-// TestTheSunIsQuarterBlocks: two pixels across and two down to a
-// character, in at most two colors, an empty pixel counting as one.
+// TestTheSunIsHalfBlocks: one pixel across and two down to a character,
+// in at most two colors, an empty pixel counting as one.
 func TestTheSunIsHalfBlocks(t *testing.T) {
 	if len(sun) != 2*(len(logo)+2) {
 		t.Errorf("the sun is %d pixels tall, want %d", len(sun), 2*(len(logo)+2))
@@ -92,6 +92,35 @@ func TestTheSunIsHalfBlocks(t *testing.T) {
 		fg(redOrange) + bg(orange) + "▀" + reset + " "
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("halfBlocks = %q, want %q", got, want)
+	}
+}
+
+// TestTheSunIsRound: every row drawn spans the pixels whose centers are
+// inside a circle 16 across, so no row juts out of the outline.
+func TestTheSunIsRound(t *testing.T) {
+	const r, cx, cy = 8.0, sunWidth / 2.0, 8.0
+	for y, row := range sun {
+		if strings.Trim(row, ".") == "" {
+			continue // a gap between stripes
+		}
+		want := ""
+		for x := range sunWidth {
+			dx, dy := float64(x)+0.5-cx, float64(y)+0.5-cy
+			if dx*dx+dy*dy <= r*r {
+				want += "#"
+			} else {
+				want += "."
+			}
+		}
+		got := strings.Map(func(c rune) rune {
+			if c == '.' {
+				return '.'
+			}
+			return '#'
+		}, row)
+		if got != want {
+			t.Errorf("row %d is\n%s, the circle\n%s", y, got, want)
+		}
 	}
 }
 

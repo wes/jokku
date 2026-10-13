@@ -429,7 +429,6 @@ func isExternal(a types.AppView) bool { return a.Kind == types.KindExternal }
 // isApp says whether an app is one Jokku runs from your code.
 func isApp(a types.AppView) bool { return !isDatabase(a) && !isExternal(a) }
 
-
 // isDatabase says whether an app is a database (jokku db:), rather than an
 // app of the user's own or an external one.
 func isDatabase(a types.AppView) bool {

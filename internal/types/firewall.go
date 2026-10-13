@@ -22,7 +22,7 @@ type ProxyFirewall struct {
 	// Allow is the addresses (CIDRs) never banned or slowed, besides
 	// private ones, which never are.
 	Allow []string `json:"allow,omitempty"`
-	// Unbanned lifts the bans of these addresses made before the time
+	// Unbanned lifts these addresses' bans, each when a proxy first sees it
 	// (firewall:unban).
 	Unbanned map[string]time.Time `json:"unbanned,omitempty"`
 }

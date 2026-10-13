@@ -440,8 +440,9 @@ counts by app since the last report, the addresses over the rate, and those
 close to a ban. The control node keeps them in memory, per node and per
 minute for a day, records an event per new ban, and serves them to
 `firewall:report` and the Firewall view of `jokku top`. `firewall:unban`
-adds `address=time` to the `unbanned` property; the proxies lift bans made
-before that time when the next config loads. A proxy a release behind gets
+adds `address=time` to the `unbanned` property; a proxy lifts the
+address's ban when it first sees that entry in its config (comparing the
+ban's time with the unban's would depend on two machines' clocks). A proxy a release behind gets
 its routes loaded without the firewall rather than refusing the config.
 
 When an app's instances can't be reached (they're restarting, or the nodes

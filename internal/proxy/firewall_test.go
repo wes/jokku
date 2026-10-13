@@ -152,9 +152,11 @@ func TestFirewallUnbanAndAllow(t *testing.T) {
 	f := newGuard(t, p)
 	scan(f, "203.0.113.7", 3, t0)
 	scan(f, "203.0.113.8", 3, t0)
-	// firewall:unban: bans from before the time are lifted, with the pages
-	// not found that led to them.
-	p.Unbanned = map[string]time.Time{"203.0.113.7": t0.Add(time.Minute)}
+	// firewall:unban: the ban is lifted, with the pages not found that led
+	// to it, whatever the unban's time says: here it's a moment before the
+	// ban, as when the unban follows within the second (stored to the
+	// second, before v0.8.15) or comes from a clock a little behind.
+	p.Unbanned = map[string]time.Time{"203.0.113.7": t0.Add(-time.Second)}
 	r, _ := compileFirewall(p)
 	f.setRules(r)
 	if v, _ := f.admit(ip("203.0.113.7"), "shop", t0.Add(2*time.Minute)); v != fwPass {

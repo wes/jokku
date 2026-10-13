@@ -254,6 +254,11 @@ type firewall struct {
 	rules   fwRules
 	ready   bool // rules have been set
 	clients map[string]*fwClient
+	// applied are the unbans acted on (address -> the unban's time): each
+	// lifts the ban its address has when this proxy first hears of it.
+	// Comparing a ban's time with the unban's instead would depend on the
+	// two machines' clocks, and on the unban being a moment later.
+	applied map[string]time.Time
 	counts  map[string]*types.FirewallCounts // by app, since the last report
 	limited map[string]*types.FirewallSlowed // by address, since the last report
 	swept   time.Time
@@ -277,7 +282,7 @@ type fwClient struct {
 }
 
 func newFirewall() *firewall {
-	return &firewall{clients: map[string]*fwClient{}, counts: map[string]*types.FirewallCounts{},
+	return &firewall{clients: map[string]*fwClient{}, applied: map[string]time.Time{}, counts: map[string]*types.FirewallCounts{},
 		limited: map[string]*types.FirewallSlowed{}, kick: make(chan struct{}, 1)}
 }
 
@@ -285,10 +290,21 @@ func (f *firewall) setRules(r fwRules) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rules, f.ready = r, true
-	for k, c := range f.clients {
-		if t, ok := r.unbanned[k]; ok && c.ban != nil && c.ban.At.Before(t) {
+	for k, t := range r.unbanned {
+		if f.applied[k].Equal(t) {
+			continue
+		}
+		f.applied[k] = t
+		if c := f.clients[k]; c != nil {
 			c.ban, c.misses, c.paths = nil, nil, nil
 		}
+	}
+	for k := range f.applied {
+		if _, ok := r.unbanned[k]; !ok {
+			delete(f.applied, k)
+		}
+	}
+	for k, c := range f.clients {
 		if c.ban != nil && f.allowed(keyAddr(k)) {
 			c.ban = nil
 		}

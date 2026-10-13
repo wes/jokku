@@ -5,6 +5,13 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.15: A round sun
+
+October 13, 2026
+
+- **The login splash's sun is round.** Its yellow dome was narrower than the orange band under it, which stuck out a column on each side, and its stripes narrowed faster than its top. Every row now follows one circle.
+- **`firewall:unban` always lifts the ban**, as does `u` in `jokku top`'s Firewall view. An unban in the same second as the ban, or from a control server whose clock was a little behind the edge's, could leave it in place.
+
 ## v0.8.14: A firewall
 
 October 13, 2026

@@ -126,13 +126,19 @@ func (c *Controller) proxyFirewall(ctx context.Context) (*types.ProxyFirewall, e
 	return fw, nil
 }
 
-// unbanned reads the "unbanned" property: address=Unix seconds, ...
+// unbanned reads the "unbanned" property: address=Unix milliseconds
+// (seconds before v0.8.15), ...
 func unbanned(v string) map[string]time.Time {
 	out := map[string]time.Time{}
 	for _, item := range SplitList(v) {
 		addr, at, ok := strings.Cut(item, "=")
-		if sec, err := strconv.ParseInt(at, 10, 64); ok && err == nil {
-			out[addr] = time.Unix(sec, 0).UTC()
+		n, err := strconv.ParseInt(at, 10, 64)
+		switch {
+		case !ok || err != nil:
+		case n < 1e11: // seconds
+			out[addr] = time.Unix(n, 0).UTC()
+		default:
+			out[addr] = time.UnixMilli(n).UTC()
 		}
 	}
 	return out
@@ -242,7 +248,7 @@ func (c *Controller) Unban(ctx context.Context, addr string) (bool, error) {
 	var items []string
 	for a, at := range list {
 		if now.Sub(at) < ban {
-			items = append(items, a+"="+strconv.FormatInt(at.Unix(), 10))
+			items = append(items, a+"="+strconv.FormatInt(at.UnixMilli(), 10))
 		}
 	}
 	sort.Strings(items)

@@ -277,6 +277,9 @@ type ProxyState struct {
 	// Streams are the TCP routes: databases reached from outside
 	// (db:<engine>:expose). Only nodes reporting FeatureStreams get them.
 	Streams []ProxyStream `json:"streams,omitempty"`
+	// Firewall is the firewall's rules; nil when it's off, and for nodes
+	// that don't report FeatureFirewall.
+	Firewall *ProxyFirewall `json:"firewall,omitempty"`
 }
 
 type ProxyRoute struct {
@@ -300,6 +303,8 @@ type ProxyRoute struct {
 	// Relayed, on an edge: the upstreams are nodes' proxies, which pass the
 	// request on to an instance and compress the response.
 	Relayed bool `json:"relayed,omitempty"`
+	// NoFirewall: the app opted out of the firewall (firewall:disable).
+	NoFirewall bool `json:"no_firewall,omitempty"`
 }
 
 // ProxyStream sends the TCP connections for Host on Port to Upstreams. A
@@ -467,7 +472,12 @@ type ClusterTotals struct {
 	Nodes            int `json:"nodes"`
 	Apps             int `json:"apps"`
 	InstancesHealthy int `json:"instances_healthy"`
-	Instances        int `json:"instances"`
+	Instances        int `json:"instances"` // wanted, of apps that are running
+	// InstancesAsleep and InstancesStopped are the instances of apps
+	// asleep (ps:set sleep-after) and stopped (ps:stop): off on purpose,
+	// so not in Instances.
+	InstancesAsleep  int `json:"instances_asleep,omitempty"`
+	InstancesStopped int `json:"instances_stopped,omitempty"`
 }
 
 type NodeView struct {
@@ -513,6 +523,9 @@ type AppView struct {
 	CreatedAt time.Time `json:"created_at"`
 	// Links are the apps a database is linked to.
 	Links []DatabaseLink `json:"links,omitempty"`
+	// Target is an external app's URL, and Via the server that reaches it.
+	Target string `json:"target,omitempty"`
+	Via    string `json:"via,omitempty"`
 }
 
 type InstanceView struct {
@@ -560,6 +573,9 @@ type Request struct {
 	DurationMS   float64   `json:"duration_ms"`
 	Bytes        int64     `json:"bytes"`
 	Client       string    `json:"client,omitempty"`
+	// Firewall is what the firewall did: FirewallBanned or FirewallLimited,
+	// empty when it let the request through.
+	Firewall string `json:"firewall,omitempty"`
 }
 
 // DatabaseStats is a look inside a database ("jokku top", db:<engine>:info):

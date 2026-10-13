@@ -34,10 +34,11 @@ const (
 	trafficView
 	backupsView
 	databasesView
+	firewallView
 	logsView
 )
 
-var tabNames = []string{"Overview", "Nodes", "Apps", "Instances", "Events", "Traffic", "Backups", "Databases"}
+var tabNames = []string{"Overview", "Nodes", "Apps", "Instances", "Events", "Traffic", "Backups", "Databases", "Firewall"}
 
 // Run starts the dashboard and blocks until the user quits.
 func Run(ctx context.Context, api *client.Client, in io.Reader, out io.Writer) error {
@@ -95,6 +96,11 @@ type model struct {
 	dbs   []types.DatabaseStats
 	dbErr error
 	dbWin int // the span the table shows: dbWindows
+
+	// The Firewall view (firewall.go).
+	fw    *types.Firewall
+	fwErr error
+	fwWin int // the span its counts are for: dbWindows
 }
 
 type statusMsg struct {
@@ -173,6 +179,23 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dbs, m.dbErr = msg.stats, nil
 			m.move(0)
 		}
+	case firewallMsg:
+		if msg.err != nil {
+			m.fwErr = msg.err
+		} else {
+			m.fw, m.fwErr = msg.fw, nil
+			m.move(0)
+		}
+	case unbanMsg:
+		switch {
+		case msg.err != nil:
+			m.flash(msg.err.Error(), true)
+		case msg.had:
+			m.flash("✔ unbanned "+msg.addr+": the proxies let it in within a few seconds", false)
+		default:
+			m.flash(msg.addr+" wasn't banned any more", false)
+		}
+		return m, m.fetchFirewall()
 	case tickMsg:
 		cmds := []tea.Cmd{m.fetch(), tick()}
 		switch m.view {
@@ -186,6 +209,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case databasesView:
 			cmds = append(cmds, m.fetchDBStats())
+		case firewallView:
+			cmds = append(cmds, m.fetchFirewall())
 		}
 		return m, tea.Batch(cmds...)
 	case tea.KeyMsg:
@@ -202,6 +227,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if before != databasesView && m.view == databasesView {
 			cmds = append(cmds, m.fetchDBStats())
+		}
+		if before != firewallView && m.view == firewallView {
+			cmds = append(cmds, m.fetchFirewall())
 		}
 		return m, tea.Batch(cmds...)
 	case requestsMsg, trafficEndMsg, frameMsg, trafficRetryMsg:
@@ -226,6 +254,11 @@ func (m *model) key(k string) tea.Cmd {
 			return cmd
 		}
 	}
+	if m.view == firewallView {
+		if cmd, ok := m.firewallKey(k); ok {
+			return cmd
+		}
+	}
 	switch k {
 	case "q", "ctrl+c":
 		return tea.Quit
@@ -234,18 +267,18 @@ func (m *model) key(k string) tea.Cmd {
 	case "r":
 		return m.fetch()
 	case "tab", "right":
-		if m.view < databasesView {
+		if m.view < firewallView {
 			m.view++
-		} else if m.view == databasesView {
+		} else if m.view == firewallView {
 			m.view = overview
 		}
 	case "shift+tab", "left":
-		if m.view > overview && m.view <= databasesView {
+		if m.view > overview && m.view <= firewallView {
 			m.view--
 		} else if m.view == overview {
-			m.view = databasesView
+			m.view = firewallView
 		}
-	case "1", "2", "3", "4", "5", "6", "7", "8":
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		m.view = view(k[0] - '1')
 	case "w":
 		if m.view == databasesView {
@@ -332,6 +365,10 @@ func (m *model) rows() int {
 		return len(m.bkRows())
 	case databasesView:
 		return len(m.dbs)
+	case firewallView:
+		if m.fw != nil {
+			return len(m.fw.Bans)
+		}
 	}
 	return 0
 }
@@ -371,16 +408,26 @@ func (m *model) appList() []types.AppView {
 	if m.st == nil {
 		return nil
 	}
-	var apps, dbs []types.AppView
+	var apps, ext, dbs []types.AppView
 	for _, a := range m.st.Apps {
-		if isDatabase(a) {
+		switch {
+		case isDatabase(a):
 			dbs = append(dbs, a)
-		} else {
+		case isExternal(a):
+			ext = append(ext, a)
+		default:
 			apps = append(apps, a)
 		}
 	}
-	return append(apps, dbs...)
+	return append(append(apps, ext...), dbs...)
 }
+
+// isExternal says whether an app is a service Jokku routes to but doesn't
+// run (external:create).
+func isExternal(a types.AppView) bool { return a.Kind == types.KindExternal }
+
+// isApp says whether an app is one Jokku runs from your code.
+func isApp(a types.AppView) bool { return !isDatabase(a) && !isExternal(a) }
 
 // isDatabase says whether an app is a database (jokku db:), rather than an
 // app of the user's own or an external one.

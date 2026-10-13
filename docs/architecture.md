@@ -419,6 +419,32 @@ session cookie. Failed logins are limited per client (an IPv6 /64 counting
 as one), per app and per user, in each node's memory, and a TOTP code works
 once. Removing an edge replaces the session key, since the edge held it.
 
+**The firewall** (`firewall:*`) is another embedded handler,
+`jokku_firewall`, first on every route a visitor reaches (after the
+access-log tags, so a refused request is still logged with its app): on
+an edge, or on a node for its own public routes. A node's relay routes
+skip it, the edge having checked the request. Its rules come with the
+proxy state (`ProxyState.Firewall`, only to agents reporting
+`FeatureFirewall`; nil when it's off) and `ProxyRoute.NoFirewall` marks an
+app that opted out. Every route's handler shares one record of addresses,
+kept across config reloads, keyed by the connection's address (Caddy's
+client IP, which trusts `X-Forwarded-For` only from the edges' subnets) or
+an IPv6 /64. Private addresses are never tracked. A 404 counts toward a ban
+unless a page of the same host asked for it (`Referer`); at `not-found`
+within `window` the address is banned for `ban`, answered 403 with
+`Retry-After`, and a token bucket (`rate`, `burst`) answers 429. The access
+log line gets `jokku_firewall` (`banned` or `limited`): router lines show
+it, and the latency recorder skips those lines. Each proxy posts a report
+to `/v1/agent/firewall` every 10 seconds (and at once on a ban): its bans,
+counts by app since the last report, the addresses over the rate, and those
+close to a ban. The control node keeps them in memory, per node and per
+minute for a day, records an event per new ban, and serves them to
+`firewall:report` and the Firewall view of `jokku top`. `firewall:unban`
+adds `address=time` to the `unbanned` property; a proxy lifts the
+address's ban when it first sees that entry in its config (comparing the
+ban's time with the unban's would depend on two machines' clocks). A proxy a release behind gets
+its routes loaded without the firewall rather than refusing the config.
+
 When an app's instances can't be reached (they're restarting, or the nodes
 behind an edge are offline), the proxy answers 502 with a page saying so.
 

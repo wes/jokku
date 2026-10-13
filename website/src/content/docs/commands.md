@@ -67,6 +67,7 @@ How an app is built is the one area that departs from Dokku. Dokku has no compos
 | `http-auth:add-allowed-ip`, `http-auth:remove-allowed-ip`, `http-auth:add-bypass-path`, `http-auth:remove-bypass-path` | ✅ |
 | `http-auth:share <app> [--expires 24h] [--note]`, `http-auth:shares`, `http-auth:unshare` (links that let their holder in until they expire) | ➕ ✅ |
 | `http-auth:users:add <name> [--totp]`, `http-auth:users:list`, `http-auth:users:passwd`, `http-auth:users:totp [--off]`, `http-auth:users:remove`, `http-auth:set --global` (`login-domain`, `session-days`) | ➕ ✅ |
+| `firewall:report`, `firewall:unban <ip>`, `firewall:add-allowed-ip`, `firewall:remove-allowed-ip`, `firewall:enable`/`firewall:disable` (`<app>` or `--global`), `firewall:set` (`not-found`, `window`, `ban`, `rate`, `burst`): bans addresses that scan for weaknesses and slows floods, on by default | ➕ ✅ |
 | `nginx:*` | ✖ Caddy replaces nginx |
 
 ## Storage and services

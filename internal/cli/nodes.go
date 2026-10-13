@@ -196,7 +196,7 @@ func clusterReport(c *Context) error {
 		{"cluster-cpus", "Cluster cpus", strconv.Itoa(cpus)},
 		{"cluster-memory", "Cluster memory", fmt.Sprintf("%s (%s for instances)", formatMemory(mem), formatMemory(alloc))},
 		{"cluster-apps", "Cluster apps", strconv.Itoa(st.Totals.Apps)},
-		{"cluster-instances", "Cluster instances", fmt.Sprintf("%d (%d healthy)", st.Totals.Instances, st.Totals.InstancesHealthy)},
+		{"cluster-instances", "Cluster instances", clusterInstances(st.Totals)},
 	})
 }
 
@@ -221,6 +221,19 @@ func events(c *Context) error {
 		fmt.Fprintf(c.Stdout, "%s  %-8s %-14s %s\n", e.At.Local().Format("2006-01-02 15:04:05"), e.Kind, who, e.Message)
 	}
 	return nil
+}
+
+// clusterInstances is the instances of running apps and how many are
+// healthy, and those of apps asleep or stopped, which are off on purpose.
+func clusterInstances(t types.ClusterTotals) string {
+	s := fmt.Sprintf("%d (%d healthy)", t.Instances, t.InstancesHealthy)
+	if t.InstancesAsleep > 0 {
+		s += fmt.Sprintf(", %d asleep", t.InstancesAsleep)
+	}
+	if t.InstancesStopped > 0 {
+		s += fmt.Sprintf(", %d stopped", t.InstancesStopped)
+	}
+	return s
 }
 
 // ago renders a time as "12s ago".

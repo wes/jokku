@@ -334,7 +334,10 @@ func recordLatency(ctx context.Context, rec *latency.Recorder, log *slog.Logger)
 				return // seen before journalctl stopped
 			}
 			last = r.At
-			rec.Add(r.At, r.App, r.DurationMS)
+			// The firewall answers at once: no time the app took.
+			if r.Firewall == "" {
+				rec.Add(r.At, r.App, r.DurationMS)
+			}
 		})
 		if ctx.Err() != nil {
 			return

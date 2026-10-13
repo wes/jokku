@@ -25,6 +25,7 @@ export const NAV: NavGroup[] = [
       { slug: 'config', title: 'Config vars' },
       { slug: 'domains', title: 'Domains & HTTPS' },
       { slug: 'logins', title: 'Logins' },
+      { slug: 'firewall', title: 'Firewall' },
       { slug: 'github-actions', title: 'GitHub Actions' },
     ],
   },

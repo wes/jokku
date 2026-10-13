@@ -218,6 +218,11 @@ func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []typ
 		return nil, err
 	}
 	ps := &types.ProxyState{Routes: []types.ProxyRoute{}, Email: globalLE["email"], Auth: auth}
+	if node.Has(types.FeatureFirewall) {
+		if ps.Firewall, err = c.proxyFirewall(ctx); err != nil {
+			return nil, err
+		}
+	}
 	// Nodes answer the edges' requests for them (proxy.relayRoute); an edge
 	// sends them through the nodes that can.
 	relays := map[string]string{} // node -> its proxy's mesh address
@@ -278,8 +283,12 @@ func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []typ
 		sort.Strings(upstreams)
 		appLE, _ := c.Store.Properties(ctx, app.Name, "letsencrypt")
 		tlsOn := props.Compute(le, appLE, globalLE)["enabled"] == "true"
+		noFirewall, err := c.firewallOff(ctx, app.Name)
+		if err != nil {
+			return nil, err
+		}
 		plain := types.ProxyRoute{App: app.Name, Upstreams: upstreams, Hosts: []string{}, Auth: logins[app.Name], Sleeps: sleeps,
-			NoCompress: proxied["compress"] != "true"}
+			NoCompress: proxied["compress"] != "true", NoFirewall: noFirewall}
 		if external {
 			plain.UpstreamTLS, plain.Insecure = e.TLS, e.Insecure
 		}

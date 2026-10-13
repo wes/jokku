@@ -60,6 +60,7 @@ type Controller struct {
 	sleep       sleeper
 	rollout     rollout
 	dbstats     dbStats
+	fw          fwTracker
 }
 
 func New(c *Controller) *Controller {

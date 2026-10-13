@@ -143,6 +143,9 @@ func RouterLine(r types.Request) string {
 	if r.Client != "" {
 		line += " client=" + r.Client
 	}
+	if r.Firewall != "" {
+		line += " firewall=" + r.Firewall
+	}
 	return line
 }
 

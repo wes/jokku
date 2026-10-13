@@ -5,8 +5,9 @@
 # home router would, so everything works only because home dials out. Checks
 # jokku edge:add over ssh, apps served through the edge, what the edge may
 # reach at home, an exposed database, an external app on a "LAN" behind the
-# control node, logins (password, users with TOTP, share links), the page
-# shown when home is unreachable, and removing the edge.
+# control node, logins (password, users with TOTP, share links), the
+# firewall banning a scanner, the page shown when home is unreachable, and
+# removing the edge.
 #
 #   test/edge-e2e.sh <dist-dir>   (jokku-linux-amd64 + checksums.txt)
 set -euo pipefail
@@ -254,6 +255,41 @@ via hello.home.test /.jokku/login -b "$work/u-jar" -c "$work/u-jar" -o /dev/null
   --data-urlencode "pending=$pending" --data-urlencode "code=$code" --data-urlencode rd=/ | grep -qx 303 || fail "the TOTP code was refused"
 via hello.home.test / -b "$work/u-jar" | grep -q "served by" || fail "logged in as wes, but no app"
 sudo jokku http-auth:disable hello
+
+step "the firewall bans a scanner at the edge, by the scanner's own address"
+# A visitor from an address that isn't private, as the internet's are not:
+# 198.51.100.1, a documentation range, added to the link to the edge.
+scanner=198.51.100.1
+sudo ip addr add "$scanner/24" dev "$bridge"
+essh 'sudo ip addr add 198.51.100.2/24 dev "$(ip -o route get 192.168.78.1 | sed -n "s/.* dev \([^ ]*\).*/\1/p")"'
+scan() { curl -s --max-time 5 --interface "$scanner" -o /dev/null -w '%{http_code}' -H 'Host: hello.home.test' "http://198.51.100.2$1"; }
+eventually 30 "the edge answers the scanner's address" bash -c "[ \"\$(curl -s --max-time 5 --interface $scanner -o /dev/null -w '%{http_code}' -H 'Host: hello.home.test' http://198.51.100.2/)\" = 200 ]"
+sudo jokku firewall:set not-found 5
+eventually 30 "the rule reaches the edge" essh "sudo grep -q '\"not_found\": 5' /var/lib/jokku/proxy/config.json"
+for p in /.env /.git/config /wp-login.php /phpinfo.php /.aws/credentials; do
+  [ "$(scan "$p")" = 404 ] || fail "the scanner's $p wasn't a plain 404"
+done
+[ "$(scan /)" = 403 ] || fail "five pages not found didn't ban the scanner"
+via hello.home.test / | grep -q "served by" || fail "the firewall banned a visitor on a private network"
+eventually 30 "firewall:report shows the ban" bash -c "sudo jokku firewall:report | grep -E '^198\.51\.100\.1 +hello .* edge1 +/.env /.git/config'"
+sudo jokku firewall:report
+sudo jokku events | grep -q 'banned 198.51.100.1 for 1h: 5 pages not found within 10m' || fail "no event for the ban"
+# Home's router lines name the scanner, not the edge (10.210.x) nor the
+# runner's own address.
+eventually 30 "router lines for the scanner" bash -c "sudo jokku logs hello -p router -n 200 | grep -q 'path=\"/.env\".*via=edge1 client=198.51.100.1\$'"
+sudo jokku logs hello -p router -n 200 | grep -q 'status=403 .*client=198.51.100.1 firewall=banned' || fail "the blocked request isn't marked in the router log"
+if sudo jokku logs hello -p router -n 200 | grep 'path="/.env"' | grep -qv 'client=198.51.100.1'; then
+  fail "a scan was logged with another client: $(sudo jokku logs hello -p router -n 200 | grep 'path="/.env"')"
+fi
+sudo jokku firewall:unban "$scanner" | grep -q "Unbanned $scanner" || fail "firewall:unban"
+eventually 30 "the scanner is let in again" bash -c "[ \"\$(curl -s --max-time 5 --interface $scanner -o /dev/null -w '%{http_code}' -H 'Host: hello.home.test' http://198.51.100.2/)\" = 200 ]"
+# An allowed address is never banned.
+sudo jokku firewall:add-allowed-ip 198.51.100.0/24
+eventually 30 "the allowed range reaches the edge" essh "sudo grep -q '198.51.100.0/24' /var/lib/jokku/proxy/config.json"
+for p in /a /b /c /d /e /f /g; do scan "$p" >/dev/null; done
+[ "$(scan /)" = 200 ] || fail "an allowed address was banned"
+sudo jokku firewall:remove-allowed-ip 198.51.100.0/24
+sudo jokku firewall:set not-found
 
 step "home unreachable: the edge says so"
 sudo ip link set jokku-wg down

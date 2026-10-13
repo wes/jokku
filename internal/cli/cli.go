@@ -142,6 +142,7 @@ func init() {
 	register(edgeCommands...)
 	register(externalCommands...)
 	register(httpAuthCommands...)
+	register(firewallCommands...)
 	register(clusterCommands...)
 	register(topCommand)
 	register(enterCommand)

@@ -36,8 +36,8 @@ const (
 	// "jokku setup" compares it to the running one. 2: the jokku_auth and
 	// jokku_strip_identity handlers, which configs from now on use. 3: the
 	// jokku_wake handler and jokku upstreams, for apps that sleep. 4: the
-	// layer4 app, for streams.
-	Version = "4"
+	// layer4 app, for streams. 5: the jokku_firewall handler.
+	Version = "5"
 )
 
 // Route sends requests for Hosts to Upstreams (IP:port of healthy web
@@ -55,8 +55,9 @@ type Route struct {
 	// Sleeps: the app sleeps when idle, and a request wakes it (after the
 	// login, if it has one).
 	Sleeps bool
-	// NoCompress: the app opted out of compression.
-	NoCompress bool
+	// NoCompress: the app opted out of compression, and NoFirewall of the
+	// firewall.
+	NoCompress, NoFirewall bool
 	// Relayed, on an edge: the upstreams are nodes' proxies (RelayPort),
 	// which pass requests on to the app's instances.
 	Relayed bool
@@ -80,6 +81,8 @@ type Settings struct {
 	Edges []string
 	// Streams are the TCP routes (see streamServers).
 	Streams []types.ProxyStream
+	// Firewall is the firewall's rules (see FirewallHandler); nil for none.
+	Firewall *types.ProxyFirewall
 }
 
 // Relaying
@@ -125,6 +128,9 @@ func Config(s Settings) ([]byte, error) {
 			continue
 		}
 		handle := tags(r)
+		if !r.NoFirewall {
+			handle = append(handle, firewallHandler(r.App, s)...)
+		}
 		if !r.NoCompress {
 			handle = append(handle, compress)
 		}
@@ -187,10 +193,11 @@ func Config(s Settings) ([]byte, error) {
 			"terminal": true,
 		})
 	}
-	notFound := map[string]any{"handle": []any{map[string]any{
+	// Scanners often ask for hosts no app serves, by address.
+	notFound := map[string]any{"handle": append(firewallHandler("", s), map[string]any{
 		"handler": "static_response", "status_code": 404,
 		"body": "No app is configured for this domain.\n",
-	}}}
+	})}
 	httpRoutes = append(httpRoutes, notFound)
 	httpsRoutes = append(httpsRoutes, notFound)
 
@@ -317,12 +324,27 @@ func (a *Applier) Apply(ctx context.Context, ps *types.ProxyState) error {
 	for i, r := range ps.Routes {
 		routes[i] = Route{App: r.App, Hosts: r.Hosts, Upstreams: r.Upstreams, TLS: r.TLS,
 			UpstreamTLS: r.UpstreamTLS, Insecure: r.Insecure, Auth: r.Auth, Sleeps: r.Sleeps,
-			NoCompress: r.NoCompress, Relayed: r.Relayed}
+			NoCompress: r.NoCompress, NoFirewall: r.NoFirewall, Relayed: r.Relayed}
 	}
 	s := Settings{
 		Routes: routes, Email: ps.Email, DataDir: a.DataDir, HTTPPort: cmp.Or(a.HTTPPort, RelayPort), HTTPSPort: cmp.Or(a.HTTPSPort, 443),
-		AdminSocket: a.AdminSocket, Storage: a.Storage, Auth: ps.Auth, Edges: ps.Edges, Streams: ps.Streams,
+		AdminSocket: a.AdminSocket, Storage: a.Storage, Auth: ps.Auth, Edges: ps.Edges, Streams: ps.Streams, Firewall: ps.Firewall,
 	}
+	err := a.apply(ctx, s, ps)
+	if err == nil || s.Firewall == nil {
+		return err
+	}
+	// A proxy a release behind (until "jokku setup" restarts it) has no
+	// firewall to load: the sites mustn't go down with it.
+	s.Firewall = nil
+	if a.apply(ctx, s, ps) != nil {
+		return err
+	}
+	return fmt.Errorf("loaded the routes without the firewall: %w", err)
+}
+
+// apply loads s, and its streams if they load.
+func (a *Applier) apply(ctx context.Context, s Settings, ps *types.ProxyState) error {
 	streams, _ := json.Marshal(ps.Streams)
 	if len(ps.Streams) > 0 && string(streams) == a.failed && time.Since(a.failedAt) < streamRetry {
 		s.Streams = nil
@@ -378,6 +400,19 @@ func tags(r Route) []any {
 	}
 }
 
+// firewallHandler is the firewall in front of app's routes: none without
+// Settings.Firewall.
+func firewallHandler(app string, s Settings) []any {
+	if s.Firewall == nil {
+		return nil
+	}
+	h := map[string]any{"handler": "jokku_firewall", "app": app, "rules": s.Firewall}
+	if s.Storage != nil {
+		h["control"] = Control{URL: s.Storage.URL, Token: s.Storage.Token, Pin: s.Storage.Pin}
+	}
+	return []any{h}
+}
+
 // wake holds a request to a sleeping app until it is awake.
 func wake(r Route, s Settings) map[string]any {
 	w := map[string]any{"handler": "jokku_wake", "app": r.App}
@@ -416,6 +451,7 @@ func relayRoute(r Route, s Settings) map[string]any {
 const (
 	LogApp      = "jokku_app"
 	LogUpstream = "jokku_upstream"
+	LogFirewall = "jokku_firewall" // what the firewall did: types.FirewallBanned or FirewallLimited
 )
 
 func handler(r Route) map[string]any {
@@ -502,9 +538,10 @@ func portalHandler(s Settings) portalRoute {
 	if p.tls {
 		p.url = "https://" + d
 	}
+	handle := append(tags(Route{}), firewallHandler("", s)...)
 	p.route = map[string]any{
 		"match":    []any{map[string]any{"host": []string{d}}},
-		"handle":   append(tags(Route{}), map[string]any{"handler": "jokku_auth", "portal": true, "global": s.Auth, "hosts": hosts}),
+		"handle":   append(handle, map[string]any{"handler": "jokku_auth", "portal": true, "global": s.Auth, "hosts": hosts}),
 		"terminal": true,
 	}
 	return p

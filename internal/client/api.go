@@ -650,3 +650,27 @@ func (c *Client) RemoveDatabaseUser(ctx context.Context, engine, name, user stri
 func (c *Client) UnexposeDatabase(ctx context.Context, engine, name string) error {
 	return c.call(ctx, http.MethodDelete, databasePath(engine, name)+"/expose", nil, nil)
 }
+
+// Firewall is what the firewall is doing.
+func (c *Client) Firewall(ctx context.Context) (*types.Firewall, error) {
+	var out types.Firewall
+	return &out, c.call(ctx, http.MethodGet, "/v1/firewall", nil, &out)
+}
+
+// SetFirewall changes the firewall's rules, or with an app whether it's on
+// for it.
+func (c *Client) SetFirewall(ctx context.Context, app string, p types.FirewallPatch) (*types.FirewallSettings, error) {
+	path := "/v1/firewall"
+	if app != "" {
+		path = "/v1/apps/" + url.PathEscape(app) + "/firewall"
+	}
+	var out types.FirewallSettings
+	return &out, c.call(ctx, http.MethodPatch, path, p, &out)
+}
+
+// Unban lifts an address's bans, saying whether it had one.
+func (c *Client) Unban(ctx context.Context, addr string) (bool, error) {
+	var out types.FirewallUnbanned
+	err := c.call(ctx, http.MethodPost, "/v1/firewall/unban", types.FirewallUnban{Addr: addr}, &out)
+	return out.Banned, err
+}

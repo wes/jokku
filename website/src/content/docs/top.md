@@ -23,6 +23,7 @@ Switch with the number keys, or with tab:
 | `6` | Traffic | Every request, live |
 | `7` | Backups | What is and isn't backed up, and the switches to change it |
 | `8` | Databases | Inside each database: connections, queries a second, how long they take |
+| `9` | Firewall | The addresses banned for scanning, those close to a ban, and what was blocked, site by site |
 
 On a server or app, press `enter` to see its instances, and `l` for an app's logs. `esc` goes back, `?` shows help and `q` quits.
 
@@ -130,6 +131,31 @@ postgres shopdb on server-1 · looked 3s ago
 Each row shows a database's connections against its limit, how many are running a query, its queries a second, how long they take, and how often reads came from memory (for Redis, how often a key was found). `w` switches between the last minute, hour and day. Postgres shows an average where the others show p50, p95 and p99: see [what each engine keeps](/docs/databases#see-inside-it).
 
 Under the table is the selected database: each span's numbers, who's connected (an app's instance, or clients outside through a server's or edge's proxy), its slowest queries and its users. `enter` shows its instances and `l` its logs.
+
+## Firewall
+
+Press `9` for **Firewall**: what the [firewall](/docs/firewall) in front of your sites is doing.
+
+```console
+  ● on  20 pages not found within 10m ban an address for 1h  ·  50 requests a second, bursts of 300
+
+  REQUESTS 2179     BLOCKED 1234 57%       SLOWED 134    BANS 3     NOT FOUND 45     last hour
+
+  BANNED (2)                 SITE           SINCE     LEFT   BLOCKED  ON             PAGES NOT FOUND
+  ● 185.177.72.100           joedesigns     12m       48m       2919  jokku-edge1    /.env /.git/config /wp-login.php
+  ● 2001:db8:1:2::/64        -              1m        58m          3  server-1
+
+  CLOSE TO A BAN
+    34.39.249.92             wunl           12 of 20 not found   1m ago
+
+  SITE                        REQUESTS        BLOCKED   SLOWED  NOT FOUND   BANS
+    joedesigns                    2034      1200  59%      134         40      2
+    (no app's host)                 35        34  97%        0          5      1
+```
+
+At the top are the rules and the counts for the span: every request the firewall saw, those it blocked from banned addresses, those it slowed for coming too fast, the bans it made, and the pages not found that count toward them. `w` switches between the last minute, hour and day.
+
+Then the banned addresses, newest first: the site whose pages not found got each one banned, how long ago and how long it has left, the requests it has made since, which proxies banned it, and the last pages it asked for. `u` lifts the selected ban. Under them are the addresses getting close to a ban, those slowed in the last hour, and each site's counts.
 
 ## Events without the dashboard
 

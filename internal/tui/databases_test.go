@@ -82,8 +82,8 @@ func TestDatabasesView(t *testing.T) {
 	if m.view != instancesView || m.filterApp != "mysql-orders" {
 		t.Errorf("enter: view %v, filter %q", m.view, m.filterApp)
 	}
-	// Tab wraps from Databases, the last view, to the first.
-	m.key("8")
+	// Tab wraps from Firewall, the last view, to the first.
+	m.key("9")
 	m.key("tab")
 	if m.view != overview {
 		t.Errorf("tab from the last view: %v", m.view)

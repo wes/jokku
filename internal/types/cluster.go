@@ -277,6 +277,9 @@ type ProxyState struct {
 	// Streams are the TCP routes: databases reached from outside
 	// (db:<engine>:expose). Only nodes reporting FeatureStreams get them.
 	Streams []ProxyStream `json:"streams,omitempty"`
+	// Firewall is the firewall's rules; nil when it's off, and for nodes
+	// that don't report FeatureFirewall.
+	Firewall *ProxyFirewall `json:"firewall,omitempty"`
 }
 
 type ProxyRoute struct {
@@ -300,6 +303,8 @@ type ProxyRoute struct {
 	// Relayed, on an edge: the upstreams are nodes' proxies, which pass the
 	// request on to an instance and compress the response.
 	Relayed bool `json:"relayed,omitempty"`
+	// NoFirewall: the app opted out of the firewall (firewall:disable).
+	NoFirewall bool `json:"no_firewall,omitempty"`
 }
 
 // ProxyStream sends the TCP connections for Host on Port to Upstreams. A
@@ -560,6 +565,9 @@ type Request struct {
 	DurationMS   float64   `json:"duration_ms"`
 	Bytes        int64     `json:"bytes"`
 	Client       string    `json:"client,omitempty"`
+	// Firewall is what the firewall did: FirewallBanned or FirewallLimited,
+	// empty when it let the request through.
+	Firewall string `json:"firewall,omitempty"`
 }
 
 // DatabaseStats is a look inside a database ("jokku top", db:<engine>:info):

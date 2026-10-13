@@ -774,7 +774,7 @@ func (a *Agent) reportLoop(ctx context.Context) {
 func (a *Agent) Status() *types.NodeStatus {
 	st := &types.NodeStatus{
 		Protocol: types.ProtocolVersion, Version: a.Version, CanRun: a.canRun, Instances: []types.InstanceStatus{},
-		Features: []string{types.FeatureVolumes, types.FeatureRelay, types.FeatureStreams}, Volumes: a.volumeStatus(), UpdateFailed: a.updateFailure(),
+		Features: []string{types.FeatureVolumes, types.FeatureRelay, types.FeatureStreams, types.FeatureFirewall}, Volumes: a.volumeStatus(), UpdateFailed: a.updateFailure(),
 	}
 	if a.Updater != nil {
 		st.Features = append(st.Features, types.FeatureUpdate)

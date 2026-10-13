@@ -43,6 +43,8 @@ func (m *model) View() string {
 			body = m.backupsView()
 		case databasesView:
 			body = m.databasesView()
+		case firewallView:
+			body = m.firewallView()
 		case logsView:
 			body = m.logView()
 		}
@@ -112,14 +114,16 @@ func (m *model) tabs() string {
 }
 
 func (m *model) footer() string {
-	keys := "1-8/tab views  ↑↓ move  enter drill in  l logs  esc back  r refresh  ? help  q quit"
+	keys := "1-9/tab views  ↑↓ move  enter drill in  l logs  esc back  r refresh  ? help  q quit"
 	switch m.view {
 	case databasesView:
-		keys = "w minute/hour/day  ↑↓ move  enter instances  l logs  1-8 views  ? help  q quit"
+		keys = "w minute/hour/day  ↑↓ move  enter instances  l logs  1-9 views  ? help  q quit"
+	case firewallView:
+		keys = "w minute/hour/day  ↑↓ move  u unban  1-9 views  ? help  q quit"
 	case trafficView:
-		keys = "1-8/tab views  p pause  c clear  f effects  ? help  q quit"
+		keys = "1-9/tab views  p pause  c clear  f effects  ? help  q quit"
 	case backupsView:
-		keys = "space on/off  b back up now  s schedule  a auto-restore  ↑↓ move  1-8 views  ? help  q quit"
+		keys = "space on/off  b back up now  s schedule  a auto-restore  ↑↓ move  1-9 views  ? help  q quit"
 		if m.width < 100 {
 			keys = "space on/off  b back up  s schedule  a auto-restore  ? help  q quit"
 		}
@@ -151,6 +155,11 @@ const helpText = `jokku top shows the cluster live, refreshed every two seconds.
                 (p50, p95, p99; Postgres's average) and how often reads hit
                 memory. w switches between the last minute, hour and day.
                 Under it, who's connected, its users, its slowest queries
+  9 Firewall    the addresses banned for asking for too many pages that
+                don't exist (scanners), why and until when, those close to
+                a ban or slowed for too many requests a second, and what was
+                blocked, site by site. w switches between the last minute,
+                hour and day; u lifts the selected ban
 
   enter on a node or app shows its instances; l shows an app's logs;
   esc goes back. Press any key to close this help.`

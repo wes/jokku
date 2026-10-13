@@ -34,6 +34,7 @@ type accessEntry struct {
 	Status   int     `json:"status"`
 	App      string  `json:"jokku_app"`
 	Upstream string  `json:"jokku_upstream"`
+	Firewall string  `json:"jokku_firewall"`
 }
 
 // ParseAccess turns one proxy log line into a Request.
@@ -46,7 +47,7 @@ func ParseAccess(line string) (types.Request, bool) {
 	return types.Request{
 		At: time.Unix(int64(sec), int64(frac*1e9)).UTC(), App: e.App, Upstream: e.Upstream,
 		Method: e.Request.Method, Host: e.Request.Host, Path: e.Request.URI, Proto: e.Request.Proto,
-		Status: e.Status, DurationMS: e.Duration * 1000, Bytes: e.Size, Client: e.Request.ClientIP,
+		Status: e.Status, DurationMS: e.Duration * 1000, Bytes: e.Size, Client: e.Request.ClientIP, Firewall: e.Firewall,
 	}, true
 }
 

@@ -261,7 +261,7 @@ func (s *sleepState) report() {
 	}
 	sort.Strings(act.Active)
 	sort.Strings(act.Wake)
-	err := postActivity(ctl, client, act)
+	err := postAgent(ctl, client, "/v1/agent/activity", act)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil {
@@ -278,12 +278,13 @@ func (s *sleepState) report() {
 	s.failing = err != nil
 }
 
-func postActivity(ctl *Control, client *http.Client, act types.ProxyActivity) error {
-	b, err := json.Marshal(act)
+// postAgent sends v to the control node's agent API at path, as this node.
+func postAgent(ctl *Control, client *http.Client, path string, v any) error {
+	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPost, strings.TrimSuffix(ctl.URL, "/")+"/v1/agent/activity", bytes.NewReader(b))
+	req, err := http.NewRequest(http.MethodPost, strings.TrimSuffix(ctl.URL, "/")+path, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}

@@ -22,6 +22,7 @@ const COLUMNS: Array<{ title: string; links: Array<{ label: string; to: Href }> 
       { label: 'Backups', to: '/docs/backups' },
       { label: 'Databases', to: '/docs/databases' },
       { label: 'Logins', to: '/docs/logins' },
+      { label: 'Firewall', to: '/docs/firewall' },
       { label: 'Adding servers', to: '/docs/cluster' },
       { label: 'Edges & home labs', to: '/docs/edges' },
     ],

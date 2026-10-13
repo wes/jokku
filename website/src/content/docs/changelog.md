@@ -5,6 +5,16 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.14: A firewall
+
+October 13, 2026
+
+- **[A firewall](/docs/firewall), on for every app without being set up.** An address that asks for 20 pages that don't exist within 10 minutes, the way vulnerability scanners hunt for `/.env`, `/.git/config` and `/wp-login.php`, is banned for an hour from every site. One that sends more than 50 requests a second gets `429 Too Many Requests`. Private addresses are never banned, and a page not found that one of the site's own pages asked for, like a missing image, doesn't count.
+- It runs in the proxy a visitor reaches first, so **behind an [edge](/docs/edges), scanners are stopped at the edge** and their requests never travel up your home connection.
+- **`jokku top` has a Firewall view** (key `9`): the banned addresses and why, those close to a ban, and what was blocked, site by site, over the last minute, hour and day. `u` lifts a ban. `jokku firewall:report` shows the same, and every ban is an event.
+- A request the firewall answered is marked in the router logs (`firewall=banned`), which name the visitor's own address, and it's left out of response times.
+- `firewall:unban`, `firewall:add-allowed-ip`, `firewall:disable <app>` (or `--global`) and `firewall:set` (`not-found`, `window`, `ban`, `rate`, `burst`) change it.
+
 ## v0.8.13: MySQL's slowest queries
 
 October 12, 2026

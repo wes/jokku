@@ -228,6 +228,15 @@ func TestExternalAppsAreReachedThroughTheirNode(t *testing.T) {
 	if e.Via != "w1" || e.URL != "http://192.168.1.50:8123" {
 		t.Errorf("created %+v", e)
 	}
+	st, err := h.ctl.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range st.Apps {
+		if a.Name == "ha" && (a.Target != "http://192.168.1.50:8123" || a.Via != "w1") {
+			t.Errorf("ha in the status: %+v", a)
+		}
+	}
 	if _, err := h.client.CreateExternal(ctx, types.ExternalRequest{Name: "ha2", URL: "http://192.168.1.50:9000"}); err == nil {
 		t.Error("a second app at the same address through another node")
 	}

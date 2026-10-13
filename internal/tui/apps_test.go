@@ -25,7 +25,7 @@ func withDatabases() *types.ClusterStatus {
 	now := time.Now()
 	st.Apps = []types.AppView{
 		st.Apps[1], // blog
-		{Name: "home", Kind: types.KindExternal, Domains: []string{"home.example.com"}},
+		{Name: "home", Kind: types.KindExternal, Domains: []string{"home.example.com"}, Target: "http://192.168.1.50:8123", Via: "control"},
 		{Name: "mysql-scratch", Kind: "mysql", Release: 1, Healthy: 1, Wanted: 1,
 			Deploy: &types.Deploy{Status: types.StatusSucceeded, CreatedAt: now.Add(-48 * time.Hour)}},
 		{Name: "postgres-shopdb", Kind: "postgres", Release: 2, Healthy: 1, Wanted: 1,
@@ -78,12 +78,17 @@ func names(lines []string) []string {
 }
 
 // TestOverviewListsDatabasesApart: the overview lists the apps, then the
-// databases under a heading of their own, each with the apps that use it.
+// external ones and the databases under headings of their own, each
+// database with the apps that use it.
 func TestOverviewListsDatabasesApart(t *testing.T) {
 	m := appsModel(120, 40)
 	out := m.View()
-	if got := fmt.Sprint(names(section(out, "Apps"))); got != "[● blog ● home ● shop]" {
+	if got := fmt.Sprint(names(section(out, "Apps"))); got != "[● blog ● shop]" {
 		t.Errorf("Apps: %s\n%s", got, ansi.Strip(out))
+	}
+	if ext := section(out, "External"); len(ext) != 1 || !strings.Contains(ext[0], "→ home") ||
+		!strings.Contains(ext[0], "http://192.168.1.50:8123") || !strings.Contains(ext[0], "via control") {
+		t.Errorf("External: %q\n%s", ext, ansi.Strip(out))
 	}
 	dbs := section(out, "Databases")
 	if got := fmt.Sprint(names(dbs)); got != "[● scratch ● shopdb ● cache]" {
@@ -94,11 +99,16 @@ func TestOverviewListsDatabasesApart(t *testing.T) {
 			t.Errorf("database line %q, want %q", dbs[i], want)
 		}
 	}
-	if h := ansi.Strip(m.header()); !strings.Contains(h, "3 apps  ·  3 databases") {
+	if h := ansi.Strip(m.header()); !strings.Contains(h, "2 apps  ·  1 external  ·  3 databases") {
 		t.Errorf("header: %s", h)
 	}
+	// Instances asleep are counted apart, not as unhealthy.
+	m.st.Totals = types.ClusterTotals{Nodes: 3, NodesReady: 3, Instances: 21, InstancesHealthy: 21, InstancesAsleep: 1}
+	if h := ansi.Strip(m.header()); !strings.Contains(h, "21/21 instances healthy · 1 asleep") {
+		t.Errorf("header with an app asleep: %s", h)
+	}
 
-	// The cursor moves down the apps, then the databases.
+	// The cursor moves down the apps, the external app, then the databases.
 	for range 3 {
 		m.key("j")
 	}
@@ -140,7 +150,7 @@ func TestAppsShowTheirDatabases(t *testing.T) {
 	for _, l := range apps {
 		got = append(got, strings.Join(strings.Fields(l)[:2], " "))
 	}
-	if want := "[● blog └ shopdb ● home ● shop └ shopdb └ cache]"; fmt.Sprint(got) != want {
+	if want := "[● blog └ shopdb ● shop └ shopdb └ cache]"; fmt.Sprint(got) != want {
 		t.Errorf("apps and their databases: %v, want %s\n%s", got, want, ansi.Strip(out))
 	}
 	for _, l := range apps {
@@ -149,9 +159,11 @@ func TestAppsShowTheirDatabases(t *testing.T) {
 			t.Errorf("shopdb under an app: %q", l)
 		case f[1] == "cache" && (!strings.Contains(l, "asleep") || !strings.HasSuffix(l, "REDIS_URL")):
 			t.Errorf("cache under shop: %q", l)
-		case f[1] == "home" && !strings.HasSuffix(l, "home.example.com"):
-			t.Errorf("the external app: %q", l)
 		}
+	}
+	if ext := section(out, "  EXTERNAL"); len(ext) != 1 || !strings.Contains(ext[0], "→ home") ||
+		!strings.Contains(ext[0], "http://192.168.1.50:8123") || !strings.HasSuffix(ext[0], "home.example.com") {
+		t.Errorf("the external app: %q", ext)
 	}
 	dbs := section(out, "  DATABASE")
 	if got := fmt.Sprint(names(dbs)); got != "[● scratch ● shopdb ● cache]" {
@@ -189,7 +201,7 @@ func TestAppsShowTheirDatabases(t *testing.T) {
 	m.key("3")
 	col := -1
 	for _, l := range strings.Split(ansi.Strip(m.View()), "\n") {
-		for _, f := range []string{"DOMAINS", "USED BY", "shop.example.com", "DATABASE_URL", "blog, shop"} {
+		for _, f := range []string{"DOMAINS", "USED BY", "shop.example.com", "home.example.com", "DATABASE_URL", "blog, shop"} {
 			if i := strings.Index(l, f); i >= 0 {
 				i = utf8.RuneCountInString(l[:i])
 				if col == -1 {

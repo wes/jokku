@@ -472,7 +472,12 @@ type ClusterTotals struct {
 	Nodes            int `json:"nodes"`
 	Apps             int `json:"apps"`
 	InstancesHealthy int `json:"instances_healthy"`
-	Instances        int `json:"instances"`
+	Instances        int `json:"instances"` // wanted, of apps that are running
+	// InstancesAsleep and InstancesStopped are the instances of apps
+	// asleep (ps:set sleep-after) and stopped (ps:stop): off on purpose,
+	// so not in Instances.
+	InstancesAsleep  int `json:"instances_asleep,omitempty"`
+	InstancesStopped int `json:"instances_stopped,omitempty"`
 }
 
 type NodeView struct {
@@ -518,6 +523,9 @@ type AppView struct {
 	CreatedAt time.Time `json:"created_at"`
 	// Links are the apps a database is linked to.
 	Links []DatabaseLink `json:"links,omitempty"`
+	// Target is an external app's URL, and Via the server that reaches it.
+	Target string `json:"target,omitempty"`
+	Via    string `json:"via,omitempty"`
 }
 
 type InstanceView struct {

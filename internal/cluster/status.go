@@ -52,6 +52,15 @@ func (c *Controller) Status(ctx context.Context) (*types.ClusterStatus, error) {
 			current[a.Name] = cur.ID
 		}
 	}
+	resting := map[string]*int{} // apps asleep or stopped -> where their instances count
+	for _, a := range apps {
+		switch {
+		case a.Stopped:
+			resting[a.Name] = &st.Totals.InstancesStopped
+		case a.AsleepSince != nil:
+			resting[a.Name] = &st.Totals.InstancesAsleep
+		}
+	}
 	healthy, wanted := map[string]int{}, map[string]int{}
 	for _, in := range insts {
 		if !held(in, now) {
@@ -67,9 +76,16 @@ func (c *Controller) Status(ctx context.Context) (*types.ClusterStatus, error) {
 			wanted[in.App]++
 			if state == store.StateHealthy {
 				healthy[in.App]++
-				st.Totals.InstancesHealthy++
 			}
-			st.Totals.Instances++
+			// An app asleep or stopped is off on purpose: not unhealthy.
+			if n := resting[in.App]; n != nil {
+				*n++
+			} else {
+				st.Totals.Instances++
+				if state == store.StateHealthy {
+					st.Totals.InstancesHealthy++
+				}
+			}
 		}
 		st.Instances = append(st.Instances, types.InstanceView{
 			App: in.App, CPUPercent: in.CPUPercent, MemoryUsed: in.MemoryUsedMB,
@@ -106,6 +122,10 @@ func (c *Controller) Status(ctx context.Context) (*types.ClusterStatus, error) {
 	for _, l := range links {
 		linked[l.Database] = append(linked[l.Database], types.DatabaseLink{App: l.App, Var: l.Var})
 	}
+	ext, err := c.externals(ctx, apps, nodes)
+	if err != nil {
+		return nil, err
+	}
 	for _, a := range apps {
 		domains, err := c.Store.Domains(ctx, a.Name)
 		if err != nil {
@@ -114,6 +134,13 @@ func (c *Controller) Status(ctx context.Context) (*types.ClusterStatus, error) {
 		view := types.AppView{
 			Name: a.Name, Kind: a.Kind, Release: a.CurrentRelease, Stopped: a.Stopped, Asleep: a.AsleepSince != nil, Locked: a.Locked, Domains: domains,
 			Healthy: healthy[a.Name], Wanted: wanted[a.Name], CreatedAt: a.CreatedAt, Links: linked[a.Name],
+		}
+		if e, ok := ext[a.Name]; ok {
+			scheme := "http"
+			if e.TLS {
+				scheme = "https"
+			}
+			view.Target, view.Via = scheme+"://"+e.Target.String(), e.Via
 		}
 		if ds, err := c.Store.Deploys(ctx, a.Name, 1); err == nil && len(ds) > 0 {
 			view.Deploy = &ds[0]

@@ -152,6 +152,14 @@ func TestIdleAppSleepsAndARequestWakesIt(t *testing.T) {
 	if h.asleep("busy") || h.placement("busy")["control"]+h.placement("busy")["w1"] != 1 {
 		t.Error("busy, which gets requests, went to sleep")
 	}
+	// Asleep isn't unhealthy: web's two instances are counted apart.
+	eventually(t, 3*time.Second, "the totals leave web out", func() error {
+		st, _ := h.ctl.Status(h.ctx)
+		if t := st.Totals; t.InstancesAsleep != 2 || t.Instances != 2 || t.InstancesHealthy != 2 {
+			return fmt.Errorf("totals %+v", t)
+		}
+		return nil
+	})
 	if h.asleep("always") {
 		t.Error("an app without sleep-after went to sleep")
 	}

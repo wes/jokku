@@ -77,19 +77,31 @@ func (m *model) header() string {
 	} else {
 		inst = sGood.Render(inst)
 	}
+	if t.InstancesAsleep > 0 {
+		inst += sDim.Render(fmt.Sprintf(" · %d asleep", t.InstancesAsleep))
+	}
+	if t.InstancesStopped > 0 {
+		inst += sDim.Render(fmt.Sprintf(" · %d stopped", t.InstancesStopped))
+	}
 	age := sDim.Render("updated " + ago(m.at))
 	if m.err != nil {
 		age = sBad.Render("stale: " + m.err.Error())
 	}
-	apps, dbs := 0, 0
+	apps, ext, dbs := 0, 0, 0
 	for _, a := range m.st.Apps {
-		if isDatabase(a) {
+		switch {
+		case isDatabase(a):
 			dbs++
-		} else {
+		case isExternal(a):
+			ext++
+		default:
 			apps++
 		}
 	}
 	parts := []string{title, sDim.Render("control " + m.st.Control), sDim.Render(m.st.Version), nodes, plural(apps, "app")}
+	if ext > 0 {
+		parts = append(parts, fmt.Sprintf("%d external", ext))
+	}
 	if dbs > 0 {
 		parts = append(parts, plural(dbs, "database"))
 	}
@@ -177,11 +189,17 @@ func (m *model) overview() string {
 	}
 	b.WriteString(sSection.Render("Apps") + "\n")
 	list := m.appList()
-	if len(list) == 0 || isDatabase(list[0]) {
+	if len(list) == 0 || !isApp(list[0]) {
 		b.WriteString(sDim.Render("  no apps yet: git push jokku main") + "\n")
 	}
 	for i, a := range list {
 		line := fmt.Sprintf("  %s %-20s %s v%-4d %s", appDot(a), trunc(a.Name, 20), pad(appDots(a), 12), a.Release, deploySummary(a.Deploy))
+		if isExternal(a) {
+			if i == 0 || !isExternal(list[i-1]) {
+				b.WriteString(sSection.Render("External") + "\n")
+			}
+			line = fmt.Sprintf("  %s %-20s %s %s", appDot(a), trunc(a.Name, 20), pad(a.Target, 26), sDim.Render("via "+a.Via))
+		}
 		if isDatabase(a) {
 			if i == 0 || !isDatabase(list[i-1]) {
 				b.WriteString(sSection.Render("Databases") + "\n")
@@ -239,11 +257,20 @@ func (m *model) apps() string {
 	var b strings.Builder
 	b.WriteString(sHead.Render(fmt.Sprintf("  %-22s %-10s %-14s %-6s %-26s %s", "APP", "STATUS", "INSTANCES", "REL", "LAST DEPLOY", "DOMAINS")) + "\n")
 	list := m.appList()
-	if len(list) == 0 || isDatabase(list[0]) {
+	if len(list) == 0 || !isApp(list[0]) {
 		b.WriteString(sDim.Render("  no apps yet: git push jokku main") + "\n")
 	}
 	uses := databasesOf(list)
 	for i, a := range list {
+		if isExternal(a) {
+			if i == 0 || !isExternal(list[i-1]) {
+				b.WriteString("\n" + sHead.Render(fmt.Sprintf("  %-22s %-40s %-18s %s", "EXTERNAL", "TARGET", "VIA", "DOMAINS")) + "\n")
+			}
+			line := fmt.Sprintf("  %s %-20s %s %s %s", appDot(a), trunc(a.Name, 20), pad(trunc(a.Target, 40), 40), pad(trunc(a.Via, 18), 18),
+				strings.Join(a.Domains, " "))
+			b.WriteString(m.selectable(appsView, i, line) + "\n")
+			continue
+		}
 		if isDatabase(a) {
 			if i == 0 || !isDatabase(list[i-1]) {
 				b.WriteString("\n" + sHead.Render(fmt.Sprintf("  %-22s %-10s %-14s %-9s %-23s %s", "DATABASE", "STATUS", "INSTANCES", "ENGINE", "LAST DEPLOY", "USED BY")) + "\n")
@@ -454,6 +481,9 @@ func nodeDot(n types.NodeView) string {
 }
 
 func appDot(a types.AppView) string {
+	if isExternal(a) {
+		return sAccent.Render("→")
+	}
 	switch appStatus(a) {
 	case "running":
 		return sGood.Render("●")
@@ -467,6 +497,8 @@ func appDot(a types.AppView) string {
 
 func appStatus(a types.AppView) string {
 	switch {
+	case isExternal(a):
+		return "external"
 	case a.Release == 0:
 		return "new"
 	case a.Stopped:

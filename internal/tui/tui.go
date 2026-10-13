@@ -408,16 +408,26 @@ func (m *model) appList() []types.AppView {
 	if m.st == nil {
 		return nil
 	}
-	var apps, dbs []types.AppView
+	var apps, ext, dbs []types.AppView
 	for _, a := range m.st.Apps {
-		if isDatabase(a) {
+		switch {
+		case isDatabase(a):
 			dbs = append(dbs, a)
-		} else {
+		case isExternal(a):
+			ext = append(ext, a)
+		default:
 			apps = append(apps, a)
 		}
 	}
-	return append(apps, dbs...)
+	return append(append(apps, ext...), dbs...)
 }
+
+// isExternal says whether an app is a service Jokku routes to but doesn't
+// run (external:create).
+func isExternal(a types.AppView) bool { return a.Kind == types.KindExternal }
+
+// isApp says whether an app is one Jokku runs from your code.
+func isApp(a types.AppView) bool { return !isDatabase(a) && !isExternal(a) }
 
 // isDatabase says whether an app is a database (jokku db:), rather than an
 // app of the user's own or an external one.

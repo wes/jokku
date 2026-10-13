@@ -145,15 +145,18 @@ func TestProxyStreams(t *testing.T) {
 		return ask(c)
 	}
 
-	// The certificates come from the proxy's own CA, in the background.
-	var got string
-	for i := 0; i < 100; i++ {
-		if got, err = classic("shop.db.test"); err == nil {
-			break
+	// The certificates come from the proxy's own CA, in the background, a
+	// name at a time, so a name that should answer gets a while to.
+	answer := func(dial func() (string, error)) (got string, err error) {
+		for i := 0; i < 100; i++ {
+			if got, err = dial(); err == nil {
+				return got, nil
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
-		time.Sleep(100 * time.Millisecond)
+		return got, err
 	}
-	if got != "shop:hello" {
+	if got, err := answer(func() (string, error) { return classic("shop.db.test") }); got != "shop:hello" {
 		t.Fatalf("classic Postgres TLS to shop: %q %v", got, err)
 	}
 	for _, c := range []struct {
@@ -171,7 +174,11 @@ func TestProxyStreams(t *testing.T) {
 		{"a plain port", func() (string, error) { return plain(mysql) }, "orders:hello"},
 		{"a plain port, from an address not let in", func() (string, error) { return plain(closed) }, ""},
 	} {
-		got, err := c.dial()
+		dial := c.dial
+		if c.want != "" {
+			dial = func() (string, error) { return answer(c.dial) }
+		}
+		got, err := dial()
 		if c.want != "" && (err != nil || got != c.want) {
 			t.Errorf("%s: %q %v, want %q", c.what, got, err, c.want)
 		}

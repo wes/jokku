@@ -5,6 +5,12 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.13: MySQL's slowest queries
+
+October 12, 2026
+
+- **MySQL databases show their slowest queries too**, in the [Databases view](/docs/top#databases) of `jokku top`, as Postgres databases do: the five that took the most time in all, with how long each takes on average and how many times it ran. They come from the statement digests MySQL keeps, where values are `?`, so the same query with different values is one line. Nothing needs turning on or a restart.
+
 ## v0.8.12: Inside your databases
 
 October 12, 2026

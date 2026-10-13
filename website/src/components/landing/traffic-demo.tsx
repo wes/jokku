@@ -246,7 +246,7 @@ export const TrafficDemo = () => {
       <div className="px-4 pt-3 pb-4 sm:px-5">
         <div className="truncate">
           <span className="font-semibold text-term-accent">jokku top</span>
-          <span className="text-term-dim">  ·  control server-1  ·  v0.8.12  ·  </span>
+          <span className="text-term-dim">  ·  control server-1  ·  v0.8.13  ·  </span>
           <span className="text-term-good">3/3 nodes</span>
           <span className="text-term-dim">  ·  </span>
           {appCount} apps

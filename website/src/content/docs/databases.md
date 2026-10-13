@@ -98,7 +98,7 @@ Every ten seconds, your control server runs the database's own client (`psql`, `
 
 | Engine | Query times |
 | --- | --- |
-| MySQL | p50, p95 and p99, from the histogram MySQL keeps of its statements. |
+| MySQL | p50, p95 and p99, from the histogram MySQL keeps of its statements, and the slowest statements, from its statement digests. |
 | Redis | p50, p95 and p99, from Redis's histogram, whose buckets double in size, so they're right to within a factor of two. |
 | Postgres | The average per query, and the slowest queries, from `pg_stat_statements`. Postgres keeps no histogram, so there are no percentiles. |
 

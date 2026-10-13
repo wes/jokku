@@ -51,7 +51,7 @@ type Sample struct {
 
 	MemoryUsed, MemoryMax uint64 // Redis, in bytes; MemoryMax 0 when unlimited
 
-	Slowest []Query // Postgres with pg_stat_statements: by total time
+	Slowest []Query // Postgres with pg_stat_statements, and MySQL: by total time
 	Users   []User
 
 	// Setup is what to run once to turn on what the stats need, and Note
@@ -312,7 +312,9 @@ func (e Engine) SetupCommand(name string, vars map[string]string, s *Sample) Com
 // mysqlStats turns performance_schema's instruments off for its own
 // session first, so the statements it counts are the apps', all but
 // mysqlOwn: the client's opening SELECT @@version_comment, the UPDATE
-// itself and the closing Quit.
+// itself and the closing Quit. The slowest statements leave out the first
+// two by their text, which is MySQL's digest: names without their
+// backquotes, values as ?.
 const mysqlStats = `UPDATE performance_schema.threads SET INSTRUMENTED = 'NO' WHERE PROCESSLIST_ID = CONNECTION_ID();
 SELECT JSON_OBJECT(
   'started', UNIX_TIMESTAMP() - (SELECT VARIABLE_VALUE + 0 FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Uptime'),
@@ -332,7 +334,13 @@ SELECT JSON_OBJECT(
         'can_read', u.Select_priv = 'Y' OR COALESCE(d.Select_priv = 'Y', 0),
         'can_write', u.Insert_priv = 'Y' OR COALESCE(d.Insert_priv = 'Y' AND d.Update_priv = 'Y' AND d.Delete_priv = 'Y', 0))), JSON_ARRAY())
       FROM mysql.user u LEFT JOIN mysql.db d ON d.User = u.User AND d.Host = u.Host AND d.Db = %s
-      WHERE u.User NOT LIKE 'mysql.%%'));
+      WHERE u.User NOT LIKE 'mysql.%%'),
+  'top', (SELECT COALESCE(JSON_ARRAYAGG(JSON_OBJECT('query', q, 'calls', n, 'total_ms', total_ms, 'mean_ms', mean_ms)), JSON_ARRAY()) FROM (
+      SELECT LEFT(REPLACE(DIGEST_TEXT, CHAR(96 USING utf8mb4), ''), 500) AS q, COUNT_STAR AS n,
+        SUM_TIMER_WAIT / 1e9 AS total_ms, AVG_TIMER_WAIT / 1e9 AS mean_ms
+      FROM performance_schema.events_statements_summary_by_digest WHERE DIGEST IS NOT NULL
+      HAVING q <> 'SELECT @@version_comment LIMIT ?' AND q NOT LIKE 'UPDATE performance_schema . threads SET INSTRUMENTED%%'
+      ORDER BY total_ms DESC LIMIT 5) t));
 `
 
 const mysqlOwn = 3
@@ -351,6 +359,12 @@ type myStats struct {
 	} `json:"clients"`
 	Hist  [][3]float64 `json:"hist"`
 	Users myUsers      `json:"users"`
+	Top   []struct {
+		Query   string  `json:"query"`
+		Calls   float64 `json:"calls"`
+		TotalMS float64 `json:"total_ms"`
+		MeanMS  float64 `json:"mean_ms"`
+	} `json:"top"`
 }
 
 type myUsers []struct {
@@ -389,6 +403,11 @@ func (f *flag) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// digestSpaces takes out the spaces a MySQL digest puts around every
+// token where SQL is usually written without them: "o . id" is "o.id",
+// "COUNT ( * )" is "COUNT (*)".
+var digestSpaces = strings.NewReplacer(" . ", ".", "( ", "(", " )", ")", " , ", ", ")
+
 func parseMySQL(out []byte) (*Sample, error) {
 	var st myStats
 	if err := json.Unmarshal(bytes.TrimSpace(out), &st); err != nil {
@@ -415,6 +434,11 @@ func parseMySQL(out []byte) (*Sample, error) {
 		s.Queries += n
 	}
 	s.Users = st.Users.list()
+	for _, t := range st.Top {
+		s.Slowest = append(s.Slowest, Query{Text: digestSpaces.Replace(t.Query), Calls: uint64(t.Calls), TotalMS: t.TotalMS, MeanMS: t.MeanMS})
+	}
+	// JSON_ARRAYAGG keeps no order.
+	sort.Slice(s.Slowest, func(i, j int) bool { return s.Slowest[i].TotalMS > s.Slowest[j].TotalMS })
 	return s, nil
 }
 

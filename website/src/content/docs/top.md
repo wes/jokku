@@ -15,7 +15,7 @@ Switch with the number keys, or with tab:
 
 | Key | View | Shows |
 | --- | --- | --- |
-| `1` | Overview | Servers, apps, databases and recent events at a glance |
+| `1` | Overview | Servers, apps, external apps, databases and recent events at a glance |
 | `2` | Nodes | Each server: status, CPU, memory, and memory promised to microVMs |
 | `3` | Apps | Each app: healthy instances, release, last deploy, domains, and the databases it uses |
 | `4` | Instances | Each microVM: state, server, CPU, memory, uptime, restarts |
@@ -29,7 +29,7 @@ On a server or app, press `enter` to see its instances, and `l` for an app's log
 
 ## Apps and databases
 
-The overview and **Apps** list your [databases](/docs/databases) apart from your apps, below them. On **Apps**, each app has the databases it's linked to under it, with the config var that holds each one's URL, and each database shows the apps that use it:
+The overview and **Apps** list your [external apps](/docs/edges#services-jokku-doesnt-run) and [databases](/docs/databases) apart from your apps, below them: each external app with the address it goes to and the server that reaches it. On **Apps**, each app has the databases it's linked to under it, with the config var that holds each one's URL, and each database shows the apps that use it:
 
 ```console
   APP                    STATUS     INSTANCES      REL    LAST DEPLOY                DOMAINS
@@ -39,11 +39,16 @@ The overview and **Apps** list your [databases](/docs/databases) apart from your
     └ shopdb             running    ●              postgres                          DATABASE_URL
     └ cache              asleep     ○              redis                             REDIS_URL
 
+  EXTERNAL               TARGET                                   VIA                DOMAINS
+  → ha                   http://192.168.1.50:8123                 server-1           ha.example.com
+
   DATABASE               STATUS     INSTANCES      ENGINE    LAST DEPLOY             USED BY
   ● scratch              running    ●              mysql     ok 2d ago               not linked
   ● shopdb               running    ●              postgres  ok 2h ago               blog, shop
   ● cache                asleep     ○              redis     ok 5d ago               shop
 ```
+
+An app or database that's asleep (or stopped) isn't counted as unhealthy: the header says how many of its instances are, as in `21/21 instances healthy · 1 asleep`.
 
 ## Traffic
 

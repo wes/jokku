@@ -5,6 +5,13 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.16: Asleep isn't unhealthy
+
+October 13, 2026
+
+- **`jokku top` lists external apps apart.** The Overview has an External section, and the Apps view puts them under their own heading. Each one shows where it forwards to and through which server, in place of its instances.
+- **An asleep app no longer counts against "instances healthy".** Its instances, and those of a stopped app, are counted on their own: `21/21 instances healthy · 1 asleep`. `cluster:report` shows the same counts.
+
 ## v0.8.15: A round sun
 
 October 13, 2026

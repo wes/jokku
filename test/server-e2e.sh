@@ -478,6 +478,66 @@ for db in postgres:shopdb redis:cache mysql:orders; do jssh "db:${db%%:*}:unexpo
 for _ in $(seq 1 10); do timeout 2 bash -c '</dev/tcp/127.0.0.1/3306' 2>/dev/null || break; sleep 1; done
 if timeout 2 bash -c '</dev/tcp/127.0.0.1/3306' 2>/dev/null; then fail "the proxy still listens on 3306"; fi
 
+step "inside the databases: statistics and users"
+# The control node looks inside each running database every ten seconds.
+# (Redis's limit fits the open files it may have, so it varies.)
+info() { jssh "db:$1:info" "$2" "--$3" 2>&1; }
+looked() { info "$1" "$2" connections | grep -qE '^[0-9]+ of [0-9]+'; }
+for _ in $(seq 1 30); do looked redis cache && looked mysql orders && break; sleep 2; done
+looked redis cache || fail "redis statistics: $(jssh db:redis:info cache)"
+looked mysql orders || fail "mysql statistics: $(jssh db:mysql:info orders)"
+# MySQL keeps a histogram of how long its statements take.
+for _ in $(seq 1 30); do
+  for _ in $(seq 1 20); do echo 'SELECT COUNT(*) FROM information_schema.tables;'; done | jssh db:mysql:connect orders >/dev/null 2>&1
+  [[ "$(info mysql orders latency)" == p50* ]] && break
+  sleep 2
+done
+[[ "$(info mysql orders latency)" == p50* ]] || fail "mysql latency: $(info mysql orders latency)"
+# shopdb's image (the official one, from a mirror) didn't load
+# pg_stat_statements: Jokku turns it on, for its next restart, and until
+# then times its transactions.
+for _ in $(seq 1 30); do [[ "$(info postgres shopdb latency)" == *"next restart"* ]] && break; sleep 2; done
+[[ "$(info postgres shopdb latency)" == *"next restart"* ]] || fail "postgres before a restart: $(jssh db:postgres:info shopdb)"
+jssh events postgres-shopdb | grep -q "turned on query statistics" || fail "no event for turning on pg_stat_statements"
+jssh db:postgres:restart shopdb >/dev/null || fail "db:postgres:restart failed"
+for _ in $(seq 1 60); do
+  sql 'SELECT count(*) FROM t;' >/dev/null
+  [[ "$(info postgres shopdb latency)" == *"per query"* ]] && break
+  sleep 2
+done
+[[ "$(info postgres shopdb latency)" == *"per query"* ]] || fail "postgres query times after a restart: $(jssh db:postgres:info shopdb)"
+
+# A read-only Postgres user, connecting from outside through the proxy.
+jssh db:postgres:expose shopdb shopdb.127.0.0.1.sslip.io >/dev/null 2>&1 || fail "db:postgres:expose failed"
+out=$(jssh db:postgres:users:add shopdb reporting --read-only 2>&1) || fail "db:postgres:users:add failed: $out"
+url=$(grep -o 'postgres://reporting:[^ ]*sslmode=require' <<<"$out" | head -n 1)
+[ -n "$url" ] || fail "users:add printed no URL for clients outside: $out"
+for _ in $(seq 1 30); do res=$(psql "$url" -tAc 'SELECT v FROM t' 2>&1) && [ "$res" = kept ] && break; sleep 1; done
+[ "$res" = kept ] || fail "a read-only user can't read: $res"
+if psql "$url" -tAc "INSERT INTO t VALUES ('no')" >/dev/null 2>&1; then fail "a read-only user wrote"; fi
+users=$(jssh db:postgres:users:list shopdb)
+grep -qE '^reporting +read-only +postgres://reporting:•+@postgres-shopdb.internal' <<<"$users" || fail "users:list: $users"
+grep -qE '^postgres +all +-$' <<<"$users" || fail "users:list doesn't show the database's own user: $users"
+new=$(jssh db:postgres:users:passwd shopdb reporting 2>&1 | grep -o 'postgres://reporting:[^ ]*sslmode=require' | head -n 1)
+if psql "$url" -tAc 'SELECT 1' >/dev/null 2>&1; then fail "the old password still works"; fi
+[ "$(psql "$new" -tAc 'SELECT 1' 2>&1)" = 1 ] || fail "the new password doesn't work"
+jssh db:postgres:users:remove shopdb reporting >/dev/null || fail "db:postgres:users:remove failed"
+if psql "$new" -tAc 'SELECT 1' >/dev/null 2>&1; then fail "a removed user still connects"; fi
+if jssh db:postgres:users:remove shopdb postgres 2>/dev/null; then fail "the database's own user was removed"; fi
+if jssh db:redis:users:list cache 2>/dev/null; then fail "redis has users"; fi
+# A read-write MySQL user: data, not the schema.
+jssh db:mysql:expose orders 127.0.0.1 >/dev/null 2>&1 || fail "db:mysql:expose failed"
+echo 'CREATE TABLE w (v text);' | jssh db:mysql:connect orders >/dev/null 2>&1 || fail "creating a mysql table failed"
+out=$(jssh db:mysql:users:add orders writer 2>&1) || fail "db:mysql:users:add failed: $out"
+wpw=$(grep -o 'mysql://writer:[^@]*@' <<<"$out" | head -n 1) && wpw=${wpw#mysql://writer:} && wpw=${wpw%@}
+my() { MYSQL_PWD=$wpw mysql -h 127.0.0.1 -P 3306 -u writer orders -NBe "$1" 2>&1; }
+for _ in $(seq 1 30); do [ "$(my 'SELECT 1')" = 1 ] && break; sleep 1; done
+[ "$(my "INSERT INTO w VALUES ('x'); SELECT COUNT(*) FROM w")" = 1 ] || fail "a read-write user can't write: $(my 'SELECT COUNT(*) FROM w')"
+if my 'CREATE TABLE z (i int)' >/dev/null; then fail "a read-write user changed the schema"; fi
+jssh db:mysql:users:remove orders writer >/dev/null || fail "db:mysql:users:remove failed"
+if my 'SELECT 1' >/dev/null; then fail "a removed mysql user still connects"; fi
+for db in postgres:shopdb mysql:orders; do jssh "db:${db%%:*}:unexpose" "${db#*:}" >/dev/null || fail "db:${db%%:*}:unexpose failed"; done
+
 jssh db:postgres:unlink shopdb hello >/dev/null
 for db in postgres:shopdb redis:cache mysql:orders; do jssh "db:${db%%:*}:destroy" "${db#*:}" --force; done
 

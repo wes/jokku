@@ -93,7 +93,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request) {
 
 	st := newStream(w)
 	st.Log(fmt.Sprintf("-----> Creating %s database %s (%s)", e.Name, req.Name, image))
-	err := s.deployDatabase(context.WithoutCancel(ctx), e, app, image, e.Compose(req.MemoryMB), actor(r), st)
+	err := s.deployDatabase(context.WithoutCancel(ctx), e, app, image, e.Compose(req.MemoryMB, image), actor(r), st)
 	if err != nil {
 		st.Done(fmt.Errorf("%w (remove it with jokku db:%s:destroy %s, or try again with jokku ps:rebuild %s)", err, e.Name, req.Name, app))
 		return
@@ -260,6 +260,11 @@ func (s *Server) databaseInfo(ctx context.Context, e database.Engine, app *types
 			}
 			status := cluster.BackupStatus(*set, runs)
 			db.Backups = &status
+		}
+	}
+	if s.Cluster != nil {
+		if db.Stats, err = s.Cluster.DatabaseStatsOf(ctx, app.Name); err != nil {
+			return nil, err
 		}
 	}
 	return db, nil

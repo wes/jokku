@@ -561,3 +561,90 @@ type Request struct {
 	Bytes        int64     `json:"bytes"`
 	Client       string    `json:"client,omitempty"`
 }
+
+// DatabaseStats is a look inside a database ("jokku top", db:<engine>:info):
+// its connections now, and its queries over the last minute, hour and day.
+// The control node takes a look at each running database every few seconds
+// and keeps the history in memory, so it starts over when it restarts.
+type DatabaseStats struct {
+	App    string    `json:"app"`
+	Engine string    `json:"engine"`
+	Name   string    `json:"name"`
+	Node   string    `json:"node,omitempty"`
+	At     time.Time `json:"at,omitzero"` // the last look; zero before the first
+	// Error is why the last look failed, and Note something missing, in a
+	// sentence ("query times start at its next restart").
+	Error string `json:"error,omitempty"`
+	Note  string `json:"note,omitempty"`
+
+	Connections    int              `json:"connections"`
+	MaxConnections int              `json:"max_connections"`
+	Active         int              `json:"active"`             // running a query now; -1 when the engine can't tell
+	MaxUsed        int              `json:"max_used,omitempty"` // the most at once since it started, when the engine keeps it
+	Clients        []DatabaseClient `json:"clients,omitempty"`
+
+	// Per is what a query is: "query", "transaction" (Postgres without
+	// pg_stat_statements) or "command" (Redis). HitsAre is what the hit
+	// rate counts: "cache" (reads from memory rather than disk) or
+	// "keys" (Redis: keys found).
+	Per     string         `json:"per,omitempty"`
+	HitsAre string         `json:"hits_are,omitempty"`
+	Minute  DatabaseWindow `json:"minute"`
+	Hour    DatabaseWindow `json:"hour"`
+	Day     DatabaseWindow `json:"day"`
+
+	Slowest    []DatabaseQuery `json:"slowest,omitempty"` // Postgres: by total time, since its statistics started
+	Users      []DatabaseUser  `json:"users,omitempty"`
+	MemoryUsed uint64          `json:"memory_used,omitempty"` // Redis, bytes
+	MemoryMax  uint64          `json:"memory_max,omitempty"`  // 0: no limit
+}
+
+// DatabaseClient is a database's connections from one place as one user:
+// an app's instance, the proxies (clients outside, db:<engine>:expose), or
+// the database's own VM (db:<engine>:connect).
+type DatabaseClient struct {
+	App      string `json:"app,omitempty"`      // the app whose instance connects
+	Instance string `json:"instance,omitempty"` // web.1
+	Via      string `json:"via,omitempty"`      // the node whose proxy carries clients outside
+	Local    bool   `json:"local,omitempty"`    // from inside the database's VM
+	Addr     string `json:"addr,omitempty"`
+	User     string `json:"user,omitempty"`
+	Count    int    `json:"count"`
+	Active   int    `json:"active"`
+}
+
+// DatabaseWindow is a database's queries over a span of time.
+type DatabaseWindow struct {
+	Seconds   float64 `json:"seconds"` // how much of the span there are looks for
+	Queries   uint64  `json:"queries"`
+	PerSecond float64 `json:"per_second"`
+	// P50, P95 and P99 are how long queries took inside the database, in
+	// milliseconds, from engines that keep a histogram (MySQL, Redis);
+	// AvgMS is the mean, which every engine has. 0 without queries.
+	P50   float64 `json:"p50_ms,omitempty"`
+	P95   float64 `json:"p95_ms,omitempty"`
+	P99   float64 `json:"p99_ms,omitempty"`
+	AvgMS float64 `json:"avg_ms,omitempty"`
+	// HitRate is the share of reads served from memory (or keys found),
+	// 0 to 1; -1 without reads.
+	HitRate float64 `json:"hit_rate"`
+}
+
+// DatabaseQuery is a statement and how long it has taken.
+type DatabaseQuery struct {
+	Query   string  `json:"query"`
+	Calls   uint64  `json:"calls"`
+	TotalMS float64 `json:"total_ms"`
+	MeanMS  float64 `json:"mean_ms"`
+}
+
+// DatabaseUser is a login of a database's. Access is "all" (schema changes
+// included), "read-write", "read-only" or "other" (privileges Jokku didn't
+// set); Password and URLs are known for the users Jokku added.
+type DatabaseUser struct {
+	Name      string `json:"name"`
+	Access    string `json:"access"`
+	Password  string `json:"password,omitempty"`
+	URL       string `json:"url,omitempty"`
+	PublicURL string `json:"public_url,omitempty"`
+}

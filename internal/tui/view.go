@@ -41,6 +41,8 @@ func (m *model) View() string {
 			body = m.trafficView()
 		case backupsView:
 			body = m.backupsView()
+		case databasesView:
+			body = m.databasesView()
 		case logsView:
 			body = m.logView()
 		}
@@ -110,12 +112,14 @@ func (m *model) tabs() string {
 }
 
 func (m *model) footer() string {
-	keys := "1-7/tab views  ↑↓ move  enter drill in  l logs  esc back  r refresh  ? help  q quit"
+	keys := "1-8/tab views  ↑↓ move  enter drill in  l logs  esc back  r refresh  ? help  q quit"
 	switch m.view {
+	case databasesView:
+		keys = "w minute/hour/day  ↑↓ move  enter instances  l logs  1-8 views  ? help  q quit"
 	case trafficView:
-		keys = "1-7/tab views  p pause  c clear  f effects  ? help  q quit"
+		keys = "1-8/tab views  p pause  c clear  f effects  ? help  q quit"
 	case backupsView:
-		keys = "space on/off  b back up now  s schedule  a auto-restore  ↑↓ move  1-7 views  ? help  q quit"
+		keys = "space on/off  b back up now  s schedule  a auto-restore  ↑↓ move  1-8 views  ? help  q quit"
 		if m.width < 100 {
 			keys = "space on/off  b back up  s schedule  a auto-restore  ? help  q quit"
 		}
@@ -142,6 +146,11 @@ const helpText = `jokku top shows the cluster live, refreshed every two seconds.
                 itself, their last and next backups, and what they keep. space
                 turns backups on or off, b backs up now, s changes how often,
                 a turns automatic restore on or off
+  8 Databases   inside each database, a look every ten seconds: connections
+                against its limit, queries a second, how long they take
+                (p50, p95, p99; Postgres's average) and how often reads hit
+                memory. w switches between the last minute, hour and day.
+                Under it, who's connected, its users, its slowest queries
 
   enter on a node or app shows its instances; l shows an app's logs;
   esc goes back. Press any key to close this help.`

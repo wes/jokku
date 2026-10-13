@@ -5,6 +5,16 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.12: Inside your databases
+
+October 12, 2026
+
+- **[`jokku top`](/docs/top#databases) has a Databases view** (key `8`). For each database it shows connections against its limit, how many are running a query, queries a second, how long they take and how often reads come from memory, over the last minute, hour and day (`w` switches between them). Under it are the selected database's clients (which app's instance, or clients outside through which proxy), its users and its slowest queries.
+- **MySQL and Redis show p50, p95 and p99**, from the histograms they keep. **Postgres shows the average per query and its slowest queries**, from `pg_stat_statements`. `jokku db:postgres:info shopdb` shows the same numbers. See [See inside it](/docs/databases#see-inside-it).
+- New Postgres databases load `pg_stat_statements` from the start. On one created before v0.8.12, Jokku turns it on the first time it looks, and it starts at the database's next restart: `jokku db:postgres:restart shopdb`. Until then, the average is per transaction.
+- **[Users](/docs/databases#users) for Postgres and MySQL databases**: `jokku db:postgres:users:add shopdb reporting --read-only` adds a login with a password Jokku makes, and prints its URL. A user reads and writes the data, or only reads, but can't change the schema. `users:list`, `users:passwd` and `users:remove` do the rest, and removing a user closes its connections.
+- Every ten seconds, your control server runs each database's own client in its microVM to look inside. Those runs don't show up as events, and their queries aren't counted.
+
 ## v0.8.11: Databases kept on your network
 
 October 12, 2026

@@ -158,6 +158,9 @@ type Database struct {
 	// Exposed is how clients outside reach it (db:<engine>:expose); nil
 	// while they can't.
 	Exposed *DatabaseExposure `json:"exposed,omitempty"`
+	// Stats is what the control node has seen inside it: connections,
+	// queries and how long they take.
+	Stats *DatabaseStats `json:"stats,omitempty"`
 }
 
 // DatabaseExposure is how clients outside reach a database: at Host:Port,
@@ -207,6 +210,13 @@ type ExposeDatabaseRequest struct {
 	Port   int      `json:"port,omitempty"`
 	Allow  []string `json:"allow,omitempty"`
 	LAN    bool     `json:"lan,omitempty"`
+}
+
+// AddDatabaseUserRequest adds a login to a database that reads and writes
+// its data (only reads when ReadOnly), with a password Jokku makes.
+type AddDatabaseUserRequest struct {
+	Name     string `json:"name"`
+	ReadOnly bool   `json:"read_only,omitempty"`
 }
 
 type CreateAppRequest struct {

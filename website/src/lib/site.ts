@@ -17,7 +17,7 @@ export const OG_IMAGE = {
 
 // The latest release when GitHub can't be asked: the build reads the real one
 // (see releases.ts), and the page checks again in the browser.
-export const VERSION = 'v0.8.11';
+export const VERSION = 'v0.8.12';
 export const GITHUB_URL = 'https://github.com/wes/jokku';
 export const RELEASES_URL = `${GITHUB_URL}/releases`;
 export const INSTALL_COMMAND =

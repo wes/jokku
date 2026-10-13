@@ -593,7 +593,7 @@ type DatabaseStats struct {
 	Hour    DatabaseWindow `json:"hour"`
 	Day     DatabaseWindow `json:"day"`
 
-	Slowest    []DatabaseQuery `json:"slowest,omitempty"` // Postgres: by total time, since its statistics started
+	Slowest    []DatabaseQuery `json:"slowest,omitempty"` // Postgres and MySQL: by total time, since its statistics started
 	Users      []DatabaseUser  `json:"users,omitempty"`
 	MemoryUsed uint64          `json:"memory_used,omitempty"` // Redis, bytes
 	MemoryMax  uint64          `json:"memory_max,omitempty"`  // 0: no limit

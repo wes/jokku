@@ -9,8 +9,9 @@ import (
 )
 
 // The testdata is the stats commands' real output, from postgres:17 (after
-// pgbench, and freshly started without pg_stat_statements), mysql:8.4 and
-// redis:7 with some queries run.
+// pgbench, and freshly started without pg_stat_statements), mysql:8.4 (with
+// lookups, joins, inserts and three SELECT SLEEP(0.2)s) and redis:7 with
+// some queries run.
 func sample(t *testing.T, engine, file string) *Sample {
 	t.Helper()
 	b, err := os.ReadFile("testdata/" + file)
@@ -68,6 +69,22 @@ func TestParseStats(t *testing.T) {
 	for b := range my.Hist {
 		if b.Lo >= b.Hi || b.Hi > 60e6 {
 			t.Errorf("mysql bucket %+v isn't in microseconds", b)
+		}
+	}
+	// The slowest statements, as MySQL's digests: the look's own aren't
+	// among them.
+	if len(my.Slowest) != 5 || my.Slowest[0].Text != "SELECT SLEEP (?)" || my.Slowest[0].Calls != 3 ||
+		my.Slowest[0].MeanMS < 200 || my.Slowest[0].TotalMS < my.Slowest[1].TotalMS {
+		t.Errorf("mysql's slowest: %+v", my.Slowest)
+	}
+	if !slices.ContainsFunc(my.Slowest, func(q Query) bool {
+		return q.Text == "SELECT COUNT (*) FROM orders o JOIN seq s ON s.n = o.id % ? WHERE o.note LIKE ?" && q.Calls == 40
+	}) {
+		t.Errorf("mysql's slowest have no join: %+v", my.Slowest)
+	}
+	for _, q := range my.Slowest {
+		if strings.Contains(q.Text, "INSTRUMENTED") || strings.Contains(q.Text, "version_comment") {
+			t.Errorf("the stats' own statement is among the slowest: %q", q.Text)
 		}
 	}
 	if !slices.Contains(my.Users, User{"mysql", AccessAll}) || !slices.Contains(my.Users, User{"writer", AccessReadWrite}) ||

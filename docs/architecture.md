@@ -805,10 +805,12 @@ proxy, carrying clients outside), or none (the VM itself).
   loads at its next restart, after which `CREATE EXTENSION`. Until then the
   unit is a transaction (`active_time` over commits). The look's own session
   sets `pg_stat_statements.track = none`; its transactions are subtracted.
-- **MySQL**: `performance_schema` (processlist, global status, and
-  `events_statements_histogram_global` for p50/p95/p99). The look turns
+- **MySQL**: `performance_schema` (processlist, global status,
+  `events_statements_histogram_global` for p50/p95/p99, and
+  `events_statements_summary_by_digest` for the slowest). The look turns
   instrumentation off for its own thread; the three statements counted
-  anyway are subtracted.
+  anyway are subtracted, and the two of them with a digest are left out of
+  the slowest by their text.
 - **Redis**: `INFO`, `CLIENT LIST`, and `LATENCY HISTOGRAM` (per command,
   cumulative, doubling buckets), leaving out the look's own commands.
 - When a server restarts (its start time moves) or a counter goes down, the

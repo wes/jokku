@@ -1,6 +1,6 @@
 ---
 title: Introduction
-description: Jokku is a self-hosted platform for deploying your apps. You git push, it builds your Dockerfile and runs it in Firecracker microVMs on your own servers.
+description: Jokku is an open source, self-hosted platform for deploying your apps. You git push, it builds your Dockerfile and runs it in Firecracker microVMs on your own servers.
 ---
 
 Jokku is modeled on [Dokku](https://dokku.com). You `git push` an app that has a Dockerfile, and Jokku builds it, runs it and routes your domains to it, with Let's Encrypt certificates for the apps you want on HTTPS.
@@ -54,6 +54,10 @@ ssh jokku@your-server resource:limit myapp --cpu 2 --memory 1g --process-type we
 
 > [!NOTE]
 > Jokku is in early development. `git push` builds your Dockerfile and runs it in Firecracker microVMs behind the proxy, with zero-downtime deploys, scaling, logs, volumes, backups, databases and updates, on one server or a cluster, even at home behind an edge. [What's new](/docs/changelog) lists every release, and the [command reference](/docs/commands) shows what works today and what's planned.
+
+## Open source
+
+Jokku is free and open source under the [MIT license](https://github.com/wes/jokku/blob/main/LICENSE): use it, change it and run it anywhere, for anything. The code, releases and issues are on [GitHub](https://github.com/wes/jokku).
 
 ## Where to next
 

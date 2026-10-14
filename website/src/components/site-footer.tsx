@@ -1,6 +1,6 @@
 import { Link } from 'waku';
 import type { Href } from '../lib/nav';
-import { GITHUB_URL, RELEASES_URL } from '../lib/site';
+import { GITHUB_URL, LICENSE_URL, RELEASES_URL } from '../lib/site';
 import { Logo } from './logo';
 
 const COLUMNS: Array<{ title: string; links: Array<{ label: string; to: Href }> }> = [
@@ -45,7 +45,7 @@ export const SiteFooter = () => (
         <Logo />
         <p className="mt-4 text-[14px] leading-6 text-muted">
           Your own platform for deploying apps. Dokku’s commands, Firecracker microVMs, as many
-          servers as you like.
+          servers as you like. Open source, under the MIT license.
         </p>
       </div>
       {COLUMNS.map((col) => (
@@ -80,13 +80,22 @@ export const SiteFooter = () => (
               Issues
             </a>
           </li>
+          <li>
+            <a href={LICENSE_URL} target="_blank" rel="noreferrer" className="text-muted transition hover:text-fg">
+              MIT license
+            </a>
+          </li>
         </ul>
       </div>
     </div>
     <div className="border-t border-line">
       <div className="mx-auto flex max-w-[88rem] flex-wrap items-center justify-between gap-3 px-4 py-6 text-[13px] text-subtle sm:px-6 lg:px-8">
         <p>
-          Built on Firecracker, WireGuard, Caddy and BuildKit. Modeled on{' '}
+          Open source under the{' '}
+          <a href={LICENSE_URL} target="_blank" rel="noreferrer" className="underline decoration-line-strong underline-offset-4 hover:text-muted">
+            MIT license
+          </a>
+          . Built on Firecracker, WireGuard, Caddy and BuildKit. Modeled on{' '}
           <a href="https://dokku.com" target="_blank" rel="noreferrer" className="underline decoration-line-strong underline-offset-4 hover:text-muted">
             Dokku
           </a>

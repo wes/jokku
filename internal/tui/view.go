@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -182,10 +183,15 @@ func (m *model) overview() string {
 	var b strings.Builder
 	b.WriteString(sSection.Render("Nodes") + "\n")
 	for _, n := range m.st.Nodes {
-		fmt.Fprintf(&b, "  %s %-16s cpu %s  mem %s  vms %s  %s\n",
-			nodeDot(n), trunc(n.Name, 16),
-			bar(n.Metrics.CPUPercent, 10), bar(pct(n.Metrics.MemoryUsedMB, n.MemoryMB), 10),
-			bar(pct(n.AllocatedMB, n.MemoryMB), 10), plural(n.Instances, "instance"))
+		cpu, memory, vms := bar(n.Metrics.CPUPercent, 10), bar(pct(n.Metrics.MemoryUsedMB, n.MemoryMB), 10), bar(pct(n.AllocatedMB, n.MemoryMB), 10)
+		if m.width < 104 { // the disk has no room
+			fmt.Fprintf(&b, "  %s %-16s cpu %s  mem %s  vms %s  %s\n",
+				nodeDot(n), trunc(n.Name, 16), cpu, memory, vms, plural(n.Instances, "instance"))
+			continue
+		}
+		disk := bar(pct(n.Metrics.DiskMB-n.Metrics.DiskFreeMB, n.Metrics.DiskMB), 10)
+		fmt.Fprintf(&b, "  %s %-16s   cpu %s   mem %s   disk %s   vms %s   %s\n",
+			nodeDot(n), trunc(n.Name, 16), cpu, memory, disk, vms, plural(n.Instances, "instance"))
 	}
 	b.WriteString(sSection.Render("Apps") + "\n")
 	list := m.appList()
@@ -222,31 +228,62 @@ func (m *model) overview() string {
 
 // Nodes
 
+// nodes is a table of the nodes, its columns three spaces apart. When the
+// terminal is too narrow for that, the addresses go (the selected node's
+// is on the line under the table), then the columns close up to two.
 func (m *model) nodes() string {
 	var b strings.Builder
-	b.WriteString(sHead.Render(fmt.Sprintf("  %-18s %-9s %-15s %-16s %-21s %-21s %4s  %-10s %s",
-		"NAME", "STATUS", "ADDRESS", "CPU", "MEMORY USED", "PROMISED TO VMS", "INST", "VERSION", "SEEN")) + "\n")
-	for i, n := range m.st.Nodes {
-		status := n.Status
-		if n.CanRun != "" && status == "ready" {
-			status = "no-vms"
-		}
-		line := fmt.Sprintf("  %s %-16s %-9s %-15s %s %4.0f%%  %s %-8s %s %-8s %4d  %-10s %s",
-			nodeDot(n), trunc(n.Name, 16), status, trunc(n.Address, 15),
-			bar(n.Metrics.CPUPercent, 10), n.Metrics.CPUPercent,
-			bar(pct(n.Metrics.MemoryUsedMB, n.MemoryMB), 10), mem(n.Metrics.MemoryUsedMB)+"/"+mem(n.MemoryMB),
-			bar(pct(n.AllocatedMB, n.MemoryMB), 10), mem(n.AllocatedMB),
-			n.Instances, trunc(n.Version, 10), ago(n.LastSeen))
+	head, lines, width := m.nodeTable(true, 3)
+	if width > m.width {
+		head, lines, width = m.nodeTable(false, 3)
+	}
+	if width > m.width {
+		head, lines, _ = m.nodeTable(false, 2)
+	}
+	b.WriteString(sHead.Render(head) + "\n")
+	for i, line := range lines {
 		b.WriteString(m.selectable(nodesView, i, line) + "\n")
 	}
 	if n, ok := m.selectedNode(); ok {
-		b.WriteString("\n" + sDim.Render(fmt.Sprintf("  %s · %s · mesh %s · %d CPUs · disk %s free of %s · load %.2f",
-			n.Name, n.Role, n.MeshIP, n.CPUs, mem(n.Metrics.DiskFreeMB), mem(n.Metrics.DiskMB), n.Metrics.Load1)) + "\n")
+		b.WriteString("\n" + sDim.Render(fmt.Sprintf("  %s · %s · %s · mesh %s · %d CPUs · disk %s free of %s · load %.2f",
+			n.Name, n.Role, n.Address, n.MeshIP, n.CPUs, mem(n.Metrics.DiskFreeMB), mem(n.Metrics.DiskMB), n.Metrics.Load1)) + "\n")
 		if n.CanRun != "" {
 			b.WriteString("  " + sBad.Render("cannot run microVMs: "+n.CanRun) + "\n")
 		}
 	}
 	return b.String()
+}
+
+func (m *model) nodeTable(addresses bool, gap int) (string, []string, int) {
+	cols := []column{{head: "NAME"}, {head: "STATUS"}, {head: "ADDRESS"}, {head: "CPU"}, {head: "MEMORY USED"},
+		{head: "DISK USED"}, {head: "PROMISED TO VMS"}, {head: "INST", right: true}, {head: "VERSION"}, {head: "SEEN"}}
+	var rows [][]string
+	for _, n := range m.st.Nodes {
+		status := n.Status
+		if n.CanRun != "" && status == "ready" {
+			status = "no-vms"
+		}
+		disk := bar(0, 10) + " -"
+		if n.Metrics.DiskMB > 0 {
+			used := n.Metrics.DiskMB - n.Metrics.DiskFreeMB
+			disk = bar(pct(used, n.Metrics.DiskMB), 10) + " " + size(used) + "/" + size(n.Metrics.DiskMB)
+		}
+		rows = append(rows, []string{
+			nodeDot(n) + " " + trunc(n.Name, 16), status, trunc(n.Address, 15),
+			bar(n.Metrics.CPUPercent, 10) + fmt.Sprintf(" %3.0f%%", n.Metrics.CPUPercent),
+			bar(pct(n.Metrics.MemoryUsedMB, n.MemoryMB), 10) + " " + size(n.Metrics.MemoryUsedMB) + "/" + size(n.MemoryMB),
+			disk,
+			bar(pct(n.AllocatedMB, n.MemoryMB), 10) + " " + size(n.AllocatedMB),
+			fmt.Sprint(n.Instances), trunc(n.Version, 10), ago(n.LastSeen),
+		})
+	}
+	if !addresses {
+		cols = slices.Delete(cols, 2, 3)
+		for i := range rows {
+			rows[i] = slices.Delete(rows[i], 2, 3)
+		}
+	}
+	return table(cols, rows, gap)
 }
 
 // Apps
@@ -561,6 +598,71 @@ func pct(used, total int) float64 {
 		return 0
 	}
 	return float64(used) / float64(total) * 100
+}
+
+// size is mb in a few characters: megabytes under a gigabyte, a tenth of a
+// gigabyte under ten, whole gigabytes, then tenths of a terabyte.
+func size(mb int) string {
+	switch {
+	case mb < 1024:
+		return fmt.Sprintf("%dM", mb)
+	case mb < 10*1024:
+		return fmt.Sprintf("%.1fG", float64(mb)/1024)
+	case mb < 1024*1024:
+		return fmt.Sprintf("%.0fG", float64(mb)/1024)
+	}
+	return fmt.Sprintf("%.1fT", float64(mb)/(1024*1024))
+}
+
+// column is a table's column: its heading, and whether its cells line up
+// on the right.
+type column struct {
+	head  string
+	right bool
+}
+
+// table lays rows of cells out under the headings, each column as wide as
+// its widest cell and gap spaces from the next, indented two. It returns
+// the heading line, a line per row, and how wide the table is.
+func table(cols []column, rows [][]string, gap int) (string, []string, int) {
+	widths := make([]int, len(cols))
+	heads := make([]string, len(cols))
+	for i, c := range cols {
+		widths[i], heads[i] = lipgloss.Width(c.head), c.head
+	}
+	for _, r := range rows {
+		for i, c := range r {
+			widths[i] = max(widths[i], lipgloss.Width(c))
+		}
+	}
+	line := func(cells []string) string {
+		var b strings.Builder
+		b.WriteString("  ")
+		for i, c := range cells {
+			if i > 0 {
+				b.WriteString(strings.Repeat(" ", gap))
+			}
+			fill := strings.Repeat(" ", widths[i]-lipgloss.Width(c))
+			switch {
+			case cols[i].right:
+				b.WriteString(fill + c)
+			case i < len(cells)-1:
+				b.WriteString(c + fill)
+			default:
+				b.WriteString(c)
+			}
+		}
+		return b.String()
+	}
+	lines := make([]string, len(rows))
+	for i, r := range rows {
+		lines[i] = line(r)
+	}
+	width := 2 + gap*(len(cols)-1)
+	for _, w := range widths {
+		width += w
+	}
+	return line(heads), lines, width
 }
 
 func mem(mb int) string {

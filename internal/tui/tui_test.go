@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
 	"github.com/wes/jokku/internal/types"
@@ -131,6 +132,51 @@ func TestTheSelectedRowIsSubtle(t *testing.T) {
 				t.Errorf("profile %d, dark %v: the background stops partway: %q", c.profile, c.dark, rows[0])
 				break
 			}
+		}
+	}
+}
+
+// TestNodeColumnsLineUp: every row of the Nodes view starts each column
+// where its heading does, three spaces from the column before it, however
+// wide its numbers ("268M/956M" against "3.1G/29G").
+func TestNodeColumnsLineUp(t *testing.T) {
+	now := time.Now()
+	st := sampleStatus()
+	st.Nodes = []types.NodeView{
+		{Node: types.Node{Name: "jokku1", Role: "control", Status: "ready", Address: "192.168.86.113", MemoryMB: 29359, LastSeen: now},
+			Version: "v0.8.16", Metrics: types.NodeMetrics{CPUPercent: 1, MemoryUsedMB: 3174, DiskMB: 396288, DiskFreeMB: 337510}, AllocatedMB: 3891, Instances: 6},
+		{Node: types.Node{Name: "jokku2", Role: "worker", Status: "ready", Address: "192.168.86.74", MemoryMB: 29358, LastSeen: now},
+			Version: "v0.8.16", Metrics: types.NodeMetrics{CPUPercent: 100, MemoryUsedMB: 2355, DiskMB: 49152, DiskFreeMB: 35840}, AllocatedMB: 2253, Instances: 12},
+		{Node: types.Node{Name: "jokku-edge1", Role: "edge", Status: "ready", Address: "157.245.189.193", MemoryMB: 956, LastSeen: now},
+			Version: "v0.8.16", CanRun: "an edge", Metrics: types.NodeMetrics{CPUPercent: 1, MemoryUsedMB: 268}},
+	}
+	for _, c := range []struct {
+		width   int
+		address bool
+	}{{200, true}, {139, false}} {
+		m := &model{ctx: context.Background(), cursor: map[view]int{}, st: st, at: now}
+		m.Update(tea.WindowSizeMsg{Width: c.width, Height: 30})
+		m.key("2")
+		lines := strings.Split(ansi.Strip(m.nodes()), "\n")
+		head := []rune(lines[0])
+		if got := strings.Contains(lines[0], "ADDRESS"); got != c.address {
+			t.Errorf("width %d: an ADDRESS column is %v, want %v", c.width, got, c.address)
+		}
+		if !strings.Contains(m.nodes(), "192.168.86.113") {
+			t.Errorf("width %d: the selected node's address is missing", c.width)
+		}
+		for _, h := range []string{"STATUS", "CPU", "MEMORY USED", "DISK USED", "PROMISED TO VMS", "VERSION", "SEEN"} {
+			at := strings.Index(string(head), h)
+			at = len([]rune(string(head)[:at]))
+			for _, l := range append([]string{lines[0]}, lines[1:4]...) {
+				r := []rune(l)
+				if len(r) <= at || r[at] == ' ' || strings.TrimSpace(string(r[at-3:at])) != "" {
+					t.Errorf("width %d: %s doesn't start three spaces after the column before it in %q", c.width, h, l)
+				}
+			}
+		}
+		if !strings.Contains(lines[1], "57G/387G") || !strings.Contains(lines[3], "-   ") {
+			t.Errorf("width %d: disk used is missing:\n%s", c.width, strings.Join(lines, "\n"))
 		}
 	}
 }

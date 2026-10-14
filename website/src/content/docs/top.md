@@ -7,7 +7,7 @@ description: A live view of your servers, apps, instances and every request, in 
 jokku top
 ```
 
-A live view of the machines, apps, instances and recent events, with CPU and memory for each, refreshed every two seconds. Over SSH it needs a terminal, so use `ssh -t jokku@your-server top`, or put `-t` in your alias.
+A live view of the machines, apps, instances and recent events, with CPU, memory and disk for each, refreshed every two seconds. Over SSH it needs a terminal, so use `ssh -t jokku@your-server top`, or put `-t` in your alias.
 
 ## Views
 
@@ -16,7 +16,7 @@ Switch with the number keys, or with tab:
 | Key | View | Shows |
 | --- | --- | --- |
 | `1` | Overview | Servers, apps, external apps, databases and recent events at a glance |
-| `2` | Nodes | Each server: status, CPU, memory, and memory promised to microVMs |
+| `2` | Nodes | Each server: status, CPU, memory and disk used, and memory promised to microVMs |
 | `3` | Apps | Each app: healthy instances, release, last deploy, domains, and the databases it uses |
 | `4` | Instances | Each microVM: state, server, CPU, memory, uptime, restarts |
 | `5` | Events | Deploys, crashes, servers coming and going |

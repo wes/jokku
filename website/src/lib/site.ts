@@ -20,7 +20,8 @@ export const OG_IMAGE = {
 export const VERSION = 'v0.8.17';
 export const GITHUB_URL = 'https://github.com/wes/jokku';
 export const RELEASES_URL = `${GITHUB_URL}/releases`;
+export const LICENSE_URL = `${GITHUB_URL}/blob/main/LICENSE`;
 export const INSTALL_COMMAND =
   'curl -fsSL https://raw.githubusercontent.com/wes/jokku/main/install.sh | sudo sh';
 export const DESCRIPTION =
-  'Jokku is a self-hosted platform for deploying your apps. git push a Dockerfile and Jokku runs it in Firecracker microVMs across your own servers, with Dokku’s commands.';
+  'Jokku is an open source, self-hosted platform for deploying your apps. git push a Dockerfile and Jokku runs it in Firecracker microVMs across your own servers, with Dokku’s commands.';

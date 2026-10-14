@@ -13,7 +13,7 @@ import { SocialMeta } from '../components/social-meta';
 import { TrafficDemo } from '../components/landing/traffic-demo';
 import { DownloadPill, InstallStats, LatestVersion } from '../components/release-stats';
 import { releaseStats } from '../lib/releases';
-import { DESCRIPTION } from '../lib/site';
+import { DESCRIPTION, LICENSE_URL } from '../lib/site';
 
 const STEPS = [
   { n: '01', title: 'Install', cmd: 'curl -fsSL …/install.sh | sudo sh', text: 'On a fresh Ubuntu or Debian server with KVM. Your SSH keys can deploy right away.' },
@@ -57,9 +57,9 @@ export default async function HomePage() {
           </h1>
 
           <p className="animate-rise mt-7 max-w-xl text-[17px] leading-7 text-pretty text-body [animation-delay:160ms] sm:text-[18px] sm:leading-[1.7]">
-            Jokku is a self-hosted platform modeled on Dokku. It builds your Dockerfile, boots each
-            instance in its own Firecracker microVM, puts your domains on HTTPS, and spreads your
-            apps across every server you add.
+            Jokku is an open source, self-hosted platform modeled on Dokku. It builds your
+            Dockerfile, boots each instance in its own Firecracker microVM, puts your domains on
+            HTTPS, and spreads your apps across every server you add.
           </p>
 
           <div className="animate-rise mt-9 flex flex-wrap items-center gap-3 [animation-delay:240ms]">
@@ -203,6 +203,9 @@ export default async function HomePage() {
             <Link to="/docs/installation#requirements" className="text-muted hover:text-fg">
               Check the requirements
             </Link>
+            <a href={LICENSE_URL} target="_blank" rel="noreferrer" className="text-muted hover:text-fg">
+              Free and open source, MIT licensed
+            </a>
           </div>
         </div>
       </section>

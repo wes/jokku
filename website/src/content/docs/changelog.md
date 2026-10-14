@@ -5,6 +5,13 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.17: Disk in jokku top
+
+October 13, 2026
+
+- **`jokku top` shows each server's disk.** The Nodes view has a DISK USED column, a bar with used and total, and the overview gives each server a disk bar.
+- **The Nodes view's columns line up.** A memory figure wider than its column pushed the rest of its row out of line, and the CPU figure sat against the memory bar. Every column is now as wide as its widest figure, with three spaces between columns. On a terminal too narrow for all of them, the addresses move to the line under the table.
+
 ## v0.8.16: Asleep isn't unhealthy
 
 October 13, 2026

@@ -1,6 +1,10 @@
 import { Link } from 'waku';
+import type { ReactNode } from 'react';
 import { ArrowRightIcon } from '../components/icons';
+import { ClusterDemo } from '../components/landing/cluster-demo';
+import { DatabaseDemo } from '../components/landing/database-demo';
 import { DokkuCompare } from '../components/landing/dokku';
+import { EdgeDemo } from '../components/landing/edge-demo';
 import { Features } from '../components/landing/features';
 import { HeroArt } from '../components/landing/hero-art';
 import { HeroDemo } from '../components/landing/hero-demo';
@@ -23,6 +27,37 @@ const STEPS = [
 ];
 
 const BUILT_ON = ['Firecracker', 'WireGuard', 'Caddy', 'BuildKit', 'SQLite'];
+
+type Fact = { title?: string; cmd?: string; text: ReactNode };
+
+const Cmd = ({ children }: { children: ReactNode }) => (
+  <code className="rounded-md bg-term px-1.5 py-0.5 font-mono text-[0.85em] [overflow-wrap:anywhere] text-term-fg">{children}</code>
+);
+
+const CLUSTER_FACTS: Fact[] = [
+  { cmd: 'jokku cluster:join-command', text: 'prints a one-liner. Run it on a new server and it joins the cluster over WireGuard.' },
+  { text: 'Apps spread across every server, and every server takes web traffic.' },
+  { text: 'A server that stops reporting is marked down within 30 seconds. A minute later its instances are running on the others.' },
+  { text: 'Volumes with backups are restored onto another server after five minutes, so their apps come back too.' },
+  {
+    cmd: 'jokku nodes:drain',
+    text: (
+      <>
+        empties a server for maintenance with no downtime, and <Cmd>jokku update</Cmd> updates every server, one at a time.
+      </>
+    ),
+  },
+];
+
+const EDGE_FACTS: Fact[] = [
+  { title: 'One command', cmd: 'jokku edge:add root@203.0.113.7', text: 'logs in over ssh, installs Jokku on the VPS and connects it.' },
+  { title: 'Nothing open at home', text: 'Your servers dial out over WireGuard. The edge reaches only what its routes need: not ssh, and not the rest of your network.' },
+  { title: 'Scanners stop at the edge', text: 'The firewall bans them by their own address before they touch your home connection, and your logs show every visitor’s real address.' },
+  { title: 'Quick over a slow upload', text: 'Each request goes straight to the server that runs the app, which compresses the response before it leaves home.' },
+  { title: 'Anything on your network', cmd: 'jokku external:create ha http://192.168.1.50:8123', text: 'gives Home Assistant, a NAS or Proxmox a domain, HTTPS and a login.' },
+  { title: 'Databases too', text: 'Expose a database through the edge for a desktop client, or keep it on your network only.' },
+];
+
 
 export default async function HomePage() {
   const stats = await releaseStats();
@@ -123,6 +158,62 @@ export default async function HomePage() {
         </div>
       </section>
 
+      {/* Clusters */}
+      <section className="relative overflow-hidden border-y border-line bg-surface/40">
+        <div className="pointer-events-none absolute -bottom-40 -left-20 h-[420px] w-[620px] rounded-full bg-[var(--glow)] blur-[120px]" />
+        <div className="relative mx-auto grid max-w-[88rem] gap-12 px-4 py-24 sm:px-6 sm:py-32 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:items-center lg:px-8">
+          <div>
+            <SectionHeading eyebrow="clusters" title="One server, or a rack of them.">
+              One server is a complete Jokku. Add another with one command and your apps spread across
+              both, over an encrypted network. When a server dies, its apps start on the others.
+            </SectionHeading>
+            <ul className="mt-8 space-y-3 text-[15px] leading-7 text-body">
+              {CLUSTER_FACTS.map((f) => (
+                <li key={f.cmd ?? (f.text as string)} className="flex gap-3">
+                  <span className="mt-[0.7em] size-1.5 shrink-0 rounded-full bg-accent" />
+                  <span>
+                    {f.cmd ? <Cmd>{f.cmd}</Cmd> : null} {f.text}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <Link to="/docs/cluster" className="mt-8 inline-flex items-center gap-2 text-[15px] font-medium text-accent hover:underline">
+              Add a server <ArrowRightIcon className="size-4" />
+            </Link>
+          </div>
+          <div className="min-w-0">
+            <ClusterDemo />
+          </div>
+        </div>
+      </section>
+
+      {/* Edges */}
+      <section className="mx-auto max-w-[88rem] px-4 py-24 sm:px-6 sm:py-32 lg:px-8">
+        <div className="flex flex-wrap items-end justify-between gap-8">
+          <SectionHeading eyebrow="edges" title="Serve from home. Open no ports.">
+            Run Jokku on the servers in your closet and put a $5 VPS in front of them. Your servers dial
+            out to the edge, and the edge serves your domains, with certificates, logins and a firewall
+            out where the internet is.
+          </SectionHeading>
+          <Link to="/docs/edges" className="inline-flex items-center gap-2 text-[15px] font-medium text-accent hover:underline">
+            Set up an edge <ArrowRightIcon className="size-4" />
+          </Link>
+        </div>
+        <div className="mt-14">
+          <EdgeDemo />
+        </div>
+        <dl className="mt-14 grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
+          {EDGE_FACTS.map((f) => (
+            <div key={f.title} className="min-w-0">
+              <dt className="text-[16px] font-semibold text-fg">{f.title}</dt>
+              <dd className="mt-2 text-[14.5px] leading-6 text-muted">
+                {f.cmd ? <Cmd>{f.cmd}</Cmd> : null} {f.text}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
       {/* Traffic */}
       <section className="relative overflow-hidden border-y border-line bg-surface/40">
         <div className="pointer-events-none absolute -top-40 right-0 h-[420px] w-[620px] rounded-full bg-[var(--glow)] blur-[120px]" />
@@ -141,6 +232,25 @@ export default async function HomePage() {
           <div className="mt-14">
             <TrafficDemo />
           </div>
+        </div>
+      </section>
+
+      {/* Databases */}
+      <section className="mx-auto max-w-[88rem] px-4 pt-24 sm:px-6 sm:pt-32 lg:px-8">
+        <div className="flex flex-wrap items-end justify-between gap-8">
+          <SectionHeading eyebrow="jokku top" title="See inside every database.">
+            Press{' '}
+            <kbd className="rounded border border-line-strong bg-elevated px-1.5 font-mono text-[14px] text-fg">8</kbd> for each
+            database’s connections, queries a second and how long they take: p50, p95 and p99 for MySQL
+            and Redis, the average for Postgres, and how often the cache answers. Pick one to see which
+            apps are connected and its slowest queries.
+          </SectionHeading>
+          <Link to="/docs/top#databases" className="inline-flex items-center gap-2 text-[15px] font-medium text-accent hover:underline">
+            Tour the Databases view <ArrowRightIcon className="size-4" />
+          </Link>
+        </div>
+        <div className="mt-14">
+          <DatabaseDemo />
         </div>
       </section>
 

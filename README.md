@@ -1,5 +1,10 @@
 # Jokku
 
+[![Latest release](https://img.shields.io/github/v/release/wes/jokku?label=release&color=e8963f)](https://github.com/wes/jokku/releases/latest)
+[![MIT license](https://img.shields.io/badge/license-MIT-e8963f)](LICENSE)
+[![Go](https://img.shields.io/github/go-mod/go-version/wes/jokku?color=e8963f)](go.mod)
+[![Docs at jokku.dev](https://img.shields.io/badge/docs-jokku.dev-e8963f)](https://jokku.dev)
+
 Jokku is an open source, self-hosted platform for deploying your apps,
 modeled on [Dokku](https://dokku.com). You `git push` an app that has a
 Dockerfile, and Jokku builds it, runs it and routes your domains to it, with
@@ -10,6 +15,33 @@ What's different: every app instance runs in its own lightweight
 of a container, and you can add servers with one command, so apps scale
 across a cluster. The commands are Dokku's, so if you know Dokku, you
 already know Jokku.
+
+![jokku top: the overview of a three-server cluster, then the Traffic view with every request flying across its app's lane to the instance that answered, then the Databases and Backups views](docs/images/jokku-top.gif)
+
+<sub>[`jokku top`](#watch-everything-name-change-incoming) on a three-server
+cluster, made up for the recording: the overview, then Traffic, Databases
+and Backups.</sub>
+
+- **`git push` to deploy** a Dockerfile, a [compose file](#deploy-a-compose-file)
+  or a [registry image](#deploy-an-image). Deploys have no downtime, and if the
+  new version doesn't start, the old one keeps serving.
+- **A microVM for every instance**: each runs in its own Firecracker virtual
+  machine, with its own kernel, instead of a container.
+- **A cluster with one command per server**: apps spread across them, and if
+  a server dies, its apps start on the others.
+- **HTTPS** with Let's Encrypt certificates, renewed for you.
+- **[Databases](#databases)**: Postgres, MySQL and Redis, linked to your apps
+  with one command.
+- **[Backups](#back-up-volumes)** of volumes, databases and the cluster itself
+  to any S3-compatible bucket, encrypted, and restored onto another server
+  when one dies.
+- **[Serving from home](#serving-from-home-with-no-open-port)** through a small
+  public edge, with no open ports at home and a
+  [firewall](https://jokku.dev/docs/firewall) that bans scanners.
+- **Sleep when idle**: an app can stop after a while without requests and wake
+  on the next one.
+- **`jokku top`**: servers, apps, live traffic, databases, backups and the
+  firewall, in your terminal.
 
 > **Status: early development.** `git push` builds your Dockerfile and runs
 > it in Firecracker microVMs behind the proxy, with zero-downtime deploys,
@@ -559,6 +591,7 @@ With more than one server, update the first (control) server, then run
 
 ## Learn more
 
+- [jokku.dev](https://jokku.dev): the docs, from the [quickstart](https://jokku.dev/docs/quickstart) to [coming from Dokku](https://jokku.dev/docs/dokku)
 - [Commands](docs/commands.md): every command and what works today
 - [Architecture](docs/architecture.md): how Jokku works under the hood
 

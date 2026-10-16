@@ -425,11 +425,13 @@ func (a *Applier) Apply(_ context.Context, z Zone) error {
 }
 
 // Ready reports whether the service answers on addr (the node's bridge
-// address). The answer is cached for a few seconds.
+// address). A yes is kept for ten seconds; a no is asked again after one,
+// since at boot the service answers moments after the bridge appears, and
+// instances wait for it.
 func (a *Applier) Ready(addr string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if time.Since(a.checked) < 10*time.Second {
+	if since := time.Since(a.checked); since < time.Second || a.ok && since < 10*time.Second {
 		return a.ok
 	}
 	a.ok = Ping(listenAddr(addr), 500*time.Millisecond) == nil

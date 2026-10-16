@@ -36,7 +36,9 @@ func (stubDeployer) Logs(context.Context, string, types.LogOptions, func(string)
 func (stubDeployer) RoutesChanged() {}
 
 // startAPI serves a fresh API on a unix socket and points the CLI at it.
-func startAPI(t *testing.T) {
+// startAPI serves the API for the CLI to reach, its controller changed by
+// each of with first.
+func startAPI(t *testing.T, with ...func(*cluster.Controller)) {
 	t.Helper()
 	// Unix socket paths are limited to ~104 bytes, so avoid t.TempDir's long
 	// names.
@@ -51,15 +53,17 @@ func startAPI(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctl := &cluster.Controller{Store: st, Log: log, Self: "test", ClusterCIDR: netip.MustParsePrefix("10.210.0.0/16")}
+	for _, f := range with {
+		f(ctl)
+	}
 	srv := api.New(api.Config{
 		Store:    st,
 		Git:      &gitrepo.Manager{Dir: filepath.Join(dir, "git"), Exe: "/usr/local/bin/jokku"},
 		Deployer: stubDeployer{},
 		Log:      log,
 		DataDir:  dir,
-		Cluster: cluster.New(&cluster.Controller{
-			Store: st, Log: log, Self: "test", ClusterCIDR: netip.MustParsePrefix("10.210.0.0/16"),
-		}),
+		Cluster:  cluster.New(ctl),
 	})
 	sock := filepath.Join(dir, "s.sock")
 	ln, err := net.Listen("unix", sock)

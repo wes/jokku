@@ -24,6 +24,7 @@ Switch with the number keys, or with tab:
 | `7` | Backups | What is and isn't backed up, and the switches to change it |
 | `8` | Databases | Inside each database: connections, queries a second, how long they take |
 | `9` | Firewall | The addresses banned for scanning, those close to a ban, and what was blocked, site by site |
+| `0` | Network | How fast the links between your servers carry data and answer pings, and which server stands out |
 
 On a server or app, press `enter` to see its instances, and `l` for an app's logs. `esc` goes back, `?` shows help and `q` quits.
 
@@ -161,6 +162,37 @@ Press `9` for **Firewall**: what the [firewall](/docs/firewall) in front of your
 At the top are the rules and the counts for the span: every request the firewall saw, those it blocked from banned addresses, those it slowed for coming too fast, the bans it made, and the pages not found that count toward them. `w` switches between the last minute, hour and day.
 
 Then the banned addresses, newest first: the site whose pages not found got each one banned, how long ago and how long it has left, the requests it has made since, which proxies banned it, and the last pages it asked for. `u` lifts the selected ban. Under them are the addresses getting close to a ban, those slowed in the last hour, and each site's counts.
+
+## Network
+
+Press `0` for **Network**: the latest test of the links between your servers, which you start with `t` (twice, since it loads each link in turn). Each server sends to each other one as fast as it can for three seconds and pings it 100 times, one link at a time, over the same encrypted network your apps use.
+
+```console
+  Tested 4m ago in 58s · 4 nodes, 12 links over the mesh, 3s each
+  A link here usually carries 896 Mbit/s and answers in 0.98 ms  ·  server-3 sends at 10% of the usual speed
+
+  THROUGHPUT  Mbit/s, from each row's node to each column's
+                   server-1  server-2  server-3  server-4
+  from  server-1          ·       896        94       893
+        server-2        895         ·        94       896
+        server-3         94        94         ·        94
+        server-4        896       894        94         ·
+
+  ROUND TRIP  ms on average over 100 pings, and how many got no answer
+                   server-1  server-2  server-3  server-4
+  from  server-1          ·      0.98      1.02      0.97
+        server-2       0.99         ·      1.05    0.98 1✗
+        server-3       1.01      1.04         ·      1.03
+        server-4       0.96      0.97      1.02         ·
+
+  NODE         SENDS  RECEIVES  ROUND TRIP   LOST   VS. 2D AGO
+  server-1       894       896     0.98 ms      0   same speed, same ms
+  server-2       896       895     0.98 ms      1   same speed, same ms
+  server-3        94        94     1.03 ms      0   -89% speed, +0.04 ms    sends at 10% of the usual speed; receives at 10% of the usual speed
+  server-4       894       896     0.97 ms      1   same speed, same ms
+```
+
+A link that is noticeably slower than the usual one, or lost a ping, is amber; one at half the usual speed or less, or losing more than 2% of its pings, is red. A server with a bad cable or switch port makes every link it's on look wrong, so when most of a server's links do, it's the one named at the top, and the others' links to it don't count against them. The last column compares each server with the test before, so test before you change your network (a new switch, say) and again after. `jokku network:test` and `jokku network:report` do the same from the command line.
 
 ## Events without the dashboard
 

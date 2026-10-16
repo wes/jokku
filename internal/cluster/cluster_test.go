@@ -637,6 +637,9 @@ func (h *harness) startNode(name, token, agentToken, dir string, plane agent.Con
 		Updater: n.updater, Latency: n.latency,
 		GCArtifacts: name != "control", Local: name == "control", ReconcileEvery: 100 * time.Millisecond, ReportEvery: 200 * time.Millisecond, UpFor: time.Second,
 		Metrics: func() types.NodeMetrics { return types.NodeMetrics{CPUs: 4, MemoryMB: 4096} },
+		Ping: func(_ context.Context, host string, count int) (types.PingStats, error) {
+			return types.PingStats{Sent: count, Received: count, Min: 0.2, Avg: 0.3, Max: 0.6, Jitter: 0.05}, nil
+		},
 	})
 	handler := a.Handler(n.agentToken)
 	if name == "control" {

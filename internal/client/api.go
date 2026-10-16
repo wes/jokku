@@ -651,6 +651,19 @@ func (c *Client) UnexposeDatabase(ctx context.Context, engine, name string) erro
 	return c.call(ctx, http.MethodDelete, databasePath(engine, name)+"/expose", nil, nil)
 }
 
+// NetTests is the network test that is running, if any, and the latest
+// finished ones, newest first.
+func (c *Client) NetTests(ctx context.Context) (*types.NetTests, error) {
+	var out types.NetTests
+	return &out, c.call(ctx, http.MethodGet, "/v1/network/tests", nil, &out)
+}
+
+// StartNetTest starts testing the network between the nodes.
+func (c *Client) StartNetTest(ctx context.Context, req types.NetTestRequest) (*types.NetTestProgress, error) {
+	var out types.NetTestProgress
+	return &out, c.call(ctx, http.MethodPost, "/v1/network/tests", req, &out)
+}
+
 // Firewall is what the firewall is doing.
 func (c *Client) Firewall(ctx context.Context) (*types.Firewall, error) {
 	var out types.Firewall

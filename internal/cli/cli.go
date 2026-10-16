@@ -139,6 +139,7 @@ func init() {
 	register(databaseCommands()...)
 	register(sshKeysCommands...)
 	register(nodesCommands...)
+	register(networkCommands...)
 	register(edgeCommands...)
 	register(externalCommands...)
 	register(httpAuthCommands...)

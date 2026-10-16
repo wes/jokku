@@ -35,10 +35,12 @@ const (
 	backupsView
 	databasesView
 	firewallView
+	networkView
 	logsView
 )
 
-var tabNames = []string{"Overview", "Nodes", "Apps", "Instances", "Events", "Traffic", "Backups", "Databases", "Firewall"}
+// tabNames are the views' tabs, keys 1 to 9 then 0.
+var tabNames = []string{"Overview", "Nodes", "Apps", "Instances", "Events", "Traffic", "Backups", "Databases", "Firewall", "Network"}
 
 // Run starts the dashboard and blocks until the user quits.
 func Run(ctx context.Context, api *client.Client, in io.Reader, out io.Writer) error {
@@ -101,6 +103,11 @@ type model struct {
 	fw    *types.Firewall
 	fwErr error
 	fwWin int // the span its counts are for: dbWindows
+
+	// The Network view (network.go).
+	nt        *types.NetTests
+	ntErr     error
+	ntConfirm time.Time // when t was pressed once: t again starts a test
 }
 
 type statusMsg struct {
@@ -196,6 +203,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flash(msg.addr+" wasn't banned any more", false)
 		}
 		return m, m.fetchFirewall()
+	case netTestsMsg:
+		if msg.err != nil {
+			m.ntErr = msg.err
+		} else {
+			m.nt, m.ntErr = msg.nt, nil
+		}
+	case netStartMsg:
+		if msg.err != nil {
+			m.flash(msg.err.Error(), true)
+		} else {
+			m.flash("✔ testing the network", false)
+		}
+		return m, m.fetchNetTests()
 	case tickMsg:
 		cmds := []tea.Cmd{m.fetch(), tick()}
 		switch m.view {
@@ -211,6 +231,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.fetchDBStats())
 		case firewallView:
 			cmds = append(cmds, m.fetchFirewall())
+		case networkView:
+			cmds = append(cmds, m.fetchNetTests())
 		}
 		return m, tea.Batch(cmds...)
 	case tea.KeyMsg:
@@ -230,6 +252,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if before != firewallView && m.view == firewallView {
 			cmds = append(cmds, m.fetchFirewall())
+		}
+		if before != networkView && m.view == networkView {
+			cmds = append(cmds, m.fetchNetTests())
 		}
 		return m, tea.Batch(cmds...)
 	case requestsMsg, trafficEndMsg, frameMsg, trafficRetryMsg:
@@ -259,6 +284,11 @@ func (m *model) key(k string) tea.Cmd {
 			return cmd
 		}
 	}
+	if m.view == networkView {
+		if cmd, ok := m.networkKey(k); ok {
+			return cmd
+		}
+	}
 	switch k {
 	case "q", "ctrl+c":
 		return tea.Quit
@@ -267,19 +297,21 @@ func (m *model) key(k string) tea.Cmd {
 	case "r":
 		return m.fetch()
 	case "tab", "right":
-		if m.view < firewallView {
+		if m.view < networkView {
 			m.view++
-		} else if m.view == firewallView {
+		} else if m.view == networkView {
 			m.view = overview
 		}
 	case "shift+tab", "left":
-		if m.view > overview && m.view <= firewallView {
+		if m.view > overview && m.view <= networkView {
 			m.view--
 		} else if m.view == overview {
-			m.view = firewallView
+			m.view = networkView
 		}
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		m.view = view(k[0] - '1')
+	case "0":
+		m.view = networkView
 	case "w":
 		if m.view == databasesView {
 			m.dbWin = (m.dbWin + 1) % len(dbWindows)

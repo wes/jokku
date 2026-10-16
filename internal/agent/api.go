@@ -14,8 +14,9 @@ import (
 
 // Handler is the agent's API. It serves the control node, which presents
 // token: this node's app logs, sessions with its VMs (jokku enter, volume
-// copies) and volume backups. It also serves volume disks to the node taking one over,
-// which presents that move's token. With no token, only the latter.
+// copies), volume backups and network tests. It also serves volume disks to
+// the node taking one over, which presents that move's token, and takes in
+// other nodes' network test traffic. With no token, only the latter two.
 func (a *Agent) Handler(token string) http.Handler {
 	mux := http.NewServeMux()
 	authorized := func(next http.HandlerFunc) http.HandlerFunc {
@@ -48,9 +49,13 @@ func (a *Agent) Handler(token string) http.Handler {
 		}))
 		mux.HandleFunc("POST /v1/instances/{id}/session", authorized(a.serveSession))
 		mux.HandleFunc("POST /v1/volumes/{id}/backup", authorized(a.serveBackup))
+		mux.HandleFunc("POST /v1/nettest/probe", authorized(a.serveProbe))
 	}
 	mux.HandleFunc("POST /v1/volumes/{id}/copy", a.serveVolume)
 	mux.HandleFunc("GET /v1/contact", a.serveContact)
+	// Throughput from other nodes in a network test. Only nodes reach this
+	// port (see mesh.ProtectedPorts), and all it does is count bytes.
+	mux.HandleFunc("POST /v1/nettest/sink", a.serveSink)
 	return mux
 }
 

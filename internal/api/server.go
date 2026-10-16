@@ -137,6 +137,8 @@ func (s *Server) routes() {
 	m.HandleFunc("PATCH /v1/firewall", s.patchFirewall)
 	m.HandleFunc("PATCH /v1/apps/{app}/firewall", s.patchFirewall)
 	m.HandleFunc("POST /v1/firewall/unban", s.unbanFirewall)
+	m.HandleFunc("GET /v1/network/tests", s.getNetTests)
+	m.HandleFunc("POST /v1/network/tests", s.startNetTest)
 	m.HandleFunc("GET /v1/backups/overview", s.backupsOverview)
 	m.HandleFunc("GET /v1/backups/cluster", s.listClusterBackups)
 	m.HandleFunc("PUT /v1/backups/cluster", s.setClusterBackup)

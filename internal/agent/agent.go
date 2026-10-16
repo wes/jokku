@@ -119,6 +119,9 @@ type Config struct {
 	Local bool
 	// Metrics measures the host; nil reads /proc.
 	Metrics func() types.NodeMetrics
+	// Ping measures round trips to a host for network tests; nil sends
+	// ICMP echoes (Ping).
+	Ping func(ctx context.Context, host string, count int) (types.PingStats, error)
 	// ReconcileEvery and ReportEvery default to 2s and 5s.
 	ReconcileEvery, ReportEvery time.Duration
 	// UpFor is how long an instance checked by staying up (no port) must
@@ -794,7 +797,7 @@ func (a *Agent) reportLoop(ctx context.Context) {
 func (a *Agent) Status() *types.NodeStatus {
 	st := &types.NodeStatus{
 		Protocol: types.ProtocolVersion, Version: a.Version, CanRun: a.canRun, Instances: []types.InstanceStatus{},
-		Features: []string{types.FeatureVolumes, types.FeatureRelay, types.FeatureStreams, types.FeatureFirewall}, Volumes: a.volumeStatus(), UpdateFailed: a.updateFailure(),
+		Features: []string{types.FeatureVolumes, types.FeatureRelay, types.FeatureStreams, types.FeatureFirewall, types.FeatureNetTest}, Volumes: a.volumeStatus(), UpdateFailed: a.updateFailure(),
 	}
 	if a.Updater != nil {
 		st.Features = append(st.Features, types.FeatureUpdate)

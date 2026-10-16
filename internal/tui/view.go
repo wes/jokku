@@ -46,6 +46,8 @@ func (m *model) View() string {
 			body = m.databasesView()
 		case firewallView:
 			body = m.firewallView()
+		case networkView:
+			body = m.networkView()
 		case logsView:
 			body = m.logView()
 		}
@@ -110,33 +112,53 @@ func (m *model) header() string {
 	return strings.Join(parts, sDim.Render("  ·  "))
 }
 
+// tabs is the row of views. On a terminal too narrow for every name, the
+// tabs lose their padding, then every name but the current view's.
 func (m *model) tabs() string {
-	var out []string
-	for i, name := range tabNames {
-		label := fmt.Sprintf("%d %s", i+1, name)
-		if view(i) == m.view || (m.view == logsView && view(i) == m.back) {
-			out = append(out, sTabOn.Render(label))
-		} else {
-			out = append(out, sTab.Render(label))
+	for compact := 0; ; compact++ {
+		var out []string
+		for i, name := range tabNames {
+			label := fmt.Sprintf("%d %s", (i+1)%10, name)
+			on := view(i) == m.view || (m.view == logsView && view(i) == m.back)
+			if compact == 2 && !on {
+				label = fmt.Sprint((i + 1) % 10)
+			}
+			style := sTab
+			if on {
+				style = sTabOn
+			}
+			if compact > 0 && !on {
+				style = style.Padding(0, 0)
+			}
+			out = append(out, style.Render(label))
+		}
+		if m.view == logsView {
+			out = append(out, sTabOn.Render("logs: "+m.logApp))
+		}
+		sep := ""
+		if compact > 0 {
+			sep = " "
+		}
+		row := strings.Join(out, sep)
+		if compact == 2 || m.width == 0 || lipgloss.Width(row) <= m.width {
+			return row
 		}
 	}
-	if m.view == logsView {
-		out = append(out, sTabOn.Render("logs: "+m.logApp))
-	}
-	return strings.Join(out, "")
 }
 
 func (m *model) footer() string {
-	keys := "1-9/tab views  ↑↓ move  enter drill in  l logs  esc back  r refresh  ? help  q quit"
+	keys := "0-9/tab views  ↑↓ move  enter drill in  l logs  esc back  r refresh  ? help  q quit"
 	switch m.view {
 	case databasesView:
-		keys = "w minute/hour/day  ↑↓ move  enter instances  l logs  1-9 views  ? help  q quit"
+		keys = "w minute/hour/day  ↑↓ move  enter instances  l logs  0-9 views  ? help  q quit"
 	case firewallView:
-		keys = "w minute/hour/day  ↑↓ move  u unban  1-9 views  ? help  q quit"
+		keys = "w minute/hour/day  ↑↓ move  u unban  0-9 views  ? help  q quit"
 	case trafficView:
-		keys = "1-9/tab views  p pause  c clear  f effects  ? help  q quit"
+		keys = "0-9/tab views  p pause  c clear  f effects  ? help  q quit"
+	case networkView:
+		keys = "t test the network  0-9/tab views  ? help  q quit"
 	case backupsView:
-		keys = "space on/off  b back up now  s schedule  a auto-restore  ↑↓ move  1-9 views  ? help  q quit"
+		keys = "space on/off  b back up now  s schedule  a auto-restore  ↑↓ move  0-9 views  ? help  q quit"
 		if m.width < 100 {
 			keys = "space on/off  b back up  s schedule  a auto-restore  ? help  q quit"
 		}
@@ -173,6 +195,10 @@ const helpText = `jokku top shows the cluster live, refreshed every two seconds.
                 a ban or slowed for too many requests a second, and what was
                 blocked, site by site. w switches between the last minute,
                 hour and day; u lifts the selected ban
+  0 Network     how fast the links between the nodes carry data and answer
+                pings, the nodes that stand out, and how each compares with
+                the test before (a new switch, say). t, twice, tests every
+                link again: each is loaded in turn for a few seconds
 
   enter on a node or app shows its instances; l shows an app's logs;
   esc goes back. Press any key to close this help.`

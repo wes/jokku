@@ -330,7 +330,33 @@ the last three minutes keeps the address it talks from rather than being
 sent back to its configured endpoint: a node behind NAT may come from any
 port. Edges have no endpoint for their peers at all (see [Edges](#edges)).
 The firewall is applied with one `iptables-restore --noflush`, so no packet
-meets a half-written chain.
+meets a half-written chain. A peer whose endpoint has no usable address (a
+control node that started before its network registers `:51820`) is set up
+without one, to be reached when it dials in; WireGuard would otherwise
+reject the whole change and leave the interface down.
+
+### Network tests
+
+`network:test` (or `t` in `jokku top`'s Network view) measures every ordered
+pair of nodes, edges left out, one link at a time so each carries only its
+own test. The control node asks the sending node's agent
+(`POST /v1/nettest/probe`, with its agent token) to send 100 ICMP echoes
+10ms apart to the receiving node's mesh address, then to push as much TCP
+as it can for three seconds (`--seconds`) into the receiver's sink
+(`POST /v1/nettest/sink`), which counts what arrives from its first byte to
+its last. The sink needs no token: only nodes reach 7444 over the mesh, and
+all it does is count. Everything travels over the mesh, the way apps reach
+each other, so a slow link shows both a bad cable or switch port and a node
+too busy to encrypt.
+
+The control node keeps the last ten tests in `nettests.json` in its data
+directory, so a test made before a change to the network can be compared
+with one made after it, and records an event per test. `internal/nettest`
+reads a test the same way for the CLI, `jokku top` and that event: a
+healthy link is the median, over nodes, of each node's best link, and a
+node is blamed when most of its links look wrong (half the usual speed,
+lost echoes, round trips a millisecond and twice the usual), the clearest
+case first, its links then left out when judging the rest.
 
 ### Internal DNS
 
@@ -1080,7 +1106,7 @@ stays the stable entry point, including for versions that predate the command.
 | 7443/tcp | control | HTTPS API (join, tokens) |
 | 51820/udp | all nodes | WireGuard |
 | 53/udp, 53/tcp | VM bridge only | `jokku-dns`: internal names for microVMs |
-| 7444/tcp | mesh only | agent API: log streams, sessions with VMs, volume copies between nodes |
+| 7444/tcp | mesh only | agent API: log streams, sessions with VMs, volume copies between nodes, network tests |
 
 An edge needs only 80 and 443/tcp and 443 and 51820/udp open; the nodes behind it
 need no open port at all.

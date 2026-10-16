@@ -25,6 +25,17 @@ Names resolve to the addresses of the instances that should be running, preferri
 > [!TIP]
 > For an app that only other apps should reach, such as a database, turn its public proxy off with `jokku proxy:disable <app>`.
 
+## Testing the network
+
+```sh
+jokku network:test
+jokku network:report
+```
+
+`network:test` measures every link between your servers, one at a time: each server sends to each other one as fast as it can for three seconds (`--seconds` for longer) and pings it 100 times, over the same encrypted network your apps use. It takes about four seconds a link, so a minute and a half for five servers, and the links are busy while it runs. It prints each link as it goes, then the table: throughput and round trip for every pair, and each server's figures against the test before. A server whose links are mostly slow or losing pings, the sign of a bad cable or switch port, is named. Edges aren't tested: their links cross the internet.
+
+The control server keeps the last ten tests, so you can test before you change your network and compare after. `jokku top` shows the latest in its [Network view](/docs/top#network).
+
 ## Under the hood
 
 - Each server runs a small DNS server for its microVMs, `jokku-dns`, separate from the main daemon, so updating Jokku never interrupts lookups. Every other name goes to the server's own resolvers.

@@ -62,6 +62,7 @@ type Controller struct {
 	rollout     rollout
 	dbstats     dbStats
 	fw          fwTracker
+	nettest     netTester
 }
 
 func New(c *Controller) *Controller {

@@ -5,6 +5,14 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.19: Test your network
+
+October 16, 2026
+
+- **`jokku top` has a Network view** (key `0`). Press `t` twice and it tests every link between your servers, one at a time: each server sends to each other one as fast as it can for three seconds and pings it 100 times, over the encrypted network your apps use. It shows throughput and round trips for every pair, names a server whose links are mostly slow or losing pings (a bad cable or switch port, say), and compares each server with the test before.
+- **[`jokku network:test` and `network:report`](/docs/networking#testing-the-network)** do the same from the command line. The control server keeps the last ten tests, so you can test before you change your network and compare after.
+- On a terminal too narrow for every tab, `jokku top`'s tabs shrink to fit, and keep the name of the view you're on.
+
 ## v0.8.18: Servers that start before their network
 
 October 16, 2026

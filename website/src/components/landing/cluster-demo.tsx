@@ -27,7 +27,7 @@ const BASE: State = {
     { key: 's2', app: 'shop', name: 'web.2', node: 2, state: 'up' },
   ],
   events: [
-    { at: -3600, kind: 'node', who: 'server-3', msg: 'server-3 is updated to v0.8.17' },
+    { at: -3600, kind: 'node', who: 'server-3', msg: 'server-3 is updated to v0.8.18' },
     { at: -86400 * 2, kind: 'node', who: 'server-3', msg: 'server-3 joined the cluster (8 CPUs, 16384 MiB)' },
   ],
 };

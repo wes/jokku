@@ -148,7 +148,7 @@ func (c *Controller) CreateJoinToken(ctx context.Context, ttl time.Duration, reu
 		env = "JOKKU_VERSION=" + c.Version + " " // the new node must run the same version
 	}
 	cmd := fmt.Sprintf("curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | sudo %ssh -s -- --join %s --token %s",
-		version.Repo, env, c.Address, token)
+		version.Repo, env, c.address(), token)
 	return &types.JoinToken{Token: token, ExpiresAt: expires, Command: cmd}, nil
 }
 

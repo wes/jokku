@@ -57,6 +57,19 @@ type Mesh struct {
 	KeyFile string // the private key, created on first use
 }
 
+// EndpointError names the peers Sync set up with no endpoint to dial,
+// since theirs has no address (a node that started before its network was
+// up, say) or doesn't resolve. The rest of the mesh is up, and each of them
+// is reached as soon as it dials this node: a single bad endpoint must not
+// keep the interface down.
+type EndpointError struct {
+	Peers []string // name (endpoint)
+}
+
+func (e *EndpointError) Error() string {
+	return "no usable endpoint for " + strings.Join(e.Peers, ", ") + "; waiting for them to connect"
+}
+
 // LoadOrCreateKey returns this node's WireGuard private key.
 func LoadOrCreateKey(path string) (wgtypes.Key, error) {
 	if b, err := os.ReadFile(path); err == nil {
@@ -117,7 +130,7 @@ func (m *Mesh) Sync(ctx context.Context, self types.NodeIdentity, peers []types.
 			current[p.PublicKey] = p
 		}
 	}
-	cfg, err := peerConfig(key, peers, current, time.Now())
+	cfg, unusable, err := peerConfig(key, peers, current, time.Now())
 	if err != nil {
 		return err
 	}
@@ -138,28 +151,35 @@ func (m *Mesh) Sync(ctx context.Context, self types.NodeIdentity, peers []types.
 		}
 	}
 	pruneRoutes(ctx, self.MeshIP, routes)
-	return firewall(ctx, self, peers, access)
+	if err := firewall(ctx, self, peers, access); err != nil {
+		return err
+	}
+	if len(unusable) > 0 {
+		return &EndpointError{Peers: unusable}
+	}
+	return nil
 }
 
 // peerConfig is the device change that makes its peers match peers.
 // Existing peers are updated in place; one that talked recently keeps the
-// address it talks from.
-func peerConfig(key wgtypes.Key, peers []types.Peer, current map[wgtypes.Key]wgtypes.Peer, now time.Time) (wgtypes.Config, error) {
+// address it talks from. A peer whose endpoint can't be dialed is set up
+// without one, and listed in unusable.
+func peerConfig(key wgtypes.Key, peers []types.Peer, current map[wgtypes.Key]wgtypes.Peer, now time.Time) (cfg wgtypes.Config, unusable []string, err error) {
 	port := Port
 	ka := keepalive
-	cfg := wgtypes.Config{PrivateKey: &key, ListenPort: &port}
+	cfg = wgtypes.Config{PrivateKey: &key, ListenPort: &port}
 	want := map[wgtypes.Key]bool{}
 	for _, p := range peers {
 		pub, err := wgtypes.ParseKey(p.PublicKey)
 		if err != nil {
-			return cfg, fmt.Errorf("peer %s: %w", p.Name, err)
+			return cfg, nil, fmt.Errorf("peer %s: %w", p.Name, err)
 		}
 		want[pub] = true
 		allowed := []net.IPNet{}
 		for _, s := range append([]string{p.Subnet}, p.Routes...) {
 			_, ipnet, err := net.ParseCIDR(s)
 			if err != nil {
-				return cfg, fmt.Errorf("peer %s: %w", p.Name, err)
+				return cfg, nil, fmt.Errorf("peer %s: %w", p.Name, err)
 			}
 			allowed = append(allowed, *ipnet)
 		}
@@ -167,11 +187,13 @@ func peerConfig(key wgtypes.Key, peers []types.Peer, current map[wgtypes.Key]wgt
 		if p.Endpoint != "" {
 			cur, known := current[pub]
 			if !known || cur.Endpoint == nil || now.Sub(cur.LastHandshakeTime) > roamGrace {
-				ep, err := net.ResolveUDPAddr("udp", p.Endpoint)
-				if err != nil {
-					return cfg, fmt.Errorf("peer %s endpoint %s: %w", p.Name, p.Endpoint, err)
+				// WireGuard rejects the whole change over one endpoint
+				// without an address (":51820" resolves to nil).
+				if ep, err := net.ResolveUDPAddr("udp", p.Endpoint); err != nil || ep.IP == nil || ep.IP.IsUnspecified() {
+					unusable = append(unusable, fmt.Sprintf("%s (%s)", p.Name, p.Endpoint))
+				} else {
+					pc.Endpoint = ep
 				}
-				pc.Endpoint = ep
 			}
 		}
 		cfg.Peers = append(cfg.Peers, pc)
@@ -181,7 +203,7 @@ func peerConfig(key wgtypes.Key, peers []types.Peer, current map[wgtypes.Key]wgt
 			cfg.Peers = append(cfg.Peers, wgtypes.PeerConfig{PublicKey: pub, Remove: true})
 		}
 	}
-	return cfg, nil
+	return cfg, unusable, nil
 }
 
 // peerRoutes are the extra routes into the mesh: external apps' targets on

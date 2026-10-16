@@ -5,6 +5,14 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.18: Servers that start before their network
+
+October 16, 2026
+
+- **A control server that starts before its network still gives the others its address.** If the network took longer to come up than the system waits for it, the control server recorded no address at all. Any server that restarted after that couldn't set up its encrypted link to the others, so its apps, and the databases other servers' apps use, were out of reach while every server still read "ready". The control server now uses its last known address until it finds its own, and keeps following it if it changes.
+- **One unusable address no longer takes a server's whole network down.** A server that can't dial one of the others now connects to the rest. It waits for that one to connect instead, and names it in its log.
+- **Restarting Jokku doesn't stop databases anymore.** Restarting it on a server, to update it for example, stopped the apps with [auto-restored volumes](/docs/backups#when-a-server-dies) for up to half a minute while the server checked that it wasn't cut off. Running apps are now left alone until the control server answers, which takes a moment. The control server never stops its own apps.
+
 ## v0.8.17: Disk in jokku top
 
 October 13, 2026

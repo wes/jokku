@@ -401,6 +401,48 @@ func TestControlOutageKeepsVolumeApps(t *testing.T) {
 	}
 }
 
+// Restarting jokku on a node, as an update does, leaves an app using an
+// auto-restored volume running: the agent that just started doesn't take
+// itself to be cut off before its first poll, which answers at once, and
+// the control node's never does. (One did, stopping a database for half a
+// minute on every restart.)
+func TestRestartKeepsVolumeApps(t *testing.T) {
+	for _, on := range []string{"w1", "control"} {
+		t.Run(on, func(t *testing.T) {
+			h := newHarness(t)
+			h.join("w1")
+			h.waitReady(2)
+			undo := h.onlyOn(on)
+			h.deployWith("db", 1, h.withVolume("db", "data"))
+			undo()
+			h.backedUp(filepath.Join(t.TempDir(), "bucket"), h.volume("db", "data"), 0)
+			in := h.web1("db")
+			eventually(t, 10*time.Second, "db on "+on, func() error { return h.healthy("db", on, "") })
+			// The restarted agent starts from the state it cached.
+			eventually(t, 10*time.Second, "the volume known to be auto-restored", func() error {
+				if b, _ := os.ReadFile(filepath.Join(h.nodes[on].dir, "agent-state.json")); !bytes.Contains(b, []byte(`"auto_restore":true`)) {
+					return errFmt("not yet")
+				}
+				return nil
+			})
+
+			h.restart(on)
+			time.Sleep(2 * agent.FenceAfter)
+			eventually(t, 10*time.Second, "db still on "+on, func() error { return h.healthy("db", on, "") })
+			rt := h.nodes[on].rt
+			rt.mu.Lock()
+			stops := rt.stops["db"]
+			rt.mu.Unlock()
+			if stops != 0 {
+				t.Errorf("db was stopped %d times while %s restarted", stops, on)
+			}
+			if got := h.web1("db"); got.ID != in.ID {
+				t.Errorf("db was replaced: %s, then %s", in.ID, got.ID)
+			}
+		})
+	}
+}
+
 // A volume whose disk goes missing is restored from its latest backup, where
 // it is.
 func TestMissingDiskIsRestored(t *testing.T) {

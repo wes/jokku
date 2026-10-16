@@ -30,11 +30,17 @@ var (
 	FenceCheckEvery = 5 * time.Second
 )
 
+// firstPollTimeout bounds this agent's first poll, which asks for the state
+// as it is and so answers at once: until it answers or fails, instances
+// found running with fenced volumes are left as they are.
+var firstPollTimeout = 10 * time.Second
+
 // fence is what this node knows about its contact with the control node.
 type fence struct {
 	mu        sync.Mutex
 	heard     time.Time // last answer from the control node
 	etag      string    // the state it confirmed then
+	polled    bool      // the first poll since this agent started answered or failed
 	checked   bool      // peers were asked since contact was lost
 	cutOff    bool      // and said this node is the one cut off
 	announced bool
@@ -45,7 +51,14 @@ type fence struct {
 // FenceAfter.
 func (a *Agent) heard(etag string) {
 	a.fence.mu.Lock()
-	a.fence.heard, a.fence.etag = time.Now(), etag
+	a.fence.heard, a.fence.etag, a.fence.polled = time.Now(), etag, true
+	a.fence.mu.Unlock()
+}
+
+// pollFailed records that a poll got no answer.
+func (a *Agent) pollFailed() {
+	a.fence.mu.Lock()
+	a.fence.polled = true
 	a.fence.mu.Unlock()
 }
 
@@ -63,27 +76,42 @@ func (a *Agent) serveContact(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(c)
 }
 
-// mayRunFenced says whether instances using volumes that would be restored
-// elsewhere may run, applying state etag: while the control node answers
-// and confirmed that state (not an older one a pass is still applying), or
-// when it seems to be down for every node. Until that is known (just after
-// starting, say), not.
-func (a *Agent) mayRunFenced(etag string) bool {
+// mayRunFenced says whether an instance using volumes that would be
+// restored elsewhere may run, applying state etag: while the control node
+// answers, or when it seems to be down for every node. Until that is known,
+// one that isn't running isn't started.
+//
+// One that is running is only stopped when this node may be cut off: not
+// because a pass is still applying an older state than the control node's
+// latest (the next pass applies that), and not by an agent that just
+// started (jokku restarted, or was updated) before its first poll, which
+// answers at once: the agent before it let the instance run. Starting one
+// waits for the control node to confirm the state that says to.
+func (a *Agent) mayRunFenced(etag string, running bool) bool {
 	a.fence.mu.Lock()
 	defer a.fence.mu.Unlock()
-	if time.Since(a.fence.heard) < FenceAfter {
-		return etag == a.fence.etag
+	switch {
+	case time.Since(a.fence.heard) < FenceAfter:
+		return running || etag == a.fence.etag
+	case !a.fence.polled:
+		return running
 	}
 	return a.fence.checked && !a.fence.cutOff
 }
 
 // fenceLoop asks the other nodes, while the control node doesn't answer,
-// whether they still hear from it.
+// whether they still hear from it. Not before this agent's first poll: they
+// would say they do, the control node having answered them just before it
+// started. Not at all on the control node, whose control plane runs in the
+// same process.
 func (a *Agent) fenceLoop(ctx context.Context) {
+	if a.Local {
+		return
+	}
 	client := &http.Client{Timeout: 3 * time.Second}
 	for {
 		a.fence.mu.Lock()
-		lost := time.Since(a.fence.heard) >= FenceAfter
+		lost := a.fence.polled && time.Since(a.fence.heard) >= FenceAfter
 		if !lost {
 			a.fence.checked, a.fence.cutOff = false, false
 			if a.fence.announced {
@@ -165,8 +193,10 @@ func (a *Agent) askPeers(ctx context.Context, client *http.Client) bool {
 
 // fenced says whether an instance of state etag must stay stopped: it uses
 // a volume that would be restored elsewhere, and this node may be cut off.
-func (a *Agent) fenced(spec types.InstanceSpec, etag string) bool {
-	if len(spec.Volumes) == 0 || a.mayRunFenced(etag) {
+// Never on the control node: the control node only restores the volumes of
+// nodes it doesn't hear from, and it always hears from itself.
+func (a *Agent) fenced(spec types.InstanceSpec, etag string, running bool) bool {
+	if a.Local || len(spec.Volumes) == 0 || a.mayRunFenced(etag, running) {
 		return false
 	}
 	a.volMu.Lock()

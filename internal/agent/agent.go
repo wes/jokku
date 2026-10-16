@@ -32,6 +32,7 @@ import (
 	"github.com/wes/jokku/internal/dns"
 	"github.com/wes/jokku/internal/guest"
 	"github.com/wes/jokku/internal/latency"
+	"github.com/wes/jokku/internal/mesh"
 	"github.com/wes/jokku/internal/types"
 	"github.com/wes/jokku/internal/vm"
 )
@@ -113,6 +114,9 @@ type Config struct {
 	// heard, when none is cached: an edge reaches the control node only over
 	// the mesh, so it needs its first peer before its first poll.
 	Seed *types.NodeState
+	// Local is set on the control node, whose Control runs in the same
+	// process: it can't be cut off from it, so it never fences.
+	Local bool
 	// Metrics measures the host; nil reads /proc.
 	Metrics func() types.NodeMetrics
 	// ReconcileEvery and ReportEvery default to 2s and 5s.
@@ -143,6 +147,7 @@ type Agent struct {
 	pulling  sync.Map // artifact name -> struct{} while downloading
 	lastMesh string
 	lastSync time.Time
+	meshErr  error // peers the last sync left without an endpoint
 	lastProx string
 	proxSent time.Time
 	lastGC   time.Time
@@ -268,14 +273,24 @@ func (a *Agent) reportSoon() {
 }
 
 // watch long-polls the control node and applies every new desired state.
+// The first poll asks for the state as it is, not for a change to the cached
+// one, so it answers at once (see mayRunFenced).
 func (a *Agent) watch(ctx context.Context) {
 	backoff := time.Second
-	for ctx.Err() == nil {
+	for first := true; ctx.Err() == nil; first = false {
 		etag := ""
-		if st := a.Desired(); st != nil {
+		if st := a.Desired(); st != nil && !first {
 			etag = st.ETag
 		}
-		st, err := a.Control.State(ctx, etag)
+		pollCtx, cancel := ctx, context.CancelFunc(func() {})
+		if first {
+			pollCtx, cancel = context.WithTimeout(ctx, firstPollTimeout)
+		}
+		st, err := a.Control.State(pollCtx, etag)
+		cancel()
+		if err != nil {
+			a.pollFailed()
+		}
 		switch {
 		case errors.Is(err, ErrRemoved):
 			a.logOnce("state", err)
@@ -463,7 +478,7 @@ func (a *Agent) step(ctx context.Context, spec types.InstanceSpec, l *local, uni
 	if _, busy := a.stopping.Load(spec.ID); busy {
 		return
 	}
-	if spec.Run && a.fenced(spec, a.applying) {
+	if spec.Run && a.fenced(spec, a.applying, running) {
 		// This node may be cut off, and the volume restored elsewhere.
 		if running {
 			a.Log.Warn("stopping an instance while cut off from the control node", "app", spec.App, "process", spec.Process)
@@ -720,13 +735,18 @@ func (a *Agent) syncMesh(ctx context.Context, st *types.NodeState) error {
 	key := hex.EncodeToString(sum[:])
 	// Re-apply every minute even without changes, to repair drift.
 	if key == a.lastMesh && time.Since(a.lastSync) < time.Minute {
-		return nil
+		return a.meshErr
 	}
-	if err := a.Mesh.Sync(ctx, st.Node, st.Peers, st.EdgeAccess); err != nil {
+	// Peers left without an endpoint don't make the pass fail: the rest of
+	// the mesh is up. They are tried again with the next re-apply, and
+	// reported until then.
+	err := a.Mesh.Sync(ctx, st.Node, st.Peers, st.EdgeAccess)
+	var unusable *mesh.EndpointError
+	if err != nil && !errors.As(err, &unusable) {
 		return err
 	}
-	a.lastMesh, a.lastSync = key, time.Now()
-	return nil
+	a.lastMesh, a.lastSync, a.meshErr = key, time.Now(), err
+	return err
 }
 
 func (a *Agent) syncProxy(ctx context.Context, ps *types.ProxyState) error {

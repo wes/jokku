@@ -30,7 +30,8 @@ type Controller struct {
 	Self        string       // the control node's name
 	ClusterCIDR netip.Prefix // e.g. 10.210.0.0/16
 	Version     string
-	// Address is where joining nodes reach this node's API, host:port.
+	// Address is where joining nodes reach this node's API, host:port. Set
+	// it with SetAddress once the controller runs.
 	Address string
 	// Pin identifies this node's TLS key; it is embedded in join tokens.
 	Pin string
@@ -80,6 +81,19 @@ func (c *Controller) agentAddr(n store.Node) string {
 	}
 	_, meshIP := NodeSubnet(c.ClusterCIDR, n.SubnetIndex)
 	return net.JoinHostPort(meshIP.String(), strconv.Itoa(AgentPort))
+}
+
+// SetAddress changes where joining nodes reach this node's API.
+func (c *Controller) SetAddress(addr string) {
+	c.mu.Lock()
+	c.Address = addr
+	c.mu.Unlock()
+}
+
+func (c *Controller) address() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.Address
 }
 
 // Changed wakes every waiting agent so it recomputes its state now.

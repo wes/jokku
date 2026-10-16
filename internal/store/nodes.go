@@ -219,6 +219,13 @@ func (s *Store) NodeReported(ctx context.Context, name, version, canRun string, 
 	return err
 }
 
+// SetNodeAddress records the address other nodes reach a node at, and its
+// WireGuard endpoint there.
+func (s *Store) SetNodeAddress(ctx context.Context, name, address, endpoint string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE nodes SET address = ?, wg_endpoint = ? WHERE name = ?", address, endpoint, name)
+	return err
+}
+
 // SetNodeWireGuard records a node's WireGuard public key and endpoint.
 func (s *Store) SetNodeWireGuard(ctx context.Context, name, publicKey, endpoint string) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE nodes SET wg_public_key = ?, wg_endpoint = ? WHERE name = ?", publicKey, endpoint, name)

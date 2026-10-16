@@ -111,12 +111,13 @@ type fakeRuntime struct {
 	mu          sync.Mutex
 	running     map[string]vm.Spec
 	starts      int
-	order       []string    // app/process of each start, in order
-	ignoreStops atomic.Bool // VMs ignore stop requests (a hung shutdown)
+	stops       map[string]int // stops by app
+	order       []string       // app/process of each start, in order
+	ignoreStops atomic.Bool    // VMs ignore stop requests (a hung shutdown)
 }
 
 func newFakeRuntime(node string, disks *diskTracker) *fakeRuntime {
-	return &fakeRuntime{node: node, disks: disks, running: map[string]vm.Spec{}, restarts: map[string]int{}, freezes: map[string]int{}, tokens: map[string]string{}}
+	return &fakeRuntime{node: node, disks: disks, running: map[string]vm.Spec{}, stops: map[string]int{}, restarts: map[string]int{}, freezes: map[string]int{}, tokens: map[string]string{}}
 }
 
 // Session connects to a fake guest agent that speaks the real protocol: exec
@@ -328,6 +329,9 @@ func (f *fakeRuntime) Stop(_ context.Context, id string, _ time.Duration) error 
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if s, ok := f.running[id]; ok {
+		f.stops[s.App]++
+	}
 	f.disks.detach(f.node, f.running[id])
 	delete(f.running, id)
 	return nil
@@ -631,7 +635,7 @@ func (h *harness) startNode(name, token, agentToken, dir string, plane agent.Con
 	a := agent.New(agent.Config{
 		Control: cuttable{plane, &n.cut, &n.noRelay}, Runtime: n.rt, Mesh: n.mesh, Proxy: n.proxy, Resolver: n.resolver, DataDir: dir, Version: n.version, Log: h.log,
 		Updater: n.updater, Latency: n.latency,
-		GCArtifacts: name != "control", ReconcileEvery: 100 * time.Millisecond, ReportEvery: 200 * time.Millisecond, UpFor: time.Second,
+		GCArtifacts: name != "control", Local: name == "control", ReconcileEvery: 100 * time.Millisecond, ReportEvery: 200 * time.Millisecond, UpFor: time.Second,
 		Metrics: func() types.NodeMetrics { return types.NodeMetrics{CPUs: 4, MemoryMB: 4096} },
 	})
 	handler := a.Handler(n.agentToken)
@@ -724,6 +728,17 @@ func (h *harness) kill(name string) {
 func (h *harness) revive(name string) {
 	n := h.nodes[name]
 	h.startNode(name, n.token, n.agentToken, n.dir, h.remote(n.token))
+}
+
+// restart restarts a node's agent, as restarting jokku there (to update it,
+// say) does: its VMs keep running.
+func (h *harness) restart(name string) {
+	h.kill(name)
+	if name == "control" {
+		h.startNode(name, "", "control-agent-token", h.dir, &cluster.LocalPlane{C: h.ctl, DataDir: h.dir})
+		return
+	}
+	h.revive(name)
 }
 
 // deploy creates an app with a fake built release and rolls it out at the

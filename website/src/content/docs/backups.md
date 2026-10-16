@@ -74,7 +74,7 @@ jokku backups:set myapp data tigris --auto-restore off
 ```
 
 > [!NOTE]
-> A server that's only cut off from the others, not dead, would otherwise keep running its copy of the app while the restored copy runs too. So a server that can't reach the control server for two minutes stops its apps with backed-up volumes, unless it's clearly the control server that's down: the servers it can still reach don't hear from it either, and together they're most of the cluster. In a two-server cluster, that means the worker stops those apps whenever it loses the control server for two minutes.
+> A server that's only cut off from the others, not dead, would otherwise keep running its copy of the app while the restored copy runs too. So a server that can't reach the control server for two minutes stops its apps with backed-up volumes, unless it's clearly the control server that's down: the servers it can still reach don't hear from it either, and together they're most of the cluster. In a two-server cluster, that means the worker stops those apps whenever it loses the control server for two minutes. The control server never stops its own: it can't be cut off from itself.
 
 ## Restore
 

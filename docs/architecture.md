@@ -373,9 +373,13 @@ on its bridge address (`10.210.N.1:53`), so restarting or updating the daemon
 never interrupts lookups. The control node puts the cluster's names in every
 node's desired state; the agent writes them to `/var/lib/jokku/dns/zone.json`,
 which the service watches. Every other name is forwarded to the host's own
-resolvers. A VM is pointed at the service only if it answers when the VM
-boots; otherwise it gets the host's resolvers (no internal names, but the
-internet works), and picks the service up on its next restart.
+resolvers. A VM is pointed at the service, so a VM about to start while it
+doesn't answer waits for it, up to 30 seconds: at boot the service binds a
+moment after the agent sets up the bridge, and a VM pointed elsewhere keeps
+that for its life. Only one that is still waiting after that gets the host's
+resolvers (no internal names, but the internet works), with a warning in the
+log; it picks the service up on its next restart. A failed check of the
+service is asked again after a second, a good one after ten.
 
 ### HTTP proxy
 

@@ -212,6 +212,32 @@ func TestRunServesTheZoneFileAndFollowsIt(t *testing.T) {
 	})
 }
 
+// At boot the service answers a moment after the agent first asks, and
+// instances wait for it: Ready sees it come up within a second or so, not
+// after the ten seconds a yes is kept for.
+func TestReadySeesTheServiceComeUp(t *testing.T) {
+	dir := t.TempDir()
+	free, _ := net.ListenPacket("udp", "127.0.0.1:0")
+	addr := free.LocalAddr().String()
+	free.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	a := &Applier{DataDir: dir}
+	if err := a.Apply(ctx, Zone{Listen: addr}); err != nil {
+		t.Fatal(err)
+	}
+	if a.Ready(addr) {
+		t.Fatal("ready before the service runs")
+	}
+	done := make(chan error)
+	go func() { done <- Run(ctx, dir, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
+	t.Cleanup(func() { cancel(); <-done })
+	start := time.Now()
+	waitFor(t, "Ready sees the service", func() bool { return a.Ready(addr) })
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("Ready took %s to see the service", took)
+	}
+}
+
 func exchange(addr, name string) (*dns.Msg, error) {
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(name), dns.TypeA)

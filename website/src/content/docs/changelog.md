@@ -5,6 +5,12 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.20: Database names after a restart
+
+October 16, 2026
+
+- **Apps reach their databases after every server restarts at once.** At boot, a server's DNS service, the one that knows names like `postgres-myapp-db.internal`, starts a moment after its apps can. An app started in that moment was given your network's DNS server instead, kept it until its next restart, and couldn't find its database: WordPress said "Error establishing a database connection". Apps now wait for their server's DNS service, for up to 30 seconds, and only start without it, with a warning in the log, if it never answers.
+
 ## v0.8.19: Test your network
 
 October 16, 2026

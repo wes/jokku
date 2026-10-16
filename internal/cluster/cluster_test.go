@@ -99,6 +99,10 @@ func (c cuttable) Report(ctx context.Context, st *types.NodeStatus) error {
 // a database's client (psql, mysql) would print, in place of the echo.
 var fakeDatabase atomic.Pointer[func(argv []string, stdin string) (stdout, stderr string, code int)]
 
+// hostResolver stands for the host's own resolvers (the router's, say),
+// which VMs get only when their node's DNS service doesn't answer.
+const hostResolver = "192.0.2.53"
+
 // fakeRuntime pretends to run VMs: a started VM is "running" until stopped
 // or crashed.
 type fakeRuntime struct {
@@ -441,6 +445,7 @@ func (p *fakeProxy) upstreams(app string) []string {
 type fakeResolver struct {
 	mu   sync.Mutex
 	zone dns.Zone
+	down atomic.Bool // the node's DNS service doesn't answer (yet)
 }
 
 func (r *fakeResolver) Apply(_ context.Context, z dns.Zone) error {
@@ -450,7 +455,7 @@ func (r *fakeResolver) Apply(_ context.Context, z dns.Zone) error {
 	return nil
 }
 
-func (r *fakeResolver) Ready(string) bool { return true }
+func (r *fakeResolver) Ready(string) bool { return !r.down.Load() }
 
 func (r *fakeResolver) get() dns.Zone {
 	r.mu.Lock()
@@ -634,6 +639,7 @@ func (h *harness) startNode(name, token, agentToken, dir string, plane agent.Con
 	n.cancel, n.stopped = cancel, make(chan struct{})
 	a := agent.New(agent.Config{
 		Control: cuttable{plane, &n.cut, &n.noRelay}, Runtime: n.rt, Mesh: n.mesh, Proxy: n.proxy, Resolver: n.resolver, DataDir: dir, Version: n.version, Log: h.log,
+		DNS:     []string{hostResolver},
 		Updater: n.updater, Latency: n.latency,
 		GCArtifacts: name != "control", Local: name == "control", ReconcileEvery: 100 * time.Millisecond, ReportEvery: 200 * time.Millisecond, UpFor: time.Second,
 		Metrics: func() types.NodeMetrics { return types.NodeMetrics{CPUs: 4, MemoryMB: 4096} },

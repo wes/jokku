@@ -159,6 +159,10 @@ type Agent struct {
 	lastErr  map[string]string
 	host     *hostSampler
 
+	// dnsDownSince is when an instance first had to wait for this node's
+	// DNS service; zero while it answers (see guestDNS).
+	dnsDownSince time.Time
+
 	volMu        sync.Mutex
 	vols         map[string]*vol
 	exporting    sync.Map // volume ID -> struct{} while its final pass is being served
@@ -595,12 +599,9 @@ func (a *Agent) start(ctx context.Context, spec types.InstanceSpec, l *local, re
 	for _, m := range spec.Volumes {
 		vols = append(vols, vm.Volume{Disk: a.volumePath(m.ID, ""), Path: m.Path})
 	}
-	// Internal names need this node's DNS service. Where it doesn't answer
-	// (yet), the VM gets the host's resolvers: no internal names, but the
-	// internet works.
-	resolvers, search := a.DNS, []string(nil)
-	if st := a.Desired(); a.Resolver != nil && st != nil && st.Node.MeshIP != "" && a.Resolver.Ready(st.Node.MeshIP) {
-		resolvers, search = []string{st.Node.MeshIP}, []string{strings.ToLower(spec.App) + ".internal", "internal"}
+	resolvers, search, wait := a.guestDNS(spec)
+	if wait {
+		return // tried again next pass
 	}
 	err := a.Runtime.Start(ctx, vm.Spec{
 		ID: spec.ID, App: spec.App, Process: spec.Process, Artifact: a.artifactPath(spec.Artifact),
@@ -622,6 +623,41 @@ func (a *Agent) start(ctx context.Context, spec types.InstanceSpec, l *local, re
 	l.state, l.startedAt, l.removed = "starting", time.Now(), false
 	l.stopWait = stopTimeout(spec) + stopMargin
 	l.cpuNanos, l.cpuAt = 0, time.Time{}
+}
+
+// DNSWait is how long instances wait for this node's DNS service before
+// starting without it. At boot it answers a moment after the agent sets up
+// the bridge it listens on. A variable so tests can shorten it.
+var DNSWait = 30 * time.Second
+
+// guestDNS is what an instance starting now resolves names with: this
+// node's DNS service, which alone knows internal names. While it doesn't
+// answer, wait holds the instance back, for up to DNSWait; after that the
+// instance gets the host's resolvers, so the internet works, but it has no
+// internal names until it next starts: an app reaching its database by one
+// (postgres-myapp-db.internal) can't. Called under a.mu.
+func (a *Agent) guestDNS(spec types.InstanceSpec) (resolvers, search []string, wait bool) {
+	st := a.Desired()
+	if a.Resolver == nil || st == nil || st.Node.MeshIP == "" {
+		return a.DNS, nil, false
+	}
+	if a.Resolver.Ready(st.Node.MeshIP) {
+		if !a.dnsDownSince.IsZero() {
+			a.dnsDownSince = time.Time{}
+			a.Log.Info("this node's DNS service answers: starting instances", "addr", st.Node.MeshIP)
+		}
+		return []string{st.Node.MeshIP}, []string{strings.ToLower(spec.App) + ".internal", "internal"}, false
+	}
+	if a.dnsDownSince.IsZero() {
+		a.dnsDownSince = time.Now()
+		a.Log.Info("waiting for this node's DNS service before starting instances", "addr", st.Node.MeshIP)
+	}
+	if time.Since(a.dnsDownSince) < DNSWait {
+		return nil, nil, true
+	}
+	a.Log.Warn("starting an instance without internal names: this node's DNS service doesn't answer",
+		"app", spec.App, "process", spec.Process, "addr", st.Node.MeshIP)
+	return a.DNS, nil, false
 }
 
 // stopAsync stops a VM gracefully in the background, then (when remove)

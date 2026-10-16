@@ -318,7 +318,8 @@ func (c *Controller) proxyState(ctx context.Context, node store.Node, apps []typ
 // and dial nobody: every other node dials them, since those nodes may be
 // behind NAT. An edge reaches each external app's target through its via
 // node. Edges have no say in fencing (see agent/fence.go), so they get no
-// agent address.
+// agent address. A node with no endpoint (a control node that has never
+// known its address) is still a peer, one that dials in.
 func (c *Controller) peers(node store.Node, nodes []store.Node, ext map[string]External) []types.Peer {
 	via := map[string][]string{}
 	if node.Edge() {
@@ -333,7 +334,7 @@ func (c *Controller) peers(node store.Node, nodes []store.Node, ext map[string]E
 	}
 	peers := []types.Peer{}
 	for _, n := range nodes {
-		if n.Name == node.Name || n.WGPublicKey == "" || n.WGEndpoint == "" || (node.Edge() && n.Edge()) {
+		if n.Name == node.Name || n.WGPublicKey == "" || (node.Edge() && n.Edge()) {
 			continue
 		}
 		sub, ip := NodeSubnet(c.ClusterCIDR, n.SubnetIndex)

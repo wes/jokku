@@ -3,6 +3,7 @@ package mesh
 import (
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -39,9 +40,9 @@ func TestPeersKeepTheAddressTheyTalkFrom(t *testing.T) {
 		// As an edge sees a home node: no endpoint, and a LAN target behind it.
 		{Name: "home", PublicKey: fresh.String(), Subnet: "10.210.1.0/24", Routes: []string{"192.168.1.50/32"}},
 	}
-	cfg, err := peerConfig(self, peers, current, now)
-	if err != nil {
-		t.Fatal(err)
+	cfg, unusable, err := peerConfig(self, peers, current, now)
+	if err != nil || len(unusable) > 0 {
+		t.Fatal(err, unusable)
 	}
 	if cfg.ReplacePeers {
 		t.Error("replacing every peer would forget the addresses they talk from")
@@ -65,6 +66,47 @@ func TestPeersKeepTheAddressTheyTalkFrom(t *testing.T) {
 	}
 	if p, ok := byKey[gone]; !ok || !p.Remove {
 		t.Error("a peer no longer listed should be removed")
+	}
+}
+
+// TestUnusableEndpointKeepsTheMesh checks a peer whose endpoint has no
+// address (a control node that started before its network, which registered
+// ":51820") is set up without one, and named, instead of failing the device
+// for every peer, while a peer it talks with keeps its tunnel.
+func TestUnusableEndpointKeepsTheMesh(t *testing.T) {
+	now := time.Now()
+	self := key(t)
+	control, talking, worker := key(t).PublicKey(), key(t).PublicKey(), key(t).PublicKey()
+	current := map[wgtypes.Key]wgtypes.Peer{
+		talking: {PublicKey: talking, Endpoint: &net.UDPAddr{IP: net.ParseIP("192.168.1.9"), Port: 51820}, LastHandshakeTime: now.Add(-time.Minute)},
+	}
+	peers := []types.Peer{
+		{Name: "control", PublicKey: control.String(), Endpoint: ":51820", Subnet: "10.210.1.0/24"},
+		{Name: "talking", PublicKey: talking.String(), Endpoint: ":51820", Subnet: "10.210.2.0/24"},
+		{Name: "unspecified", PublicKey: key(t).PublicKey().String(), Endpoint: "0.0.0.0:51820", Subnet: "10.210.4.0/24"},
+		{Name: "worker", PublicKey: worker.String(), Endpoint: "192.168.1.11:51820", Subnet: "10.210.3.0/24"},
+	}
+	cfg, unusable, err := peerConfig(self, peers, current, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"control (:51820)", "unspecified (0.0.0.0:51820)"}; !slices.Equal(unusable, want) {
+		t.Errorf("unusable = %q, want %q", unusable, want)
+	}
+	if len(cfg.Peers) != 4 {
+		t.Fatalf("every peer should be set up, got %d", len(cfg.Peers))
+	}
+	for _, p := range cfg.Peers {
+		switch p.PublicKey {
+		case worker:
+			if p.Endpoint == nil || p.Endpoint.String() != "192.168.1.11:51820" {
+				t.Errorf("worker endpoint = %v", p.Endpoint)
+			}
+		default:
+			if p.Endpoint != nil {
+				t.Errorf("%s got endpoint %v", p.PublicKey, p.Endpoint)
+			}
+		}
 	}
 }
 

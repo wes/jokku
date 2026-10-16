@@ -130,6 +130,16 @@ func runControl(ctx context.Context, cfg Config, log *slog.Logger) error {
 	if advertise == "" {
 		advertise = outboundIP()
 	}
+	if advertise == "" {
+		// No route yet: jokku started before the network was up (the wait
+		// for it timed out). Until watchAddress finds it, the address from
+		// last time is the best guess, and far better than none: the other
+		// nodes dial it.
+		if prev, err := st.Node(ctx, nodeName); err == nil {
+			advertise = prev.Address
+		}
+		log.Warn("no network yet; advertising the last known address until there is", "address", advertise)
+	}
 	err = st.RegisterControlNode(ctx, store.Node{
 		Name: nodeName, Address: advertise, Arch: runtime.GOARCH,
 		CPUs: runtime.NumCPU(), MemoryMB: totalMemoryMB(), Version: version.Version,
@@ -140,7 +150,7 @@ func runControl(ctx context.Context, cfg Config, log *slog.Logger) error {
 	keyFile := filepath.Join(cfg.DataDir, "wireguard.key")
 	if pub, err := mesh.PublicKey(keyFile); err != nil {
 		log.Warn("creating the WireGuard key", "err", err)
-	} else if err := st.SetNodeWireGuard(ctx, nodeName, pub, net.JoinHostPort(advertise, strconv.Itoa(mesh.Port))); err != nil {
+	} else if err := st.SetNodeWireGuard(ctx, nodeName, pub, meshEndpoint(advertise)); err != nil {
 		return err
 	}
 	// The control node's own proxy reaches the shared certificate store
@@ -187,7 +197,7 @@ func runControl(ctx context.Context, cfg Config, log *slog.Logger) error {
 		}},
 		Resolver: &dns.Applier{DataDir: cfg.DataDir},
 		Latency:  durations,
-		DataDir:  cfg.DataDir, DNS: vm.HostDNS(), Version: version.Version, Log: log,
+		DataDir:  cfg.DataDir, DNS: vm.HostDNS(), Version: version.Version, Log: log, Local: true,
 	})
 	pipeline := &deploy.Pipeline{
 		Store: st, Builder: &build.Builder{DataDir: cfg.DataDir, Exe: exe}, Cluster: ctl, DataDir: cfg.DataDir, Log: log,
@@ -225,6 +235,9 @@ func runControl(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 
 	go ctl.Run(ctx)
+	if cfg.Advertise == "" {
+		go watchAddress(ctx, st, ctl, nodeName, advertise, log)
+	}
 	go ag.Run(ctx)
 	// The agent API on the mesh: sessions with this node's VMs, and volume
 	// disks other nodes copy.
@@ -450,6 +463,48 @@ func outboundIP() string {
 	}
 	defer conn.Close()
 	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+}
+
+// addressCheckEvery is how often the control node looks for a change in the
+// address it advertises, found by detectAddress. Tests change both.
+var (
+	addressCheckEvery = 15 * time.Second
+	detectAddress     = outboundIP
+)
+
+// watchAddress keeps the control node's advertised address (where the other
+// nodes dial its mesh endpoint, and where joining nodes reach its API) on
+// the one it reaches the internet from: one that wasn't there when jokku
+// started, or that changed since.
+func watchAddress(ctx context.Context, st *store.Store, ctl *cluster.Controller, name, current string, log *slog.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(addressCheckEvery):
+		}
+		ip := detectAddress()
+		if ip == "" || ip == current {
+			continue
+		}
+		if err := st.SetNodeAddress(ctx, name, ip, meshEndpoint(ip)); err != nil {
+			log.Warn("recording this node's address", "address", ip, "err", err)
+			continue
+		}
+		ctl.SetAddress(net.JoinHostPort(ip, strconv.Itoa(cluster.APIPort)))
+		ctl.Changed()
+		log.Info("advertising a new address to the other nodes", "address", ip, "was", current)
+		current = ip
+	}
+}
+
+// meshEndpoint is where other nodes dial this one's WireGuard; none without
+// an address.
+func meshEndpoint(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	return net.JoinHostPort(addr, strconv.Itoa(mesh.Port))
 }
 
 // OutboundIP is exported for setup, which advertises it when joining.

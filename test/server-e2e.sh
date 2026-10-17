@@ -9,6 +9,7 @@
 # dist-dir holds three builds, each with jokku-linux-amd64 and checksums.txt:
 # old/ (version ci-old), new/ (ci-new) and broken/ (a binary that fails).
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/images.sh"
 dist=$(cd "$1" && pwd)
 host=127.0.0.1
 key=$HOME/.ssh/jokku_e2e
@@ -56,6 +57,7 @@ EXPOSE 80
 RUN mkdir /www
 EXPOSE 3000
 EOF
+with_lib Dockerfile
 cat >Procfile <<'EOF'
 web: echo "hello ${GREETING:-nobody} from $(hostname)" > /www/index.html && echo "listening on port $PORT" >/dev/stdout && exec httpd -f -v -p "$PORT" -h /www
 worker: while true; do echo "worker tick"; sleep 2; done
@@ -142,7 +144,7 @@ probe=$(mktemp -d)
 (
   cd "$probe"
   git init -q -b main
-  printf 'FROM public.ecr.aws/docker/library/busybox:1.36\nRUN mkdir /www\n' >Dockerfile
+  printf 'FROM %s/busybox:1.36\nRUN mkdir /www\n' "$lib" >Dockerfile
   # Looks up the hello app by name, fetches it through that name, and
   # resolves a public name through the node's DNS.
   printf 'web: (nslookup hello.internal; wget -qO- http://hello.internal:4000/; nslookup github.com) >/www/index.html 2>&1; exec httpd -f -p "$PORT" -h /www\n' >Procfile
@@ -158,11 +160,11 @@ grep -qE "Name:[[:space:]]+github.com" <<<"$answer" || fail "the probe could not
 jssh apps:destroy probe --force
 
 step "deploy an image from a registry"
-out=$(jssh builder:image nginx public.ecr.aws/docker/library/nginx:alpine 2>&1) || fail "builder:image failed: $out"
+out=$(jssh builder:image nginx "$lib/nginx:alpine" 2>&1) || fail "builder:image failed: $out"
 printf '%s\n' "$out" | tail -n 5
 ndomain=$(jssh domains:report nginx --domains-app-vhosts)
 curl -fsS --max-time 5 -H "Host: $ndomain" http://127.0.0.1/ | grep -q "Welcome to nginx" || fail "the nginx image does not serve"
-jssh releases nginx | grep -q "Deploy public.ecr.aws/docker/library/nginx:alpine" || fail "the release does not name the image"
+jssh releases nginx | grep -q "Deploy $lib/nginx:alpine" || fail "the release does not name the image"
 [ "$(jssh builder:report nginx --builder-type)" = image ] || fail "builder:report does not say nginx is an image app"
 jssh ps:rebuild nginx >/dev/null || fail "ps:rebuild of an image deploy failed"
 if out=$(git push "jokku@$host:nginx" main 2>&1); then fail "a push deployed over an image app: $out"; fi
@@ -231,6 +233,7 @@ FROM public.ecr.aws/docker/library/busybox:1.36
 RUN adduser -D app && mkdir /data && echo seeded >/data/seed && chown -R app /data
 USER app
 EOF
+with_lib Dockerfile
 # It also reopens its output by name, as nginx's error_log /dev/stderr does.
 printf 'web: echo "stderr reopened as $(id -un)" >/dev/stderr; date >>/data/boots && exec httpd -f -p "$PORT" -h /data\n' >Procfile
 git add -A
@@ -368,7 +371,7 @@ step "a compose file deploys as one app, a process type per service"
 stack=$(mktemp -d)
 cd "$stack"
 git init -q -b main
-printf 'FROM public.ecr.aws/docker/library/busybox:1.36\nRUN mkdir /www\n' >Dockerfile
+printf 'FROM %s/busybox:1.36\nRUN mkdir /www\n' "$lib" >Dockerfile
 cat >compose.yaml <<'EOF'
 services:
   web:
@@ -384,6 +387,7 @@ services:
 volumes:
   dbdata:
 EOF
+with_lib compose.yaml
 git add -A
 git commit -qm stack
 jssh builder:compose stack
@@ -413,8 +417,7 @@ cd "$GITHUB_WORKSPACE"
 
 step "databases: postgres, redis and mysql"
 dbtmp=$(mktemp -d)
-ecr=public.ecr.aws/docker/library
-out=$(jssh db:postgres:create shopdb --image "$ecr/postgres" --image-version 17-alpine 2>&1) || fail "db:postgres:create failed: $out"
+out=$(jssh db:postgres:create shopdb --image "$lib/postgres" --image-version 17-alpine 2>&1) || fail "db:postgres:create failed: $out"
 printf '%s\n' "$out" | tail -n 3
 # psql, through a pipe; a database that is still starting gets a few tries.
 sql() { printf '%s\n' "$1" | jssh db:postgres:connect shopdb 2>&1; }
@@ -430,11 +433,11 @@ jssh db:postgres:link shopdb hello >/dev/null || fail "db:postgres:link failed"
 [[ "$(jssh config:get hello DATABASE_URL)" == postgres://postgres:*@postgres-shopdb.internal:5432/shopdb ]] || fail "DATABASE_URL: $(jssh config:get hello DATABASE_URL)"
 jssh enter hello web nslookup postgres-shopdb.internal >/dev/null || fail "hello can't resolve postgres-shopdb.internal"
 
-out=$(jssh db:redis:create cache --image "$ecr/redis" --image-version 7-alpine 2>&1) || fail "db:redis:create failed: $out"
+out=$(jssh db:redis:create cache --image "$lib/redis" --image-version 7-alpine 2>&1) || fail "db:redis:create failed: $out"
 for _ in $(seq 1 30); do res=$(printf 'SET greeting hi\nGET greeting\n' | jssh db:redis:connect cache 2>&1) && grep -qx hi <<<"$res" && break; sleep 1; done
 grep -qx hi <<<"$res" || fail "redis-cli didn't answer: $res"
 
-out=$(jssh db:mysql:create orders --image "$ecr/mysql" --image-version 8.4 2>&1) || fail "db:mysql:create failed: $out"
+out=$(jssh db:mysql:create orders --image "$lib/mysql" --image-version 8.4 2>&1) || fail "db:mysql:create failed: $out"
 # mysqld initializes its data on first boot, which takes a while.
 for _ in $(seq 1 120); do res=$(printf 'SELECT 41+1;\n' | jssh db:mysql:connect orders 2>&1) && grep -q 42 <<<"$res" && break; sleep 1; done
 grep -q 42 <<<"$res" || fail "mysql didn't answer: $res"

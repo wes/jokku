@@ -11,6 +11,7 @@
 #
 #   test/edge-e2e.sh <dist-dir>   (jokku-linux-amd64 + checksums.txt)
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/images.sh"
 dist=$(cd "$1" && pwd)
 work=$(mktemp -d)
 bridge=jke-br tap=jke-tap
@@ -122,7 +123,7 @@ step "deploy an app at home, and serve it through the edge"
 mkdir -p "$work/app" && cd "$work/app"
 export GIT_AUTHOR_NAME=e2e GIT_AUTHOR_EMAIL=e2e@example.com GIT_COMMITTER_NAME=e2e GIT_COMMITTER_EMAIL=e2e@example.com
 git init -q -b main
-printf 'FROM public.ecr.aws/docker/library/busybox:1.36\nRUN mkdir /www && seq 1 3000 >/www/big.txt\n' >Dockerfile
+printf 'FROM %s/busybox:1.36\nRUN mkdir /www && seq 1 3000 >/www/big.txt\n' "$lib" >Dockerfile
 printf 'web: echo "served by $(hostname)" > /www/index.html && exec httpd -f -p "$PORT" -h /www\n' >Procfile
 git add -A && git commit -qm init
 sudo jokku apps:create hello
@@ -161,7 +162,7 @@ if essh "timeout 5 bash -c 'echo > /dev/tcp/10.210.1.1/7444'"; then fail "the ed
 if ! essh "sudo iptables -C INPUT -i jokku-wg -j JOKKU-MESH"; then fail "the edge doesn't firewall the mesh"; fi
 
 step "a database through the edge, over TLS"
-out=$(sudo jokku db:redis:create cache --image public.ecr.aws/docker/library/redis --image-version 7-alpine 2>&1) || fail "db:redis:create failed: $out"
+out=$(sudo jokku db:redis:create cache --image "$lib/redis" --image-version 7-alpine 2>&1) || fail "db:redis:create failed: $out"
 # A name Let's Encrypt can't reach: the proxies' own CA signs it.
 dbhost=cache.$edge_ip.sslip.io
 sudo jokku db:redis:expose cache "$dbhost" >/dev/null || fail "db:redis:expose failed"

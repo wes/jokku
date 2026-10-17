@@ -7,6 +7,7 @@
 #
 #   test/cluster-e2e.sh <dist-dir>   (jokku-linux-amd64 + checksums.txt)
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/images.sh"
 dist=$(cd "$1" && pwd)
 work=$(mktemp -d)
 bridge=jkt-br tap=jkt-tap
@@ -102,7 +103,7 @@ step "deploy an app on the control node"
 mkdir -p "$work/app" && cd "$work/app"
 export GIT_AUTHOR_NAME=e2e GIT_AUTHOR_EMAIL=e2e@example.com GIT_COMMITTER_NAME=e2e GIT_COMMITTER_EMAIL=e2e@example.com
 git init -q -b main
-printf 'FROM public.ecr.aws/docker/library/busybox:1.36\nRUN mkdir /www\n' >Dockerfile
+printf 'FROM %s/busybox:1.36\nRUN mkdir /www\n' "$lib" >Dockerfile
 printf 'web: echo "served by $(hostname)" > /www/index.html && echo "listening on $PORT" && exec httpd -f -p "$PORT" -h /www\n' >Procfile
 git add -A && git commit -qm init
 sudo jokku apps:create hello
@@ -168,7 +169,7 @@ if $worker_runs_vms; then
   ctl=$(sudo jokku nodes:list | awk '$2 == "control" {print $1}')
   mkdir -p "$work/keep" && cd "$work/keep"
   git init -q -b main
-  printf 'FROM public.ecr.aws/docker/library/busybox:1.36\nRUN mkdir /data\n' >Dockerfile
+  printf 'FROM %s/busybox:1.36\nRUN mkdir /data\n' "$lib" >Dockerfile
   printf 'web: date >>/data/boots && exec httpd -f -p "$PORT" -h /data\n' >Procfile
   git add -A && git commit -qm init
   sudo git -c safe.directory='*' archive --format=tar HEAD >"$work/keep.tar"

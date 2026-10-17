@@ -52,6 +52,21 @@ func (s *Server) updateNodes(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// rebalance spreads instances over the nodes (nodes:rebalance).
+func (s *Server) rebalance(w http.ResponseWriter, r *http.Request) {
+	var req types.RebalanceRequest
+	if err := decode(r, &req); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out, err := s.Cluster.Rebalance(r.Context(), req.Volumes, req.DryRun)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *Server) clusterStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := s.Cluster.Status(r.Context())
 	if err != nil {

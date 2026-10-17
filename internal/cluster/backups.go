@@ -424,7 +424,7 @@ func (c *Controller) RestoreVolume(ctx context.Context, app, name, backupName, n
 		using = append(using, in)
 		cpus, memory = max(cpus, in.CPUs), max(memory, in.MemoryMB)
 	}
-	p := Placement{App: app, Exclude: v.Node, Volumes: true, DiskMB: v.UsedMB, CPUs: cpus, MemoryMB: memory}
+	p := Placement{App: app, Exclude: v.Node, Volumes: true, DiskMB: v.UsedMB, CPUs: cpus, MemoryMB: memory, OldCopies: oldCopies([]store.Volume{*v})}
 	if len(using) > 0 {
 		p.ProcessType = using[0].ProcessType
 	}

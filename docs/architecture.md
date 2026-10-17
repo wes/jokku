@@ -582,7 +582,18 @@ everything. Process types start in dependency order (a compose file's
   disks instead, which costs a short stop (see [Volumes](#volumes)).
   `nodes:remove` then takes the node out; it refuses while the node holds
   volumes, and `--force` skips the drain and treats it like a dead node
-  (losing the volumes on it).
+  (losing the volumes on it). An app asleep or stopped moves at once: its
+  new instance waits for the app to start, and the old one isn't running.
+- **Rebalancing:** nothing moves back when a node is undrained or returns
+  from the dead. `nodes:rebalance` plans moves on a model of the cluster,
+  one at a time while one helps: to a node with fewer instances of the same
+  app and process type, or else from a fuller node (by the share of its
+  memory instances hold) to an emptier one that ends up no fuller than the
+  source. That last rule means nothing could move back, so a second run does
+  nothing. Instances without volumes are preferred, since they move without
+  a stop; those with volumes move only with `--volumes`. Apps with a deploy,
+  move or restore under way are left alone. The moves then happen as a
+  drain's do. `--dry-run` shows the plan.
 - **The control node is unreachable:** workers keep running, restarting
   crashed instances and serving traffic with their last known state (cached on
   disk, so it survives their own restarts). Deploys and changes wait until it
@@ -655,8 +666,9 @@ Copies compare 1 MiB blocks by SHA-256, skip holes and zero blocks (sparse
 disks stay sparse), and verify every block on arrival. An interrupted pass
 resumes from what has already arrived. If the new node goes down before the
 commit, the move is called off: the old node takes its disk back and the
-instance starts there again. A volume never moves when its node dies, because
-the data is only there. Instances wait for that node, which makes backups
+instance starts there again. A move never goes to a node keeping an old copy of
+the volume (see [Backups](#backups)) until that copy is discarded. A volume
+never moves when its node dies, because the data is only there. Instances wait for that node, which makes backups
 the answer to losing a server for good (see [Backups](#backups)).
 
 **Deleting** is explicit. `storage:destroy` (refused while the volume is

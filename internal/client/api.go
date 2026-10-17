@@ -256,6 +256,13 @@ func (c *Client) UpdateNodes(ctx context.Context) error {
 	return c.call(ctx, http.MethodPost, "/v1/cluster/update", nil, nil)
 }
 
+// Rebalance spreads instances over the nodes, or with DryRun says what
+// would move.
+func (c *Client) Rebalance(ctx context.Context, req types.RebalanceRequest) (*types.Rebalance, error) {
+	var out types.Rebalance
+	return &out, c.call(ctx, http.MethodPost, "/v1/cluster/rebalance", req, &out)
+}
+
 func (c *Client) Events(ctx context.Context, app string, limit int) ([]types.ClusterEvent, error) {
 	q := url.Values{"limit": {strconv.Itoa(limit)}}
 	if app != "" {

@@ -5,6 +5,14 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.21: Rebalance
+
+October 16, 2026
+
+- **[`jokku nodes:rebalance`](/docs/cluster#maintenance) spreads your apps over your servers again.** Nothing moves back on its own after you undrain a server, or after one that died comes back, so until now every app stayed where the drain put it. A rebalance puts copies of the same app on different servers first, then evens out memory, moving each app the way a drain does, with no downtime. Add `--dry-run` to see the moves first. Apps with volumes stay where their disks are unless you add `--volumes`; each of those stops for a few seconds, so a rebalance moves as few of them as it can. Running it a second time moves nothing. `nodes:undrain` now points you to it.
+- **Asleep apps leave a draining server right away.** Before, the copy on the new server waited for the app to wake before taking over, so the old server kept a stopped copy and never finished draining.
+- **A volume never moves to a server that keeps an old copy of it.** A server that was down while its volume was [restored from a backup](/docs/backups#when-a-server-dies) elsewhere keeps its old disk aside. A drain that picked that server waited forever, because it was told to keep the old copy rather than receive the new one. Drains, restores and rebalances now pick another server, and `storage:move` to it tells you to discard the old copy first.
+
 ## v0.8.20: Database names after a restart
 
 October 16, 2026

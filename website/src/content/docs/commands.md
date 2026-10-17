@@ -97,6 +97,7 @@ How an app is built is the one area that departs from Dokku. Dokku has no compos
 | `cluster:report` | ➕ ✅ |
 | `nodes:list`, `nodes:report`, `nodes:set` (`schedulable`, `ingress`) | ➕ ✅ |
 | `nodes:drain`, `nodes:undrain` | ➕ ✅ |
+| `nodes:rebalance [--dry-run] [--volumes]` | ➕ ✅ |
 | `nodes:remove [--force]` | ➕ ✅ |
 | `network:test [--seconds N]`, `network:report` (tests every link between the nodes over the mesh, one at a time: throughput, round trips and lost pings, and how each node compares with the test before) | ➕ ✅ |
 | `edge:add [<user>@]<address> [--name] [--print]` (a public server routing your domains to nodes behind NAT; installs it over ssh), `edge:list`, `edge:remove [--force]` | ➕ ✅ |

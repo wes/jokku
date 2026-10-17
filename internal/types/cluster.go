@@ -444,6 +444,33 @@ type CreateJoinTokenRequest struct {
 	Reusable   bool `json:"reusable,omitempty"`    // for autoscaling groups
 }
 
+// RebalanceRequest asks the control node to spread instances over the nodes
+// (nodes:rebalance).
+type RebalanceRequest struct {
+	// Volumes also moves instances with volumes, their disks along: each
+	// stops for a few seconds while the last changes are copied.
+	Volumes bool `json:"volumes,omitempty"`
+	DryRun  bool `json:"dry_run,omitempty"` // only say what would move
+}
+
+// Rebalance is what a rebalance moves, or would move.
+type Rebalance struct {
+	Moves []RebalanceMove `json:"moves"`
+	// Pinned is how many instances with volumes would also have moved with
+	// Volumes set; without it they stay where their disks are.
+	Pinned int `json:"pinned,omitempty"`
+}
+
+// RebalanceMove is one instance moving to another node.
+type RebalanceMove struct {
+	App      string   `json:"app"`
+	Instance string   `json:"instance"` // web.1
+	From     string   `json:"from"`
+	To       string   `json:"to"`
+	MemoryMB int      `json:"memory_mb"`
+	Volumes  []string `json:"volumes,omitempty"` // moving with it
+}
+
 // ClusterEvent is something that happened: a deploy, a crash, a node going
 // down.
 type ClusterEvent struct {

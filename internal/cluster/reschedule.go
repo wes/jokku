@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"net/netip"
 	"time"
 
 	"github.com/wes/jokku/internal/store"
@@ -62,6 +63,14 @@ func (c *Controller) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	apps, err := c.Store.Apps(ctx)
+	if err != nil {
+		return err
+	}
+	resting := map[string]bool{} // apps asleep or stopped: their instances are off
+	for _, a := range apps {
+		resting[a.Name] = a.Stopped || a.AsleepSince != nil
+	}
 	byID := map[string]store.Instance{}
 	replacing := map[string]bool{} // instance ID -> a wanted replacement exists
 	for _, in := range insts {
@@ -73,11 +82,15 @@ func (c *Controller) tick(ctx context.Context) error {
 
 	for _, in := range insts {
 		// A replacement that passed checks takes over: the original stops
-		// (after a grace period, if it is still serving).
-		if in.Replaces != "" && in.Desired == store.DesiredRunning && in.State == store.StateHealthy {
+		// (after a grace period, if it is still serving). One of an app
+		// asleep or stopped takes over at once: it won't start before the
+		// app does, and the original isn't serving. (One with volumes waits
+		// for them: their move stops the original for the final copy.)
+		if in.Replaces != "" && in.Desired == store.DesiredRunning &&
+			(in.State == store.StateHealthy || resting[in.App] && len(in.Volumes) == 0) {
 			if orig, ok := byID[in.Replaces]; ok && orig.Desired == store.DesiredRunning {
 				at := now.Add(DrainGrace)
-				if n, ok := byName[orig.Node]; !ok || !n.Ready(now) {
+				if n, ok := byName[orig.Node]; !ok || !n.Ready(now) || resting[in.App] {
 					at = now
 				}
 				if err := c.Store.StopInstances(ctx, []string{orig.ID}, &at); err != nil {
@@ -185,6 +198,12 @@ func (c *Controller) replace(ctx context.Context, in store.Instance, reason stri
 	if err != nil {
 		return err
 	}
+	return c.moveTo(ctx, in, node, subnet, reason, nodeGone)
+}
+
+// moveTo starts a copy of in on node. With stopNow, in stops right away;
+// otherwise it keeps serving until the copy passes checks.
+func (c *Controller) moveTo(ctx context.Context, in store.Instance, node string, subnet netip.Prefix, reason string, stopNow bool) error {
 	repl := store.Instance{
 		App: in.App, ReleaseID: in.ReleaseID, ProcessType: in.ProcessType, Index: in.Index, Node: node,
 		Port: in.Port, CPUs: in.CPUs, MemoryMB: in.MemoryMB, Desired: store.DesiredRunning, Replaces: in.ID,
@@ -193,7 +212,7 @@ func (c *Controller) replace(ctx context.Context, in store.Instance, reason stri
 		return err
 	}
 	c.Store.AddEvent(ctx, "instance", in.App, node, "moving %s from %s to %s: %s", in.Name(), in.Node, node, reason)
-	if nodeGone {
+	if stopNow {
 		return c.Store.StopInstances(ctx, []string{in.ID}, nil)
 	}
 	return nil

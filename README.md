@@ -105,7 +105,8 @@ server-2  worker   ready   203.0.113.11   10.210.2.1  8     16g     2          v
 
 If a server dies, its apps are started on the others after a minute. To take
 one out for maintenance, `jokku nodes:drain server-2` moves its apps away
-first; `jokku nodes:remove server-2` takes it out of the cluster. The first
+first; `jokku nodes:rebalance` spreads them out again once it's back, and
+`jokku nodes:remove server-2` takes it out of the cluster. The first
 server holds the cluster's state: if it goes down, the others keep running and
 serving what they have, and you can't deploy until it's back.
 

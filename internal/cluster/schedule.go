@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -28,6 +29,9 @@ type Placement struct {
 	// free disk space to copy them to.
 	Volumes bool
 	DiskMB  int
+	// OldCopies are nodes keeping an old copy of a volume that comes along
+	// (see storage:discard-old-copy): it can't be received there.
+	OldCopies []string
 }
 
 // reserveMB is memory each node keeps for itself (the host, jokku, BuildKit
@@ -88,6 +92,8 @@ func (c *Controller) Place(ctx context.Context, p Placement) (string, netip.Pref
 			reason = n.CanRun
 		case p.Volumes && !n.Has(types.FeatureVolumes):
 			reason = "its jokku is too old for volumes; update it with sudo jokku update"
+		case slices.Contains(p.OldCopies, n.Name):
+			reason = "keeps an old copy of the volume (storage:discard-old-copy deletes it)"
 		case p.CPUs > n.CPUs:
 			reason = fmt.Sprintf("has %d CPUs, needs %d", n.CPUs, p.CPUs)
 		case free < p.MemoryMB:

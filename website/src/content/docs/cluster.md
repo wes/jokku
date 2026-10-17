@@ -73,6 +73,16 @@ jokku nodes:undrain server-2   # let it take apps again
 
 Draining starts a copy of each instance elsewhere, waits for it to pass checks, then stops the original, so traffic never drops. Instances with volumes move with their disks, which costs a short stop.
 
+Nothing moves back by itself when a server takes apps again, or comes back after dying. To spread instances out over the servers again:
+
+```sh
+jokku nodes:rebalance --dry-run   # see what would move
+jokku nodes:rebalance             # move it, the same way a drain does
+jokku nodes:rebalance --volumes   # instances with volumes too, each with a short stop
+```
+
+A rebalance puts the instances of one app on different servers first, then evens out memory. It moves an instance only if the new server ends up no fuller than the old one, so running it twice does nothing the second time. Instances with volumes stay where their disks are unless you add `--volumes`, and it moves as few of them as it can.
+
 To take a server out of the cluster for good:
 
 ```sh

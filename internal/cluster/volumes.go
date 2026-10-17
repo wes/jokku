@@ -216,7 +216,8 @@ func (c *Controller) tickVolumes(ctx context.Context) (bool, error) {
 		case v.Type == types.VolumeLocal && srcOK && src.Draining && src.Ready(now) && !inUse(insts, v.ID):
 			// Instances leaving a draining node bring their volumes along
 			// (see tick); this one has none, but must go too.
-			dest, _, err := c.Place(ctx, Placement{App: v.App, Exclude: v.Node, Volumes: true, DiskMB: diskNeeded([]store.Volume{v})})
+			dest, _, err := c.Place(ctx, Placement{App: v.App, Exclude: v.Node, Volumes: true, DiskMB: diskNeeded([]store.Volume{v}),
+				OldCopies: oldCopies([]store.Volume{v})})
 			if err != nil {
 				if last, tried := c.volAttempts[v.ID]; !tried || now.Sub(last) >= RetryAfter {
 					c.volAttempts[v.ID] = now
@@ -306,7 +307,7 @@ func (c *Controller) moveInstance(ctx context.Context, in store.Instance, vols [
 	}
 	dest, subnet, err := c.Place(ctx, Placement{
 		App: in.App, ProcessType: in.ProcessType, CPUs: in.CPUs, MemoryMB: in.MemoryMB, Exclude: in.Node,
-		Volumes: true, DiskMB: diskNeeded(vols),
+		Volumes: true, DiskMB: diskNeeded(vols), OldCopies: oldCopies(vols),
 	})
 	if err != nil {
 		return err
@@ -367,7 +368,7 @@ func (c *Controller) MoveVolume(ctx context.Context, app, name, node string) err
 		}
 		_, subnet, err := c.Place(ctx, Placement{
 			App: app, ProcessType: in.ProcessType, CPUs: in.CPUs, MemoryMB: in.MemoryMB,
-			Pin: node, PinReason: "the move goes to " + node, Volumes: true, DiskMB: diskNeeded(mine),
+			Pin: node, PinReason: "the move goes to " + node, Volumes: true, DiskMB: diskNeeded(mine), OldCopies: oldCopies(mine),
 		})
 		if err != nil {
 			return err
@@ -378,7 +379,8 @@ func (c *Controller) MoveVolume(ctx context.Context, app, name, node string) err
 		c.Changed()
 		return nil
 	}
-	if _, _, err := c.Place(ctx, Placement{App: app, Pin: node, PinReason: "the move goes to " + node, Volumes: true, DiskMB: diskNeeded([]store.Volume{*v})}); err != nil {
+	if _, _, err := c.Place(ctx, Placement{App: app, Pin: node, PinReason: "the move goes to " + node, Volumes: true,
+		DiskMB: diskNeeded([]store.Volume{*v}), OldCopies: oldCopies([]store.Volume{*v})}); err != nil {
 		return err
 	}
 	if err := c.startMove(ctx, []store.Volume{*v}, nil, node, netip.Prefix{}, "storage:move"); err != nil {
@@ -396,6 +398,17 @@ func pinnedVolumes(in store.Instance, vols []store.Volume) []store.Volume {
 			if v.ID == m.ID && v.Type == types.VolumeLocal && v.Node == in.Node && v.State != store.VolumeDestroying {
 				out = append(out, v)
 			}
+		}
+	}
+	return out
+}
+
+// oldCopies are the nodes keeping an old copy of one of vols.
+func oldCopies(vols []store.Volume) []string {
+	var out []string
+	for _, v := range vols {
+		if v.StaleNode != "" {
+			out = append(out, v.StaleNode)
 		}
 	}
 	return out

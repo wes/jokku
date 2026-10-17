@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -16,6 +17,10 @@ var nodesCommands = []*Command{
 	{Name: "nodes:set", Help: "Change a node setting: schedulable or ingress", Args: "<node> <schedulable|ingress> <true|false>", MinArgs: 3, Run: nodesSet},
 	{Name: "nodes:drain", Help: "Move a node's instances to other nodes and stop scheduling onto it", Args: "<node>", MinArgs: 1, Run: nodesDrain(true)},
 	{Name: "nodes:undrain", Help: "Make a drained node accept instances again", Args: "<node>", MinArgs: 1, Run: nodesDrain(false)},
+	{Name: "nodes:rebalance", Help: "Spread instances evenly over the nodes, as after an undrain or a node coming back", Flags: []Flag{
+		{Name: "dry-run", Help: "Show what would move, without moving anything"},
+		{Name: "volumes", Help: "Also move instances with volumes, and their disks; each stops for a few seconds"},
+	}, Run: nodesRebalance},
 	{Name: "nodes:remove", Help: "Remove a node from the cluster (drain it first)", Args: "<node>", MinArgs: 1,
 		Flags: []Flag{{Name: "force", Help: "Remove it even if instances still run there; they are started elsewhere"}}, Run: nodesRemove},
 }
@@ -142,9 +147,51 @@ func nodesDrain(drain bool) func(*Context) error {
 			c.Info("Follow along with: jokku top (or jokku events)")
 		} else {
 			c.Step("%s is accepting instances again", c.Args[0])
+			c.Info("Nothing moves back on its own; spread instances out with: jokku nodes:rebalance")
 		}
 		return nil
 	}
+}
+
+func nodesRebalance(c *Context) error {
+	dry, volumes := c.Bool("dry-run"), c.Bool("volumes")
+	r, err := c.API.Rebalance(c, types.RebalanceRequest{Volumes: volumes, DryRun: dry})
+	if err != nil {
+		return err
+	}
+	n := len(r.Moves)
+	switch {
+	case n == 0:
+		c.Step("The nodes are balanced: nothing to move")
+	case dry:
+		c.Step("Would move %d %s", n, plural(n, "instance", "instances"))
+	default:
+		c.Step("Moving %d %s: each starts on its new node, and the old one stops once it passes checks", n, plural(n, "instance", "instances"))
+	}
+	if n > 0 {
+		tw := tabwriter.NewWriter(c.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "APP\tINSTANCE\tMEMORY\tFROM\tTO\tVOLUMES")
+		for _, m := range r.Moves {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", m.App, m.Instance, formatMemory(m.MemoryMB), m.From, m.To, strings.Join(m.Volumes, ", "))
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
+	if r.Pinned > 0 {
+		c.Info("%d more with volumes would move with --volumes (each stops for a few seconds while its disks move)", r.Pinned)
+	}
+	switch {
+	case n > 0 && dry:
+		again := "jokku nodes:rebalance"
+		if volumes {
+			again += " --volumes"
+		}
+		c.Info("Move them with: %s", again)
+	case n > 0:
+		c.Info("Follow along with: jokku top (or jokku events)")
+	}
+	return nil
 }
 
 func nodesRemove(c *Context) error {

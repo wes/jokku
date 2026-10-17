@@ -190,6 +190,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /v1/cluster/join-tokens", s.createJoinToken)
 	m.HandleFunc("GET /v1/cluster/status", s.clusterStatus)
 	m.HandleFunc("POST /v1/cluster/update", s.updateNodes)
+	m.HandleFunc("POST /v1/cluster/rebalance", s.rebalance)
 	m.HandleFunc("GET /v1/events", s.listEvents)
 	m.HandleFunc("GET /v1/requests", s.requests)
 	m.HandleFunc("GET /v1/latency", s.latency)

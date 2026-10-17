@@ -30,23 +30,25 @@ On a server or app, press `enter` to see its instances, and `l` for an app's log
 
 ## Apps and databases
 
-The overview and **Apps** list your [external apps](/docs/edges#services-jokku-doesnt-run) and [databases](/docs/databases) apart from your apps, below them: each external app with the address it goes to and the server that reaches it. On **Apps**, each app has the databases it's linked to under it, with the config var that holds each one's URL, and each database shows the apps that use it:
+The overview and **Apps** list your [external apps](/docs/edges#services-jokku-doesnt-run) and [databases](/docs/databases) apart from your apps, below them: each external app with the address it goes to and the server that reaches it. On **Apps**, each app has the databases it's linked to under it, with the config var that holds each one's URL, and each database shows the apps that use it. SIZE is what each instance gets, `mixed` when an app's process types differ; the line under the list names each process type's size for the selected app:
 
 ```console
-  APP                    STATUS     INSTANCES      REL    LAST DEPLOY                DOMAINS
-  ● blog                 running    ●              v3     ok 3d ago                  blog.example.com
-    └ shopdb             running    ●              postgres                          DATABASE_URL
-  ● shop                 running    ●●●            v12    ok 1h ago                  shop.example.com
-    └ shopdb             running    ●              postgres                          DATABASE_URL
-    └ cache              asleep     ○              redis                             REDIS_URL
+  APP                    STATUS     INSTANCES      SIZE          REL    LAST DEPLOY                DOMAINS
+  ● blog                 running    ●              1 vCPU 256M   v3     ok 3d ago                  blog.example.com
+    └ shopdb             running    ●              1 vCPU 512M   postgres                          DATABASE_URL
+  ● shop                 running    ●●●            mixed         v12    ok 1h ago                  shop.example.com
+    └ shopdb             running    ●              1 vCPU 512M   postgres                          DATABASE_URL
+    └ cache              asleep     ○              1 vCPU 256M   redis                             REDIS_URL
 
-  EXTERNAL               TARGET                                   VIA                DOMAINS
-  → ha                   http://192.168.1.50:8123                 server-1           ha.example.com
+  EXTERNAL               TARGET                                                 VIA                DOMAINS
+  → ha                   http://192.168.1.50:8123                               server-1           ha.example.com
 
-  DATABASE               STATUS     INSTANCES      ENGINE    LAST DEPLOY             USED BY
-  ● scratch              running    ●              mysql     ok 2d ago               not linked
-  ● shopdb               running    ●              postgres  ok 2h ago               blog, shop
-  ● cache                asleep     ○              redis     ok 5d ago               shop
+  DATABASE               STATUS     INSTANCES      SIZE          ENGINE    LAST DEPLOY             USED BY
+  ● scratch              running    ●              1 vCPU 1.0G   mysql     ok 2d ago               not linked
+  ● shopdb               running    ●              1 vCPU 512M   postgres  ok 2h ago               blog, shop
+  ● cache                asleep     ○              1 vCPU 256M   redis     ok 5d ago               shop
+
+  shop · 2 web at 2 vCPU 512M · 1 worker at 1 vCPU 256M · jokku resource:limit shop
 ```
 
 An app or database that's asleep (or stopped) isn't counted as unhealthy: the header says how many of its instances are, as in `21/21 instances healthy · 1 asleep`.

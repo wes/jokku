@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -231,6 +232,23 @@ func resourceReport(c *Context) error {
 		if err != nil {
 			return err
 		}
+		insts, err := c.API.Instances(c, a.Name)
+		if err != nil {
+			return err
+		}
+		// What instances run with is the truth: a compose file's limits
+		// (cpus, mem_limit) count too, and its services aren't scaled with
+		// ps:scale.
+		running := map[string]types.ResourceSize{}
+		var runningTypes []string
+		for _, in := range insts {
+			proc, _, _ := strings.Cut(in.Name, ".")
+			if _, ok := running[proc]; ok || in.Desired != "running" {
+				continue
+			}
+			running[proc] = types.ResourceSize{CPUs: in.CPUs, MemoryMB: in.MemoryMB}
+			runningTypes = append(runningTypes, proc)
+		}
 		rows := []row{
 			{"resource-default-cpu", "Default cpu", orDefault(res.Default.CPUs, "1")},
 			{"resource-default-memory", "Default memory", orDefaultMem(res.Default.MemoryMB, "256m")},
@@ -238,9 +256,23 @@ func resourceReport(c *Context) error {
 		seen := map[string]bool{}
 		for _, p := range procs {
 			seen[p.Type] = true
+			size := types.ResourceSize{CPUs: p.CPUs, MemoryMB: p.MemoryMB}
+			if r, ok := running[p.Type]; ok {
+				size = r
+			}
 			rows = append(rows,
-				row{p.Type + "-cpu", p.Type + " cpu", strconv.Itoa(p.CPUs)},
-				row{p.Type + "-memory", p.Type + " memory", formatMemory(p.MemoryMB)})
+				row{p.Type + "-cpu", p.Type + " cpu", strconv.Itoa(size.CPUs)},
+				row{p.Type + "-memory", p.Type + " memory", formatMemory(size.MemoryMB)})
+		}
+		slices.Sort(runningTypes)
+		for _, t := range runningTypes {
+			if seen[t] {
+				continue
+			}
+			seen[t] = true
+			rows = append(rows,
+				row{t + "-cpu", t + " cpu", strconv.Itoa(running[t].CPUs)},
+				row{t + "-memory", t + " memory", formatMemory(running[t].MemoryMB)})
 		}
 		// Overrides for process types that have not been scaled yet.
 		for _, t := range sortedKeys(res.Process) {

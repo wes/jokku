@@ -5,6 +5,14 @@ description: Every Jokku release, newest first, and what it brought.
 
 Update with `sudo jokku update`. From v0.8.5, running it on a cluster's control server updates the other servers too. Each release's binaries and full notes are on [GitHub](https://github.com/wes/jokku/releases).
 
+## v0.8.22: Instance sizes
+
+October 16, 2026
+
+- **[`jokku top`](/docs/top#apps-and-databases) shows how big each app is.** The overview and the Apps view have a SIZE column: the vCPUs and memory each instance gets, as in `1 vCPU 256M`, for databases too. An app whose process types differ in size says `mixed`, and the line under the Apps view names each one's size for the selected app, with the command to change it.
+- **`resource:report` shows the size your instances run at.** It used to show only what `resource:limit` set, so an app deployed from a compose file looked smaller than it was: a `mem_limit: 2g` app read `Default memory: 1g`. It now lists each process type at its real size, compose services included.
+- The [compose docs](/docs/compose) had the order wrong: a compose file's `cpus` and `mem_limit` beat an app-wide `resource:limit`. Only `resource:limit --process-type` beats the file.
+
 ## v0.8.21: Rebalance
 
 October 16, 2026

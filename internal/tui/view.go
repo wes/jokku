@@ -225,7 +225,7 @@ func (m *model) overview() string {
 		b.WriteString(sDim.Render("  no apps yet: git push jokku main") + "\n")
 	}
 	for i, a := range list {
-		line := fmt.Sprintf("  %s %-20s %s v%-4d %s", appDot(a), trunc(a.Name, 20), pad(appDots(a), 12), a.Release, deploySummary(a.Deploy))
+		line := fmt.Sprintf("  %s %-20s %s %s v%-4d %s", appDot(a), trunc(a.Name, 20), pad(appDots(a), 12), pad(m.appSize(a.Name), 13), a.Release, deploySummary(a.Deploy))
 		if isExternal(a) {
 			if i == 0 || !isExternal(list[i-1]) {
 				b.WriteString(sSection.Render("External") + "\n")
@@ -240,7 +240,7 @@ func (m *model) overview() string {
 			if len(a.Links) > 0 {
 				used = sDim.Render("used by ") + linkedApps(a)
 			}
-			line = fmt.Sprintf("  %s %-20s %s %-9s %s", appDot(a), trunc(dbName(a), 20), pad(appDots(a), 12), a.Kind, used)
+			line = fmt.Sprintf("  %s %-20s %s %s %-9s %s", appDot(a), trunc(dbName(a), 20), pad(appDots(a), 12), pad(m.appSize(a.Name), 13), a.Kind, used)
 		}
 		b.WriteString(m.selectable(overview, i, line) + "\n")
 	}
@@ -318,7 +318,7 @@ func (m *model) nodeTable(addresses bool, gap int) (string, []string, int) {
 // databases, each with the apps that use it.
 func (m *model) apps() string {
 	var b strings.Builder
-	b.WriteString(sHead.Render(fmt.Sprintf("  %-22s %-10s %-14s %-6s %-26s %s", "APP", "STATUS", "INSTANCES", "REL", "LAST DEPLOY", "DOMAINS")) + "\n")
+	b.WriteString(sHead.Render(fmt.Sprintf("  %-22s %-10s %-14s %-13s %-6s %-26s %s", "APP", "STATUS", "INSTANCES", "SIZE", "REL", "LAST DEPLOY", "DOMAINS")) + "\n")
 	list := m.appList()
 	if len(list) == 0 || !isApp(list[0]) {
 		b.WriteString(sDim.Render("  no apps yet: git push jokku main") + "\n")
@@ -327,39 +327,91 @@ func (m *model) apps() string {
 	for i, a := range list {
 		if isExternal(a) {
 			if i == 0 || !isExternal(list[i-1]) {
-				b.WriteString("\n" + sHead.Render(fmt.Sprintf("  %-22s %-40s %-18s %s", "EXTERNAL", "TARGET", "VIA", "DOMAINS")) + "\n")
+				b.WriteString("\n" + sHead.Render(fmt.Sprintf("  %-22s %-54s %-18s %s", "EXTERNAL", "TARGET", "VIA", "DOMAINS")) + "\n")
 			}
-			line := fmt.Sprintf("  %s %-20s %s %s %s", appDot(a), trunc(a.Name, 20), pad(trunc(a.Target, 40), 40), pad(trunc(a.Via, 18), 18),
+			line := fmt.Sprintf("  %s %-20s %s %s %s", appDot(a), trunc(a.Name, 20), pad(trunc(a.Target, 54), 54), pad(trunc(a.Via, 18), 18),
 				strings.Join(a.Domains, " "))
 			b.WriteString(m.selectable(appsView, i, line) + "\n")
 			continue
 		}
 		if isDatabase(a) {
 			if i == 0 || !isDatabase(list[i-1]) {
-				b.WriteString("\n" + sHead.Render(fmt.Sprintf("  %-22s %-10s %-14s %-9s %-23s %s", "DATABASE", "STATUS", "INSTANCES", "ENGINE", "LAST DEPLOY", "USED BY")) + "\n")
+				b.WriteString("\n" + sHead.Render(fmt.Sprintf("  %-22s %-10s %-14s %-13s %-9s %-23s %s", "DATABASE", "STATUS", "INSTANCES", "SIZE", "ENGINE", "LAST DEPLOY", "USED BY")) + "\n")
 			}
 			used := sDim.Render("not linked")
 			if len(a.Links) > 0 {
 				used = linkedApps(a)
 			}
-			line := fmt.Sprintf("  %s %-20s %-10s %s %-9s %s %s", appDot(a), trunc(dbName(a), 20), appStatus(a),
-				pad(appDots(a), 14), a.Kind, pad(deploySummary(a.Deploy), 23), used)
+			line := fmt.Sprintf("  %s %-20s %-10s %s %s %-9s %s %s", appDot(a), trunc(dbName(a), 20), appStatus(a),
+				pad(appDots(a), 14), pad(m.appSize(a.Name), 13), a.Kind, pad(deploySummary(a.Deploy), 23), used)
 			b.WriteString(m.selectable(appsView, i, line) + "\n")
 			continue
 		}
-		line := fmt.Sprintf("  %s %-20s %-10s %s %-6s %s %s", appDot(a), trunc(a.Name, 20), appStatus(a),
-			pad(appDots(a), 14), fmt.Sprintf("v%d", a.Release), pad(deploySummary(a.Deploy), 26), strings.Join(a.Domains, " "))
+		line := fmt.Sprintf("  %s %-20s %-10s %s %s %-6s %s %s", appDot(a), trunc(a.Name, 20), appStatus(a),
+			pad(appDots(a), 14), pad(m.appSize(a.Name), 13), fmt.Sprintf("v%d", a.Release), pad(deploySummary(a.Deploy), 26), strings.Join(a.Domains, " "))
 		b.WriteString(m.selectable(appsView, i, line) + "\n")
 		for _, u := range uses[a.Name] {
-			fmt.Fprintf(&b, "    %s %-18s %-10s %s %s %s\n", sDim.Render("└"), trunc(dbName(u.db), 18), appStatus(u.db),
-				pad(appDots(u.db), 14), pad(sDim.Render(u.db.Kind), 33), sDim.Render(u.varName))
+			fmt.Fprintf(&b, "    %s %-18s %-10s %s %s %s %s\n", sDim.Render("└"), trunc(dbName(u.db), 18), appStatus(u.db),
+				pad(appDots(u.db), 14), pad(m.appSize(u.db.Name), 13), pad(sDim.Render(u.db.Kind), 33), sDim.Render(u.varName))
 		}
 	}
-	if a, ok := m.selectedApp(); ok && isDatabase(a) {
+	switch a, ok := m.selectedApp(); {
+	case ok && isDatabase(a):
 		b.WriteString("\n" + sDim.Render(fmt.Sprintf("  %s, a %s database · jokku db:%s:info %s", a.Name, a.Kind, a.Kind, dbName(a))) + "\n")
+	case ok && isApp(a) && len(m.processSizes(a.Name)) > 0:
+		var procs []string
+		for _, p := range m.processSizes(a.Name) {
+			procs = append(procs, fmt.Sprintf("%d %s at %s", p.count, p.proc, sizeText(p.cpus, p.memMB)))
+		}
+		b.WriteString("\n" + sDim.Render(fmt.Sprintf("  %s · %s · jokku resource:limit %s", a.Name, strings.Join(procs, " · "), a.Name)) + "\n")
 	}
 	return b.String()
 }
+
+// procSize is the size of a process type's wanted instances.
+type procSize struct {
+	proc        string
+	cpus, memMB int
+	count       int
+}
+
+// processSizes is the size of each of an app's process types, from its
+// wanted instances, by name.
+func (m *model) processSizes(app string) []procSize {
+	var out []procSize
+	for _, in := range m.st.Instances {
+		if in.App != app || in.Desired != "running" {
+			continue
+		}
+		proc, _, _ := strings.Cut(in.Name, ".")
+		i := slices.IndexFunc(out, func(p procSize) bool { return p.proc == proc })
+		if i < 0 {
+			out = append(out, procSize{proc: proc, cpus: in.CPUs, memMB: in.MemoryMB})
+			i = len(out) - 1
+		}
+		out[i].count++
+	}
+	slices.SortFunc(out, func(a, b procSize) int { return strings.Compare(a.proc, b.proc) })
+	return out
+}
+
+// appSize is the vCPUs and memory each of an app's instances has, or
+// "mixed" when its process types differ (the line under the Apps view names
+// each, for the selected app).
+func (m *model) appSize(app string) string {
+	sizes := m.processSizes(app)
+	if len(sizes) == 0 {
+		return sDim.Render("-")
+	}
+	for _, p := range sizes[1:] {
+		if p.cpus != sizes[0].cpus || p.memMB != sizes[0].memMB {
+			return sDim.Render("mixed")
+		}
+	}
+	return sizeText(sizes[0].cpus, sizes[0].memMB)
+}
+
+func sizeText(cpus, memMB int) string { return fmt.Sprintf("%d vCPU %s", cpus, mem(memMB)) }
 
 // linkedApps is the apps a database is linked to.
 func linkedApps(a types.AppView) string {

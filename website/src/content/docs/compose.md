@@ -79,7 +79,7 @@ The file is read with compose-go, the loader docker compose itself uses, so inte
 | `expose:` or the image's `EXPOSE` | The service's port: `$PORT`, its health check, and what others connect to. |
 | Named `volumes:` | [Volumes](/docs/storage), created on deploy and mounted per service. |
 | `deploy.replicas`, `scale` | The instance count, unless `ps:scale` sets one. |
-| `deploy.resources.limits`, `cpus`, `mem_limit` | The microVM's size, unless `resource:limit` sets one. |
+| `deploy.resources.limits`, `cpus`, `mem_limit` | The microVM's size, unless `resource:limit --process-type <service>` sets one. An app-wide `resource:limit` only fills in what the file leaves out. |
 | `restart`, `deploy.restart_policy` | The restart policy. |
 | `stop_grace_period`, `stop_signal` | How the service is stopped. |
 | `depends_on` | Start order. |

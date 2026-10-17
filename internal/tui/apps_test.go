@@ -36,9 +36,9 @@ func withDatabases() *types.ClusterStatus {
 		st.Apps[0], // shop
 	}
 	st.Instances = append(st.Instances,
-		types.InstanceView{App: "postgres-shopdb", Instance: types.Instance{Name: "postgres.1", Release: 2, Node: "control", State: "healthy", Desired: "running"}},
-		types.InstanceView{App: "mysql-scratch", Instance: types.Instance{Name: "mysql.1", Release: 1, Node: "worker-1", State: "healthy", Desired: "running"}},
-		types.InstanceView{App: "redis-cache", Instance: types.Instance{Name: "redis.1", Release: 1, Node: "control", State: "stopped", Desired: "running"}})
+		types.InstanceView{App: "postgres-shopdb", Instance: types.Instance{Name: "postgres.1", Release: 2, Node: "control", State: "healthy", Desired: "running", CPUs: 1, MemoryMB: 512}},
+		types.InstanceView{App: "mysql-scratch", Instance: types.Instance{Name: "mysql.1", Release: 1, Node: "worker-1", State: "healthy", Desired: "running", CPUs: 1, MemoryMB: 1024}},
+		types.InstanceView{App: "redis-cache", Instance: types.Instance{Name: "redis.1", Release: 1, Node: "control", State: "stopped", Desired: "running", CPUs: 1, MemoryMB: 256}})
 	return st
 }
 
@@ -211,5 +211,42 @@ func TestAppsShowTheirDatabases(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestAppsShowTheirSize: each app and database shows the vCPUs and memory
+// of its instances, "mixed" when its process types differ, and the line
+// under the Apps view names each process type's for the selected app.
+func TestAppsShowTheirSize(t *testing.T) {
+	m := appsModel(160, 40)
+	m.key("3")
+	out := ansi.Strip(m.View())
+	for _, want := range []string{"SIZE", "● blog                 running    ●              1 vCPU 256M   v3",
+		"└ shopdb             running    ●              1 vCPU 512M   postgres", "● scratch              running    ●              1 vCPU 1.0G   mysql"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "  blog · 1 web at 1 vCPU 256M · jokku resource:limit blog") {
+		t.Errorf("no sizes under the list for the selected app:\n%s", out)
+	}
+
+	// A worker of another size makes shop mixed; the line under the list
+	// names both.
+	m.st.Instances = append(m.st.Instances, types.InstanceView{App: "shop",
+		Instance: types.Instance{Name: "worker.1", Release: 12, Node: "worker-1", State: "healthy", Desired: "running", CPUs: 2, MemoryMB: 1024}})
+	m.key("j")
+	out = ansi.Strip(m.View())
+	if !strings.Contains(out, "● shop                 degraded   ●●○            mixed         v12") {
+		t.Errorf("shop isn't mixed:\n%s", out)
+	}
+	if !strings.Contains(out, "  shop · 2 web at 1 vCPU 256M · 1 worker at 2 vCPU 1.0G · jokku resource:limit shop") {
+		t.Errorf("no sizes under the list for shop:\n%s", out)
+	}
+
+	// The overview shows them too.
+	m.key("1")
+	if out := ansi.Strip(m.View()); !strings.Contains(out, "● blog                 ●            1 vCPU 256M   v3") {
+		t.Errorf("overview:\n%s", out)
 	}
 }

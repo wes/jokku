@@ -40,7 +40,7 @@ jokku resource:report myapp
 jokku resource:limit-clear myapp --process-type worker
 ```
 
-Memory takes `512`, `512m` or `1g`; plain numbers are megabytes. In a microVM, the limit is also the reservation: memory is never overcommitted, so an instance only starts on a server with that much free. vCPUs may be shared.
+`resource:report` shows the size each process type runs at, a compose file's `cpus` and `mem_limit` included, and `jokku top` shows it on its Apps view. Memory takes `512`, `512m` or `1g`; plain numbers are megabytes. In a microVM, the limit is also the reservation: memory is never overcommitted, so an instance only starts on a server with that much free. vCPUs may be shared.
 
 > [!NOTE]
 > Firecracker can't add vCPUs to a running VM, so a size change is applied with a rolling restart into new microVMs, the same way Dokku applies resource changes.
